@@ -6,6 +6,7 @@ use std::{
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use smallvec::{Array, SmallVec};
 
 // Trait for primitive integer types used to represent the underlying type for field values
 pub trait Int:
@@ -36,6 +37,7 @@ pub trait Field:
     + Mul<Output = Self>
     + MulAssign
     + From<u128>
+    + From<Self::Integer>
     + Into<Self::Integer>
     + Clone
     + Copy
@@ -91,6 +93,9 @@ pub trait Field:
         let int: Self::Integer = (*self).into();
         int.into()
     }
+
+    fn to_small_vec<A: Array<Item = u8>>(&self, buf: &mut SmallVec<A>);
+    fn from_small_vec<A: Array<Item = u8>>(buf: &mut SmallVec<A>) -> Self;
 }
 
 // TODO(mt) - this code defining fields can be turned into a macro if we ever
@@ -111,6 +116,14 @@ impl Field for Fp31 {
     const PRIME: Self::Integer = 31;
     const ZERO: Self = Fp31(0);
     const ONE: Self = Fp31(1);
+
+    fn to_small_vec<A: Array<Item = u8>>(&self, buf: &mut SmallVec<A>) {
+        buf.push(self.0);
+    }
+
+    fn from_small_vec<A: Array<Item = u8>>(buf: &mut SmallVec<A>) -> Self {
+        Self(buf[0])
+    }
 }
 
 impl Add for Fp31 {

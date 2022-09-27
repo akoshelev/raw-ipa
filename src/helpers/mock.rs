@@ -11,10 +11,12 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
+use smallvec::SmallVec;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::Instrument;
+use crate::field::{Field, Int};
 
 /// Gateway is just the proxy for `Controller` interface to provide stable API and hide
 /// `Controller`'s dependencies
@@ -40,10 +42,12 @@ enum ControlMessage<S> {
     ConnectionRequest(Identity, S, mpsc::Receiver<MessageEnvelope>),
 }
 
+type MessagePayload = SmallVec<[u8; 1]>;
+
 #[derive(Debug)]
 struct MessageEnvelope {
     record_id: RecordId,
-    payload: Box<[u8]>,
+    payload: MessagePayload,
 }
 
 /// Combination of helper identity and step that uniquely identifies a single channel of communication
@@ -63,16 +67,16 @@ struct MessageBuffer {
 #[derive(Debug)]
 enum BufItem {
     /// There is an outstanding request to receive the message but this helper hasn't seen it yet
-    Requested(oneshot::Sender<Box<[u8]>>),
+    Requested(oneshot::Sender<MessagePayload>),
     /// Message has been received but nobody requested it yet
-    Received(Box<[u8]>),
+    Received(MessagePayload),
 }
 
 struct ReceiveRequest<S> {
     from: Identity,
     step: S,
     record_id: RecordId,
-    sender: oneshot::Sender<Box<[u8]>>,
+    sender: oneshot::Sender<MessagePayload>,
 }
 
 /// Controller that is created per test helper. Handles control messages and establishes
@@ -88,7 +92,7 @@ struct Controller<S> {
 
 impl MessageBuffer {
     /// Process request to receive a message with the given `RecordId`.
-    fn receive_request(&mut self, record_id: RecordId, s: oneshot::Sender<Box<[u8]>>) {
+    fn receive_request(&mut self, record_id: RecordId, s: oneshot::Sender<MessagePayload>) {
         match self.buf.entry(record_id) {
             Entry::Occupied(entry) => match entry.remove() {
                 BufItem::Requested(_) => {
@@ -131,7 +135,7 @@ impl<S: Step> ReceiveRequest<S> {
         from: Identity,
         step: S,
         record_id: RecordId,
-        sender: oneshot::Sender<Box<[u8]>>,
+        sender: oneshot::Sender<MessagePayload>,
     ) -> Self {
         Self {
             from,
@@ -176,7 +180,10 @@ impl<S: Step> Mesh for TestMesh<S> {
     ) -> Result<(), Error> {
         let sender = self.controller.get_connection(target, self.step).await;
 
-        let bytes = serde_json::to_vec(&msg).unwrap().into_boxed_slice();
+        let mut bytes = SmallVec::new();
+        msg.to_smallvec(&mut bytes);
+        assert!(!bytes.spilled());
+        // let bytes = serde_json::to_vec(&msg).unwrap().into_boxed_slice();
         let envelope = MessageEnvelope {
             record_id,
             payload: bytes,
@@ -192,8 +199,9 @@ impl<S: Step> Mesh for TestMesh<S> {
 
     #[tracing::instrument(skip(self), fields(identity=?self.controller.identity, step=?self.step), level="trace")]
     async fn receive<T: Message>(&mut self, from: Identity, record: RecordId) -> Result<T, Error> {
-        let payload = self.controller.receive(from, self.step, record).await;
-        let obj: T = serde_json::from_slice(&payload).unwrap();
+        let mut payload = self.controller.receive(from, self.step, record).await;
+        let obj = T::from_smallvec(&mut payload);
+        // let obj: T = serde_json::from_slice(&payload).unwrap();
         tracing::trace!("message received: {obj:?}");
 
         Ok(obj)
@@ -306,7 +314,7 @@ impl<S: Step> Controller<S> {
         sender
     }
 
-    async fn receive(&self, peer: Identity, step: S, record: RecordId) -> Box<[u8]> {
+    async fn receive(&self, peer: Identity, step: S, record: RecordId) -> MessagePayload {
         let (tx, rx) = oneshot::channel();
         self.receive_request_sender
             .send(ReceiveRequest::new(peer, step, record, tx))

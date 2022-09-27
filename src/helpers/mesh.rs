@@ -13,11 +13,16 @@ use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
+use smallvec::{Array, SmallVec};
 
 /// Trait for messages sent between helpers
-pub trait Message: Debug + Send + Serialize + DeserializeOwned + 'static {}
+pub trait Message: Debug + Send + Serialize + DeserializeOwned + 'static {
 
-impl<T> Message for T where T: Debug + Send + Serialize + DeserializeOwned + 'static {}
+    fn to_smallvec<A: Array<Item = u8>>(&self, buf: &mut SmallVec<A>);
+    fn from_smallvec<A: Array<Item = u8>>(buf: &mut SmallVec<A>) -> Self;
+}
+
+// impl<T> Message for T where T: Debug + Send + Serialize + DeserializeOwned + 'static {}
 
 /// Trait for MPC helpers to communicate with each other. Helpers can send messages and
 /// receive messages from a specific helper.
