@@ -12,7 +12,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy,rustfmt
+          components: clippy,rustfmt,flaky-finder
 
       - uses: actions/cache@v3
         with:
