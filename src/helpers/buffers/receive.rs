@@ -4,7 +4,9 @@ use crate::{
 };
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::ops::Range;
 use tokio::sync::oneshot;
+use tracing_subscriber::fmt::init;
 
 /// Local buffer for messages that are either awaiting requests to receive them or requests
 /// that are pending message reception.
@@ -26,6 +28,12 @@ enum ReceiveBufItem {
     Received(MessagePayload),
 }
 
+#[derive(Debug)]
+pub enum ReceiveRequestStatus {
+    FulfilledImmediately,
+    Scheduled
+}
+
 impl ReceiveBuffer {
     /// Process request to receive a message with the given `RecordId`.
     pub fn receive_request(
@@ -33,7 +41,7 @@ impl ReceiveBuffer {
         channel_id: ChannelId,
         record_id: RecordId,
         sender: oneshot::Sender<MessagePayload>,
-    ) {
+    ) -> ReceiveRequestStatus {
         match self.inner.entry(channel_id).or_default().entry(record_id) {
             Entry::Occupied(entry) => match entry.remove() {
                 ReceiveBufItem::Requested(_) => {
@@ -43,10 +51,12 @@ impl ReceiveBuffer {
                     sender.send(payload).unwrap_or_else(|_| {
                         tracing::warn!("No listener for message {record_id:?}");
                     });
+                    ReceiveRequestStatus::FulfilledImmediately
                 }
             },
             Entry::Vacant(entry) => {
                 entry.insert(ReceiveBufItem::Requested(sender));
+                ReceiveRequestStatus::Scheduled
             }
         }
     }
@@ -55,11 +65,13 @@ impl ReceiveBuffer {
     /// chunk will belong to range of records [0..chunk.len()), second chunk [chunk.len()..2*chunk.len())
     /// etc. It does not require all chunks to be of the same size, this assumption is baked in
     /// send buffers.
-    pub fn receive_messages(&mut self, channel_id: &ChannelId, messages: &[u8]) {
+    pub fn receive_messages(&mut self, channel_id: &ChannelId, messages: &[u8]) -> Range<u32> {
         let offset = self
             .record_ids
             .entry(channel_id.clone())
             .or_insert_with(|| RecordId::from(0_u32));
+
+        let initial = *offset;
 
         for msg in messages.chunks(MESSAGE_PAYLOAD_SIZE_BYTES) {
             let payload = msg.try_into().unwrap();
@@ -86,5 +98,7 @@ impl ReceiveBuffer {
 
             *offset += 1;
         }
+
+        u32::from(initial)..u32::from(*offset)
     }
 }

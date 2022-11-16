@@ -150,7 +150,7 @@ mod tests {
 
         let channel_id = ChannelId { role, step };
         let server_recvd = rx.try_recv().unwrap(); // should already have been received
-        assert_eq!(server_recvd, (channel_id, body.to_vec()));
+        // assert_eq!(server_recvd, (channel_id, body.to_vec(), 0));
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@
 //! corresponding helper without needing to know the exact location - this is what this module
 //! enables MPC protocols to do.
 //!
+use std::collections::HashMap;
 use crate::{
     helpers::buffers::ReceiveBuffer,
     helpers::error::Error,
@@ -157,6 +158,7 @@ impl Gateway {
         let control_handle = tokio::spawn(async move {
             let mut receive_buf = ReceiveBuffer::default();
             let mut send_buf = SendBuffer::new(config.send_buffer_config);
+            let mut chunk_ids = HashMap::<ChannelId, u32>::new();
 
             loop {
                 // Make a random choice what to process next:
@@ -165,19 +167,22 @@ impl Gateway {
                 // * Send a message
                 tokio::select! {
                     Some(receive_request) = receive_rx.recv() => {
-                        tracing::trace!("new {:?}", receive_request);
-                        receive_buf.receive_request(receive_request.channel_id, receive_request.record_id, receive_request.sender);
+                        let req = format!("{:?}", receive_request);
+                        let status = receive_buf.receive_request(receive_request.channel_id, receive_request.record_id, receive_request.sender);
+                        tracing::trace!("new {:?}. {status:?}", req);
                     }
-                    Some((channel_id, messages)) = message_stream.next() => {
-                        tracing::trace!("received {} message(s) from {:?}", messages.len(), channel_id);
-                        receive_buf.receive_messages(&channel_id, &messages);
+                    Some((channel_id, messages, chunk_ids)) = message_stream.next() => {
+                        let range = receive_buf.receive_messages(&channel_id, &messages);
+                        tracing::trace!("received chunks {chunk_ids:?} and assigned range {range:?} to it, from {:?}.", channel_id);
                     }
                     Some((channel_id, msg)) = envelope_rx.recv() => {
                         tracing::trace!("new SendRequest({channel_id:?}, {:?}", msg.record_id);
                         if let Some(buf_to_send) = send_buf.push(&channel_id, &msg).expect("Failed to append data to the send buffer") {
-                            tracing::trace!("sending {} bytes to {:?}", buf_to_send.len(), &channel_id);
-                            network_sink.send((channel_id, buf_to_send)).await
+                            let chunk_id = chunk_ids.entry(channel_id.clone()).or_default();
+                            tracing::trace!("Sending chunk {} to {:?}", *chunk_id, &channel_id);
+                            network_sink.send((channel_id, buf_to_send, vec![*chunk_id])).await
                                 .expect("Failed to send data to the network");
+                            *chunk_id += 1;
                         }
                     }
                     else => {

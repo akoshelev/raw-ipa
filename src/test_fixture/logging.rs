@@ -5,9 +5,11 @@ pub fn setup() {
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {
+        // let console_layer = console_subscriber::spawn();
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
-            .with(fmt::layer())
+            .with(fmt::layer().with_ansi(false))
+            // .with(console_layer)
             .init();
     });
 }

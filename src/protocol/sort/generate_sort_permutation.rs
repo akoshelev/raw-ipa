@@ -102,13 +102,16 @@ mod tests {
         error::BoxError,
         ff::{Field, Fp32BitPrime},
         protocol::{sort::generate_sort_permutation::GenerateSortPermutation, QueryId},
-        test_fixture::{logging, make_contexts, make_world, validate_and_reconstruct},
+        test_fixture::{make_contexts, validate_and_reconstruct},
     };
+    use crate::test_fixture::{make_world_with_config, TestWorldConfig};
 
     #[tokio::test]
     pub async fn generate_sort_permutation() -> Result<(), BoxError> {
-        logging::setup();
-        let world = make_world(QueryId);
+        let mut config = TestWorldConfig::default();
+        config.gateway_config.send_buffer_config.items_in_batch = 1;
+        config.gateway_config.send_buffer_config.batch_count = 1000;
+        let world = make_world_with_config(QueryId, config);
         let [ctx0, ctx1, ctx2] = make_contexts::<Fp32BitPrime>(&world);
         let num_bits = 64;
         let mut rng = rand::thread_rng();

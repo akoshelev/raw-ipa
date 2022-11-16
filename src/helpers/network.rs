@@ -25,7 +25,7 @@ pub struct MessageEnvelope {
     pub payload: MessagePayload,
 }
 
-pub type MessageChunks = (ChannelId, Vec<u8>);
+pub type MessageChunks = (ChannelId, Vec<u8>, Vec<u32>);
 
 /// Network interface for components that require communication.
 #[async_trait]

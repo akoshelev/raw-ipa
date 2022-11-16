@@ -19,7 +19,7 @@ use tracing::Instrument;
 /// Represents control messages sent between helpers to handle infrastructure requests.
 pub(super) enum ControlMessage {
     /// Connection for a step is requested by the peer.
-    ConnectionRequest(ChannelId, Receiver<Vec<u8>>),
+    ConnectionRequest(ChannelId, Receiver<(Vec<u8>, Vec<u32>)>),
 }
 
 /// Container for all active helper endpoints
@@ -46,7 +46,7 @@ pub struct InMemoryEndpoint {
 #[derive(Debug, Clone)]
 pub struct InMemoryChannel {
     dest: Role,
-    tx: Sender<Vec<u8>>,
+    tx: Sender<(Vec<u8>, Vec<u32>)>,
 }
 
 impl InMemoryNetwork {
@@ -87,7 +87,7 @@ impl InMemoryEndpoint {
             async move {
                 let mut peer_channels = SelectAll::new();
                 let mut pending_sends = FuturesUnordered::new();
-                let mut buf = HashMap::<ChannelId, Vec<u8>>::new();
+                let mut buf = HashMap::<ChannelId, (Vec<u32>, Vec<u8>)>::new();
 
                 loop {
                     tokio::select! {
@@ -95,28 +95,36 @@ impl InMemoryEndpoint {
                         Some(control_message) = open_channel_rx.recv() => {
                             match control_message {
                                 ControlMessage::ConnectionRequest(channel_id, new_channel_rx) => {
-                                    peer_channels.push(ReceiverStream::new(new_channel_rx).map(move |msg| (channel_id.clone(), msg)));
+                                    peer_channels.push(ReceiverStream::new(new_channel_rx).map(move |msg| (channel_id.clone(), msg.0, msg.1)));
                                 }
                             }
                         }
                         // receive a batch of messages from the peer
-                        Some((channel_id, msgs)) = peer_channels.next() => {
-                            buf.entry(channel_id).or_default().extend(msgs);
+                        Some((channel_id, msgs, chunk_ids)) = peer_channels.next() => {
+                            tracing::trace!("received chunk {chunk_ids:?} from {channel_id:?}");
+                            let entry = buf.entry(channel_id).or_default();
+
+                            entry.0.extend(chunk_ids);
+                            entry.1.extend(msgs);
                         }
                         // Handle request to send messages to a peer
                         Some(chunk) = chunks_receiver.recv() => {
+                            tracing::trace!("sending chunks {:?} to {:?}", chunk.2, chunk.0);
                             pending_sends.push(this.send_chunk(chunk));
                         }
                         // Drive pending sends to completion
-                        Some(_) = pending_sends.next() => { }
+                        Some(_) = pending_sends.next() => {
+
+                        }
                         // If there is nothing else to do, try to obtain a permit to move messages
                         // from the buffer to messaging layer. Potentially we might be thrashing
                         // on permits here.
                         Ok(permit) = message_stream_tx.reserve(), if !buf.is_empty() => {
                             let key = buf.keys().next().unwrap().clone();
-                            let msgs = buf.remove(&key).unwrap();
+                            let (chunks, msgs) = buf.remove(&key).unwrap();
 
-                            permit.send((key, msgs));
+                            tracing::trace!("Gateway receive {chunks:?} from {key:?} please");
+                            permit.send((key, msgs, chunks));
                         }
                         else => {
                             break;
@@ -131,9 +139,13 @@ impl InMemoryEndpoint {
 }
 
 impl InMemoryEndpoint {
-    async fn send_chunk(&self, chunk: MessageChunks) {
+    async fn send_chunk(&self, chunk: MessageChunks) -> ChannelId {
+        let c = chunk.0.clone();
         let conn = self.get_connection(chunk.0).await;
-        conn.send(chunk.1).await.unwrap();
+        conn.send(chunk.1, chunk.2).await.unwrap();
+        // conn.send(chunk.2, chunk.1).await.unwrap();
+
+        c
     }
 
     async fn get_connection(&self, addr: ChannelId) -> InMemoryChannel {
@@ -195,9 +207,9 @@ impl Network for Arc<InMemoryEndpoint> {
 }
 
 impl InMemoryChannel {
-    async fn send(&self, msg: Vec<u8>) -> helpers::Result<()> {
+    async fn send(&self, msg: Vec<u8>, chunks: Vec<u32>) -> helpers::Result<()> {
         self.tx
-            .send(msg)
+            .send((msg, chunks))
             .await
             .map_err(|e| Error::send_error(self.dest, e))
     }
