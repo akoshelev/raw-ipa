@@ -1,13 +1,9 @@
 name: CI
 on: [push, pull_request]
 jobs:
-  rust-check:
-    name: Rust Checks
-    env:
-      CARGO_TERM_COLOR: always
-      RUSTFLAGS: -D warnings
-      RUSTDOCFLAGS: -D warnings
 
+  toolchain:
+    name: Setup Rust toolchain
     runs-on: ubuntu-latest
 
     steps:
@@ -27,6 +23,46 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
+  rust-lint:
+    name: Code lints
+    runs-on: ubuntu-latest
+    needs: toolchain
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check formatting
+        if: ${{ success() || failure() }}
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        if: ${{ success() || failure() }}
+        run: cargo clippy --tests
+
+  test:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+    needs: toolchain
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Run Tests
+        run: cargo test
+        
+  build:
+    name: Build code
+    runs-on: ubuntu-latest
+    needs: toolchain
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+      RUSTDOCFLAGS: -D warnings
+
+    steps:
       - name: Build
         run: cargo build --tests
 
@@ -36,13 +72,3 @@ jobs:
       - name: Build benchmarks
         run: cargo build --benches --all-features
 
-      - name: Check formatting
-        if: ${{ success() || failure() }}
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        if: ${{ success() || failure() }}
-        run: cargo clippy --tests
-
-      - name: Run Tests
-        run: cargo test
