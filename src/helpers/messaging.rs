@@ -198,11 +198,7 @@ impl Gateway {
                             let send_tasks_waiting = send_buf.waiting();
                             let receive_tasks_waiting = receive_buf.waiting();
                             if !send_tasks_waiting.is_empty() || !receive_tasks_waiting.is_empty() {
-                                tracing::error!("Nothing has happened on {:?} in the last {INTERVAL:?}. Here is the list of tasks pending completion:\n waiting to send: {:?},\n waiting to receive: {:?}",
-                                    role,
-                                    send_buf.waiting(),
-                                    receive_buf.waiting()
-                                );
+                                tracing::error!("Nothing has happened on {role:?} in the last {INTERVAL:?}. Here is the list of tasks pending completion:\n  waiting to send: {send_tasks_waiting:?},\n  waiting to receive: {receive_tasks_waiting:?}");
                             }
                         }
                     }
