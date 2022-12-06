@@ -107,11 +107,13 @@ impl InMemoryEndpoint {
                             buf.entry(channel_id).or_default().extend(msgs);
                         }
                         // Handle request to send messages to a peer
-                        Some(chunk) = chunks_receiver.recv() => {
+                        Some(chunk) = chunks_receiver.recv(), if pending_sends.is_empty() => {
                             pending_sends.push(this.send_chunk(chunk));
                         }
                         // Drive pending sends to completion
-                        Some(_) = pending_sends.next() => { }
+                        Some(_) = &mut pending_sends.next() => {
+                            pending_sends.clear();
+                        }
                         // If there is nothing else to do, try to obtain a permit to move messages
                         // from the buffer to messaging layer. Potentially we might be thrashing
                         // on permits here.

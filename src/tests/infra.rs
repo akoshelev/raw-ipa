@@ -63,7 +63,7 @@ mod randomized {
                     assert_eq!(input, output);
                 });
             },
-            1000,
+            100,
         );
     }
 
@@ -128,7 +128,7 @@ mod randomized {
                     assert_eq!(input, output);
                 });
             },
-            1000,
+            100,
         );
     }
 }
