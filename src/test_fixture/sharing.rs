@@ -176,6 +176,20 @@ impl<F: Field> Reconstruct<F> for [Replicated<F>; 3] {
     }
 }
 
+impl Reconstruct<u64> for [&XorReplicated; 3] {
+    fn reconstruct(&self) -> u64 {
+        let s0 = &self[0];
+        let s1 = &self[1];
+        let s2 = &self[2];
+
+        assert_eq!(s0.right(), s1.left());
+        assert_eq!(s1.right(), s2.left());
+        assert_eq!(s2.right(), s0.left());
+
+        s0.left() ^ s1.left() ^ s2.left()
+    }
+}
+
 impl<F, T, U, V> Reconstruct<F> for (T, U, V)
 where
     F: Field,

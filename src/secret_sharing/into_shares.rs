@@ -1,9 +1,9 @@
 use crate::ff::Field;
 use crate::rand::{thread_rng, Rng, RngCore};
-use crate::secret_sharing::Replicated;
+use crate::secret_sharing::{Replicated, XorReplicated};
 use rand::distributions::{Distribution, Standard};
+use std::fmt::Debug;
 
-#[cfg(any(feature = "test-fixture", feature = "cli"))]
 pub trait IntoShares<T>: Sized {
     fn share(self) -> [T; 3] {
         self.share_with(&mut thread_rng())
@@ -18,6 +18,20 @@ where
 {
     fn share_with<R: Rng>(self, rng: &mut R) -> [Replicated<F>; 3] {
         share(self, rng)
+    }
+}
+
+#[cfg(feature = "cli")]
+impl IntoShares<XorReplicated> for u64 {
+    fn share_with<R: Rng>(self, rng: &mut R) -> [XorReplicated; 3] {
+        let s0 = rng.gen::<u64>();
+        let s1 = rng.gen::<u64>();
+        let s2 = self ^ s0 ^ s1;
+        [
+            XorReplicated::new(s0, s1),
+            XorReplicated::new(s1, s2),
+            XorReplicated::new(s2, s0),
+        ]
     }
 }
 

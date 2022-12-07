@@ -1,6 +1,6 @@
 use crate::ff::Field;
 use crate::helpers::Role;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 #[derive(Clone, PartialEq, Eq)]
