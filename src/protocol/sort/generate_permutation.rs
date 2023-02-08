@@ -26,10 +26,12 @@ use super::{
     secureapplyinv::secureapplyinv,
     shuffle::{get_two_of_three_random_permutations, shuffle_shares},
 };
-use crate::protocol::context::SemiHonestContext;
+use crate::protocol::context::{NoRecord, SemiHonestContext, UpgradeContext, UpgradeToMalicious};
 use crate::protocol::sort::ShuffleRevealStep::GeneratePermutation;
 use embed_doc_image::embed_doc_image;
 use futures::Future;
+use crate::secret_sharing::replicated::{malicious, semi_honest};
+use crate::secret_sharing::replicated::malicious::DowngradeMalicious;
 
 #[derive(Debug)]
 /// This object contains the output of `shuffle_and_reveal_permutation`
@@ -52,7 +54,7 @@ pub struct ShuffledPermutationWrapper<'a, F: Field> {
 pub(super) async fn shuffle_and_reveal_permutation<
     F: Field,
     S: SecretSharing<F>,
-    C: Context<F, Share = S>,
+    C: Context<F, Share=S>,
 >(
     ctx: C,
     input_len: u32,
@@ -71,8 +73,9 @@ pub(super) async fn shuffle_and_reveal_permutation<
         ),
         ctx.narrow(&ShufflePermutation),
     )
-    .await?;
+        .await?;
 
+    // ctx.reveal(&shuffled_permutation);
     let revealed_permutation =
         reveal_permutation(ctx.narrow(&RevealPermutation), &shuffled_permutation).await?;
 
@@ -82,8 +85,18 @@ pub(super) async fn shuffle_and_reveal_permutation<
     })
 }
 
-async fn execute_malicious<A: Arithmetic<F>, S: SecretSharing<F>, F: Field, Fun: Fn(&[S]) -> Futur, Futur: Future<Output = T>, T>(semi_honest_ctx: C, input: &[A], f: Fun) -> Futur {
+async fn execute_malicious<A, M, S, F, Fun, Futur, T>(semi_honest_ctx: SemiHonestContext<'_, F>, input: A, f: Fun) -> T::Target
+    where S: SecretSharing<F>, F: Field, Fun: Fn(M) -> Futur, Futur: Future<Output=T>, T: DowngradeMalicious,
+          for<'u> UpgradeContext<'u, F, NoRecord>: UpgradeToMalicious<A, M>,
+          T::Target: DowngradeMalicious
+{
     let mut malicious_validator = MaliciousValidator::new(semi_honest_ctx.clone());
+    let malicious_ctx = malicious_validator.context();
+    let malicious_input = malicious_ctx.upgrade(input).await.unwrap(); // todo fix the unwrap
+
+    let sh_result = f(malicious_input).await;
+
+    malicious_validator.validate(sh_result).await.unwrap() //todo fix the unwrap
 }
 
 /// This is a malicious implementation of shuffle and reveal.
@@ -111,7 +124,7 @@ pub(super) async fn malicious_shuffle_and_reveal_permutation<F: Field>(
         ),
         m_ctx.narrow(&ShufflePermutation),
     )
-    .await?;
+        .await?;
 
     let revealed_permutation = malicious_validator
         .validate(ShuffledPermutationWrapper {
@@ -151,8 +164,8 @@ pub async fn generate_permutation<F>(
     sort_keys: &[Vec<Replicated<F>>],
     num_bits: u32,
 ) -> Result<Vec<Replicated<F>>, Error>
-where
-    F: Field,
+    where
+        F: Field,
 {
     let ctx_0 = ctx.narrow(&Sort(0));
     assert_eq!(sort_keys.len(), num_bits as usize);
@@ -170,7 +183,7 @@ where
             input_len.try_into().unwrap(), // safe, we don't sort more than 1B rows
             composed_less_significant_bits_permutation,
         )
-        .await?;
+            .await?;
 
         let bit_i_sorted_by_less_significant_bits = secureapplyinv(
             ctx_bit.narrow(&ApplyInv),
@@ -187,13 +200,13 @@ where
             ),
             &revealed_and_random_permutations.revealed,
         )
-        .await?;
+            .await?;
 
         let bit_i_permutation = bit_permutation(
             ctx_bit.narrow(&BitPermutationStep),
             &bit_i_sorted_by_less_significant_bits,
         )
-        .await?;
+            .await?;
 
         let composed_i_permutation = compose(
             ctx_bit.narrow(&ComposeStep),
@@ -210,7 +223,7 @@ where
             &revealed_and_random_permutations.revealed,
             bit_i_permutation,
         )
-        .await?;
+            .await?;
         composed_less_significant_bits_permutation = composed_i_permutation;
     }
     Ok(composed_less_significant_bits_permutation)
@@ -234,7 +247,7 @@ pub async fn generate_permutation_and_reveal_shuffled<F: Field>(
         u32::try_from(key_count).unwrap(),
         sort_permutation,
     )
-    .await
+        .await
 }
 
 /// This function takes in a semihonest context and sort keys, generates a sort permutation, shuffles and reveals it and
@@ -260,7 +273,7 @@ pub async fn malicious_generate_permutation_and_reveal_shuffled<F: Field>(
         sort_permutation,
         malicious_validator,
     )
-    .await
+        .await
 }
 
 #[allow(dead_code)]
@@ -297,8 +310,8 @@ pub async fn malicious_generate_permutation<'a, F>(
     sort_keys: &[Vec<Replicated<F>>],
     num_bits: u32,
 ) -> Result<(MaliciousValidator<'a, F>, Vec<MaliciousReplicated<F>>), Error>
-where
-    F: Field,
+    where
+        F: Field,
 {
     let mut malicious_validator = MaliciousValidator::new(sh_ctx.clone());
     let mut m_ctx_bit = malicious_validator.context();
@@ -317,7 +330,7 @@ where
             composed_less_significant_bits_permutation,
             malicious_validator,
         )
-        .await?;
+            .await?;
 
         malicious_validator =
             MaliciousValidator::new(sh_ctx.narrow(&Sort(bit_num.try_into().unwrap())));
@@ -340,13 +353,13 @@ where
             ),
             &revealed_and_random_permutations.revealed,
         )
-        .await?;
+            .await?;
 
         let bit_i_permutation = bit_permutation(
             m_ctx_bit.narrow(&BitPermutationStep),
             &bit_i_sorted_by_less_significant_bits,
         )
-        .await?;
+            .await?;
 
         let composed_i_permutation = compose(
             m_ctx_bit.narrow(&ComposeStep),
@@ -363,7 +376,7 @@ where
             &revealed_and_random_permutations.revealed,
             bit_i_permutation,
         )
-        .await?;
+            .await?;
         composed_less_significant_bits_permutation = composed_i_permutation;
     }
     Ok((

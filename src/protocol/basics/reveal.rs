@@ -22,6 +22,8 @@ pub trait Reveal<V: ArithmeticShare> {
     /// it must be assumed that the secret value has been revealed to at least one of the helpers.
     /// Even in case when method never terminates, returns an error, etc.
     async fn reveal(self, record: RecordId, input: &Self::Share) -> Result<V, Error>;
+
+    // async fn reveal_many<T>(self, input: &[T]) -> Result<V, Error>;
 }
 
 /// This implements a semi-honest reveal algorithm for replicated secret sharing.
