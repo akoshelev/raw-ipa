@@ -57,11 +57,10 @@ pub(super) async fn shuffle_and_reveal_permutation<
     C: Context<F, Share=S>,
 >(
     ctx: C,
-    input_len: u32,
     input_permutation: Vec<S>,
 ) -> Result<RevealedAndRandomPermutations, Error> {
     let random_permutations_for_shuffle = get_two_of_three_random_permutations(
-        input_len,
+        u32::try_from(input_permutation.len()).expect("Input size fits into u32"),
         ctx.narrow(&GeneratePermutation).prss_rng(),
     );
 
@@ -85,18 +84,28 @@ pub(super) async fn shuffle_and_reveal_permutation<
     })
 }
 
-async fn execute_malicious<A, M, S, F, Fun, Futur, T>(semi_honest_ctx: SemiHonestContext<'_, F>, input: A, f: Fun) -> T::Target
-    where S: SecretSharing<F>, F: Field, Fun: Fn(M) -> Futur, Futur: Future<Output=T>, T: DowngradeMalicious,
+async fn execute_malicious<'a, A, M, F, Fun, Futur, T>(semi_honest_ctx: SemiHonestContext<'a, F>, input: A, f: Fun) -> T
+    where F: Field, Fun: Fn(MaliciousContext<'a, F>, M) -> Futur, Futur: Future<Output=T>,
           for<'u> UpgradeContext<'u, F, NoRecord>: UpgradeToMalicious<A, M>,
-          T::Target: DowngradeMalicious
+          // T::Target: DowngradeMalicious,
 {
     let mut malicious_validator = MaliciousValidator::new(semi_honest_ctx.clone());
     let malicious_ctx = malicious_validator.context();
     let malicious_input = malicious_ctx.upgrade(input).await.unwrap(); // todo fix the unwrap
 
-    let sh_result = f(malicious_input).await;
+    let sh_result = f(malicious_ctx, malicious_input).await;
+    sh_result
 
-    malicious_validator.validate(sh_result).await.unwrap() //todo fix the unwrap
+    // malicious_validator.validate(sh_result).await.unwrap() //todo fix the unwrap
+}
+
+async fn malicious_wrapper<F>(ctx: SemiHonestContext<'_, F>, input: Vec<Replicated<F>>)
+    where F: Field,
+          for<'u> UpgradeContext<'u, F, NoRecord>: UpgradeToMalicious<Vec<Replicated<F>>, Vec<MaliciousReplicated<F>>>
+{
+    execute_malicious(ctx, input, |ctx, malicious_shares| async move {
+        shuffle_and_reveal_permutation(ctx, malicious_shares).await.unwrap()
+    }).await;
 }
 
 /// This is a malicious implementation of shuffle and reveal.
@@ -172,7 +181,6 @@ pub async fn generate_permutation<F>(
 
     let bit_0_permutation =
         bit_permutation(ctx_0.narrow(&BitPermutationStep), &sort_keys[0]).await?;
-    let input_len = sort_keys[0].len();
 
     let mut composed_less_significant_bits_permutation = bit_0_permutation;
     for bit_num in 1..num_bits {
@@ -180,7 +188,6 @@ pub async fn generate_permutation<F>(
 
         let revealed_and_random_permutations = shuffle_and_reveal_permutation(
             ctx_bit.narrow(&ShuffleRevealPermutation),
-            input_len.try_into().unwrap(), // safe, we don't sort more than 1B rows
             composed_less_significant_bits_permutation,
         )
             .await?;
@@ -240,13 +247,8 @@ pub async fn generate_permutation_and_reveal_shuffled<F: Field>(
     ctx: SemiHonestContext<'_, F>,
     sort_keys: &[Vec<Vec<Replicated<F>>>],
 ) -> Result<RevealedAndRandomPermutations, Error> {
-    let key_count = sort_keys[0].len();
     let sort_permutation = generate_permutation_opt(ctx.narrow(&SortKeys), sort_keys).await?;
-    shuffle_and_reveal_permutation(
-        ctx.narrow(&ShuffleRevealPermutation),
-        u32::try_from(key_count).unwrap(),
-        sort_permutation,
-    )
+    shuffle_and_reveal_permutation(ctx.narrow(&ShuffleRevealPermutation), sort_permutation)
         .await
 }
 
@@ -458,12 +460,9 @@ mod tests {
 
         let [perm0, perm1, perm2] = generate_shares::<Fp31>(&permutation);
 
-        let h0_future =
-            shuffle_and_reveal_permutation(ctx0.narrow("shuffle_reveal"), BATCHSIZE, perm0);
-        let h1_future =
-            shuffle_and_reveal_permutation(ctx1.narrow("shuffle_reveal"), BATCHSIZE, perm1);
-        let h2_future =
-            shuffle_and_reveal_permutation(ctx2.narrow("shuffle_reveal"), BATCHSIZE, perm2);
+        let h0_future = shuffle_and_reveal_permutation(ctx0.narrow("shuffle_reveal"), perm0);
+        let h1_future = shuffle_and_reveal_permutation(ctx1.narrow("shuffle_reveal"), perm1);
+        let h2_future = shuffle_and_reveal_permutation(ctx2.narrow("shuffle_reveal"), perm2);
 
         let perms_and_randoms = join3(h0_future, h1_future, h2_future).await;
 
