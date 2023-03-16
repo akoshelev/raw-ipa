@@ -1,6 +1,6 @@
 use crate::{
     helpers::{
-        buffers::UnorderedReceiver, gateway::wrapper::Wrapper, ChannelId, Error, Message,
+        buffers::UnorderedReceiver, ChannelId, Error, Message,
         Transport, TransportImpl,
     },
     protocol::RecordId,
@@ -45,13 +45,8 @@ impl<M: Message> ReceivingEnd<M> {
     /// and sent to this helper.
     pub async fn receive(&self, record_id: RecordId) -> Result<M, Error> {
         // TODO: proper error handling
-        let v = self.unordered_rx.recv::<Wrapper, _>(record_id).await?;
-
-        let mut buf = GenericArray::default();
-        let sz = buf.len();
-
-        buf.copy_from_slice(&v.0[..sz]);
-        Ok(M::deserialize(&buf))
+        let v = self.unordered_rx.recv::<M, _>(record_id).await?;
+        Ok(v)
     }
 }
 

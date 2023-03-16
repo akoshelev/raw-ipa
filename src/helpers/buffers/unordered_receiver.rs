@@ -12,6 +12,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use std::any::type_name;
 use typenum::Unsigned;
 
 /// A future for receiving item `i` from an `UnorderedReceiver`.
@@ -213,6 +214,7 @@ where
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(b)) => {
+                    println!("got something: {:?} for {:?}", b.as_ref(), type_name::<M>());
                     if let Some(m) = self.spare.extend(b.as_ref()) {
                         self.wake_next();
                         return Poll::Ready(Ok(m));

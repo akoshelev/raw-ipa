@@ -1,12 +1,14 @@
 use crate::{
     helpers::{
         buffers::{OrderingMpscReceiver, UnorderedReceiver},
-        gateway::{receive::UR, wrapper::Wrapper},
+        gateway::{receive::UR},
         ChannelId, GatewayConfig, Role, RoleAssignment, RouteId, Transport,
     },
     protocol::QueryId,
 };
 use std::io;
+use crate::sync::Arc;
+use crate::helpers::buffers::{OrderedStream, OrderingSender};
 
 /// Transport adapter that resolves [`Role`] -> [`HelperIdentity`] mapping. As gateways created
 /// per query, it is not ambiguous.
@@ -22,7 +24,7 @@ impl<T: Transport> RoleResolvingTransport<T> {
     pub(crate) async fn send(
         &self,
         channel_id: &ChannelId,
-        data: OrderingMpscReceiver<Wrapper>,
+        data: OrderedStream<Arc<OrderingSender>>,
     ) -> Result<(), io::Error> {
         let dest_identity = self.roles.identity(channel_id.role);
         assert_ne!(

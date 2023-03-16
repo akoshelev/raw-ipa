@@ -425,6 +425,17 @@ impl From<usize> for TotalRecords {
     }
 }
 
+impl TryFrom<TotalRecords> for usize {
+    type Error = ();
+
+    fn try_from(value: TotalRecords) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TotalRecords::Specified(v) => Ok(v.get()),
+            TotalRecords::Indeterminate | TotalRecords::Unspecified => Err(())
+        }
+    }
+}
+
 #[cfg(all(test, not(feature = "shuttle")))]
 mod tests {
     use super::*;

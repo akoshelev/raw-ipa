@@ -1,7 +1,6 @@
 mod receive;
 mod send;
 mod transport;
-mod wrapper;
 
 pub use receive::ReceivingEnd;
 pub use send::SendingEnd;
@@ -67,16 +66,16 @@ impl Gateway {
         channel_id: &ChannelId,
         total_records: TotalRecords,
     ) -> SendingEnd<M> {
-        let (tx, maybe_recv) = self
+        let (tx, maybe_stream) = self
             .senders
-            .get_or_create(channel_id, self.config.send_outstanding);
-        if let Some(recv) = maybe_recv {
+            .get_or_create::<M>(channel_id, self.config.send_outstanding);
+        if let Some(stream) = maybe_stream {
             tokio::spawn({
                 let channel_id = channel_id.clone();
                 let transport = self.transport.clone();
                 async move {
                     transport
-                        .send(&channel_id, recv)
+                        .send(&channel_id, stream)
                         .await
                         .expect("{channel_id:?} receiving end should be accepted by transport");
                 }

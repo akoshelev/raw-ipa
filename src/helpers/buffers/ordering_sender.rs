@@ -10,16 +10,13 @@ use std::{
     num::NonZeroUsize,
     ops::Deref,
     pin::Pin,
-    sync::{
-        atomic::{
-            AtomicUsize,
-            Ordering::{AcqRel, Acquire},
-        },
-        Mutex, MutexGuard,
-    },
     task::{Context, Poll},
 };
+use std::any::type_name;
+use std::borrow::Borrow;
+use std::sync::Arc;
 use typenum::Unsigned;
+use crate::sync::{Mutex, MutexGuard, atomic::{AtomicUsize, Ordering::{AcqRel, Acquire}}};
 
 /// The operating state for an `OrderingSender`.
 struct State {
@@ -64,7 +61,7 @@ impl State {
     }
 
     fn write<M: Message>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
-        assert!(M::Size::USIZE < self.spare.get());
+        assert!(M::Size::USIZE < self.spare.get(), "expect message size {:?} to be less than spare {:?}", M::Size::USIZE, self.spare.get());
         let b = &mut self.buf[self.written..];
         if M::Size::USIZE <= b.len() {
             self.written += M::Size::USIZE;
@@ -207,7 +204,7 @@ impl Waiting {
 /// [`new`]: OrderingSender::new
 /// [`send`]: OrderingSender::send
 /// [`close`]: OrderingSender::close
-struct OrderingSender {
+pub struct OrderingSender {
     next: AtomicUsize,
     state: Mutex<State>,
     waiting: Waiting,
@@ -285,7 +282,7 @@ impl OrderingSender {
     }
 
     /// Take the next chunk of data that the sender has produced.
-    /// This function implements most of what `OrderedStream` needs.
+    /// This function implements most of what [`OrderedStream`] needs.
     fn take_next(&self, cx: &Context<'_>) -> Poll<Option<Vec<u8>>> {
         let mut b = self.state.lock().unwrap();
 
@@ -303,8 +300,12 @@ impl OrderingSender {
     /// The stream interface requires a mutable reference to the stream itself.
     /// That's not possible here as we create a ton of immutable references to this.
     /// This wrapper takes a trivial reference so that we can implement `Stream`.
-    fn as_stream(&self) -> OrderedStream<'_> {
+    pub(crate) fn as_stream(&self) -> OrderedStream<&Self> {
         OrderedStream { sender: self }
+    }
+
+    pub(crate) fn as_rc_stream(self: &Arc<Self>) -> OrderedStream<Arc<Self>> {
+        OrderedStream { sender: self.clone() }
     }
 }
 
@@ -359,24 +360,24 @@ impl<'s> Future for Close<'s> {
 /// the next stream that happens to be polled.  Ordinarily streams require a
 /// mutable reference so that they have exclusive access to the underlying state.
 /// To avoid that happening, don't make more than one stream.
-struct OrderedStream<'s> {
-    sender: &'s OrderingSender,
+pub struct OrderedStream<B: Borrow<OrderingSender>> {
+    sender: B,
 }
 
-impl<'s> Stream for OrderedStream<'s> {
+impl <B: Borrow<OrderingSender> + Unpin> Stream for OrderedStream<B> {
     type Item = Vec<u8>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::get_mut(self).sender.take_next(cx)
+        Pin::get_mut(self).sender.borrow().take_next(cx)
     }
 }
 
-impl<'s> Deref for OrderedStream<'s> {
-    type Target = OrderingSender;
-    fn deref(&self) -> &Self::Target {
-        self.sender
-    }
-}
+// impl<'s> Deref for OrderedStream<'s> {
+//     type Target = OrderingSender;
+//     fn deref(&self) -> &Self::Target {
+//         self.sender
+//     }
+// }
 
 #[cfg(test)]
 mod test {
@@ -384,6 +385,7 @@ mod test {
     use crate::{
         ff::{Fp31, Fp32BitPrime, Serializable},
         rand::thread_rng,
+        sync::Arc,
     };
     use futures::{
         future::{join, join3, join_all},
@@ -395,8 +397,8 @@ mod test {
     use std::{iter::zip, num::NonZeroUsize};
     use typenum::Unsigned;
 
-    fn sender() -> OrderingSender {
-        OrderingSender::new(NonZeroUsize::new(6).unwrap(), NonZeroUsize::new(5).unwrap())
+    fn sender() -> Arc<OrderingSender> {
+        Arc::new(OrderingSender::new(NonZeroUsize::new(6).unwrap(), NonZeroUsize::new(5).unwrap()))
     }
 
     #[cfg(not(feature = "shuttle"))]
@@ -439,9 +441,10 @@ mod test {
             let input = Fp31::from(7_u128);
             let sender = sender();
             let send = sender.send(0, input);
+            let stream = sender.as_stream();
             let close = sender.close(1);
             let send_close = join(send, close);
-            let (_, taken) = join(send_close, sender.as_stream().collect::<Vec<_>>()).await;
+            let (_, taken) = join(send_close, stream.collect::<Vec<_>>()).await;
             let flat = taken.into_iter().flatten().collect::<Vec<_>>();
             let output = Fp31::deserialize(GenericArray::from_slice(&flat));
             assert_eq!(input, output);
