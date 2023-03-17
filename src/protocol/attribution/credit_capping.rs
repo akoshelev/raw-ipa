@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     error::Error,
-    ff::Field,
+    ff::{Field, PrimeField},
     protocol::{
         basics::SecureMul,
         boolean::{greater_than_constant, random_bits_generator::RandomBitsGenerator, RandomBits},
@@ -29,7 +29,7 @@ pub async fn credit_capping<F, C, T>(
     cap: u32,
 ) -> Result<Vec<MCCreditCappingOutputRow<F, T>>, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context + RandomBits<F, Share = T>,
     T: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -225,12 +225,14 @@ async fn is_credit_larger_than_cap<F, C, T>(
     cap: u32,
 ) -> Result<Vec<T>, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context + RandomBits<F, Share = T>,
     T: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
-    let random_bits_generator =
-        RandomBitsGenerator::new(ctx.narrow(&Step::RandomBitsForComparison));
+    let random_bits_generator = RandomBitsGenerator::new(
+        ctx.narrow(&Step::RandomBitsForComparison),
+        prefix_summed_credits.len(),
+    );
     let rbg = &random_bits_generator;
 
     try_join_all(

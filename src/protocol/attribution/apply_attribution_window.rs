@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     error::Error,
-    ff::Field,
+    ff::{Field, PrimeField},
     protocol::{
         boolean::{greater_than_constant, random_bits_generator::RandomBitsGenerator, RandomBits},
         context::Context,
@@ -28,7 +28,7 @@ async fn apply_attribution_window<F, C, T>(
     attribution_window_seconds: u32,
 ) -> Result<impl Iterator<Item = MCApplyAttributionWindowOutputRow<F, T>> + '_, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context + RandomBits<F, Share = T>,
     T: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -129,7 +129,7 @@ async fn zero_out_expired_trigger_values<F, C, T>(
     cap: u32,
 ) -> Result<Vec<T>, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context + RandomBits<F, Share = T>,
     T: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -139,8 +139,10 @@ where
     let cmp_ctx = c.narrow(&Step::TimeDeltaLessThanCap);
     let mul_ctx = c.narrow(&Step::CompareBitTimesTriggerValue);
 
-    let random_bits_generator =
-        RandomBitsGenerator::new(c.narrow(&Step::RandomBitsForBitDecomposition));
+    let random_bits_generator = RandomBitsGenerator::new(
+        c.narrow(&Step::RandomBitsForBitDecomposition),
+        input.len(),
+    );
     let rbg = &random_bits_generator;
 
     try_join_all(

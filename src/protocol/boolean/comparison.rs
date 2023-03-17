@@ -1,7 +1,7 @@
 use super::or::or;
 use crate::{
     error::Error,
-    ff::Field,
+    ff::PrimeField,
     protocol::{
         boolean::{random_bits_generator::RandomBitsGenerator, RandomBits},
         context::Context,
@@ -67,7 +67,7 @@ pub async fn greater_than_constant<F, C, S>(
     c: u128,
 ) -> Result<S, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context + RandomBits<F, Share = S>,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -75,7 +75,7 @@ where
 
     assert!(c < F::PRIME.into());
 
-    let r = rbg.generate().await?;
+    let r = rbg.generate(record_id).await?;
 
     // Mask `a` with random `r` and reveal.
     let b = (r.b_p.clone() + a)
@@ -181,7 +181,7 @@ pub async fn bitwise_greater_than_constant<F, C, S>(
     c: u128,
 ) -> Result<S, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -213,7 +213,7 @@ pub async fn bitwise_less_than_constant<F, C, S>(
     c: u128,
 ) -> Result<S, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -243,7 +243,7 @@ async fn first_differing_bit<F, C, S>(
     b: u128,
 ) -> Result<Vec<S>, Error>
 where
-    F: Field,
+    F: PrimeField,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
 {
@@ -322,7 +322,7 @@ mod tests {
         greater_than_constant,
     };
     use crate::{
-        ff::{Field, Fp31, Fp32BitPrime},
+        ff::{Field, Fp31, Fp32BitPrime, PrimeField},
         protocol::{
             boolean::random_bits_generator::RandomBitsGenerator, context::Context, RecordId,
         },
@@ -333,7 +333,7 @@ mod tests {
     use proptest::proptest;
     use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-    async fn bitwise_lt<F: Field>(world: &TestWorld, a: F, b: u128) -> F
+    async fn bitwise_lt<F: PrimeField>(world: &TestWorld, a: F, b: u128) -> F
     where
         (F, F): Sized,
         Standard: Distribution<F>,
@@ -363,7 +363,7 @@ mod tests {
         result
     }
 
-    async fn bitwise_gt<F: Field>(world: &TestWorld, a: F, b: u128) -> F
+    async fn bitwise_gt<F: PrimeField>(world: &TestWorld, a: F, b: u128) -> F
     where
         (F, F): Sized,
         Standard: Distribution<F>,
@@ -403,7 +403,7 @@ mod tests {
         result
     }
 
-    async fn gt<F: Field>(world: &TestWorld, lhs: F, rhs: u128) -> F
+    async fn gt<F: PrimeField>(world: &TestWorld, lhs: F, rhs: u128) -> F
     where
         (F, F): Sized,
         Standard: Distribution<F>,
@@ -414,7 +414,7 @@ mod tests {
                 greater_than_constant(
                     ctx.clone(),
                     RecordId::from(0),
-                    &RandomBitsGenerator::new(ctx),
+                    &RandomBitsGenerator::new(ctx, 1),
                     &lhs,
                     rhs,
                 )
@@ -430,7 +430,7 @@ mod tests {
                 greater_than_constant(
                     ctx.clone(),
                     RecordId::from(0),
-                    &RandomBitsGenerator::new(ctx),
+                    &RandomBitsGenerator::new(ctx, 1),
                     &lhs,
                     rhs,
                 )
