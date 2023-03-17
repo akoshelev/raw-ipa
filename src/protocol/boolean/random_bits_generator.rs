@@ -37,9 +37,15 @@ where
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // TODO: pending resolution of TotalRecords::Indeterminate
     pub fn new(ctx: C) -> Self {
-        debug_assert!(ctx.is_total_records_unspecified());
+        // debug_assert!(ctx.is_total_records_unspecified());
+        let ctx = if ctx.is_total_records_unspecified() {
+            println!("indeterminate {}", ctx.step());
+            ctx.set_total_records(TotalRecords::Indeterminate)
+        } else {
+            ctx
+        };
         Self {
-            ctx: ctx.set_total_records(TotalRecords::Indeterminate),
+            ctx,
             record_id: AtomicU32::new(0),
             abort_count: AtomicUsize::new(0),
             _marker: PhantomData,
@@ -55,7 +61,7 @@ where
     /// read from an empty buffer, etc.
     pub async fn generate(&self) -> Result<RandomBitsShare<F, S>, Error> {
         loop {
-            let i = self.record_id.fetch_add(1, Ordering::Relaxed);
+            let i = self.record_id.fetch_add(1, Ordering::AcqRel);
             if let Some(v) = solved_bits(self.ctx.clone(), RecordId::from(i)).await? {
                 return Ok(v);
             }

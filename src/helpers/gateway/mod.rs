@@ -6,6 +6,7 @@ pub use receive::ReceivingEnd;
 pub use send::SendingEnd;
 
 use std::{fmt::Debug, num::NonZeroUsize};
+use std::marker::PhantomData;
 
 use crate::{
     helpers::{transport::TransportImpl, ChannelId, Message, Role, RoleAssignment, TotalRecords},
@@ -68,7 +69,7 @@ impl Gateway {
     ) -> SendingEnd<M> {
         let (tx, maybe_stream) = self
             .senders
-            .get_or_create::<M>(channel_id, self.config.send_outstanding);
+            .get_or_create::<M>(channel_id, self.config.send_outstanding, total_records);
         if let Some(stream) = maybe_stream {
             tokio::spawn({
                 let channel_id = channel_id.clone();
@@ -82,7 +83,7 @@ impl Gateway {
             });
         }
 
-        SendingEnd::new(channel_id.clone(), self.role(), tx, total_records)
+        SendingEnd::new(tx, self.role(), channel_id)
     }
 
     #[must_use]
@@ -135,14 +136,11 @@ mod tests {
         // sent (same batch or different does not matter here)
         tokio::spawn(async move {
             let channel = sender_ctx.send_channel(Role::H2);
-            channel
-                .send(RecordId::from(1), Fp31::from(1_u128))
-                .await
-                .unwrap();
+            try_join(channel
+                .send(RecordId::from(1), Fp31::from(1_u128)),
             channel
                 .send(RecordId::from(0), Fp31::from(0_u128))
-                .await
-                .unwrap();
+            ).await.unwrap();
         });
 
         let recv_channel = recv_ctx.recv_channel::<Fp31>(Role::H1);

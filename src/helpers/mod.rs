@@ -414,6 +414,14 @@ impl TotalRecords {
     pub fn is_indeterminate(&self) -> bool {
         matches!(self, &TotalRecords::Indeterminate)
     }
+
+    #[must_use]
+    pub fn count(&self) -> Option<usize> {
+        match self {
+            TotalRecords::Specified(v) => Some(v.get()),
+            TotalRecords::Indeterminate | TotalRecords::Unspecified => None
+        }
+    }
 }
 
 impl From<usize> for TotalRecords {
@@ -421,17 +429,6 @@ impl From<usize> for TotalRecords {
         match NonZeroUsize::new(value) {
             Some(v) => TotalRecords::Specified(v),
             None => TotalRecords::Unspecified,
-        }
-    }
-}
-
-impl TryFrom<TotalRecords> for usize {
-    type Error = ();
-
-    fn try_from(value: TotalRecords) -> std::result::Result<Self, Self::Error> {
-        match value {
-            TotalRecords::Specified(v) => Ok(v.get()),
-            TotalRecords::Indeterminate | TotalRecords::Unspecified => Err(())
         }
     }
 }

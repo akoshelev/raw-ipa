@@ -294,7 +294,8 @@ impl<'a, F: Field>
         self,
         input: IPAModulusConvertedInputRowWrapper<F, Replicated<F>>,
     ) -> Result<IPAModulusConvertedInputRowWrapper<F, MaliciousReplicated<F>>, Error> {
-        let ctx_ref = &self.upgrade_ctx;
+        println!("hello");
+        let ctx_ref = &self.upgrade_ctx.set_total_records(input.mk_shares.len());
         let mk_shares = try_join_all(input.mk_shares.into_iter().enumerate().map(
             |(idx, mk_share)| async move {
                 self.inner
@@ -510,7 +511,7 @@ impl<'a, F: Field> ContextInner<'a, F> {
         UpgradeContext {
             upgrade_ctx: self
                 .upgrade_ctx
-                .set_total_records(TotalRecords::Indeterminate)
+                // .set_total_records(TotalRecords::Indeterminate)
                 .narrow(step),
             inner: self,
             record_binding: record_id,

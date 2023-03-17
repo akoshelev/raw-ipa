@@ -283,7 +283,7 @@ impl OrderingSender {
 
     /// Take the next chunk of data that the sender has produced.
     /// This function implements most of what [`OrderedStream`] needs.
-    fn take_next(&self, cx: &Context<'_>) -> Poll<Option<Vec<u8>>> {
+    pub fn take_next(&self, cx: &Context<'_>) -> Poll<Option<Vec<u8>>> {
         let mut b = self.state.lock().unwrap();
 
         if let Poll::Ready(v) = b.take(cx) {
@@ -304,8 +304,8 @@ impl OrderingSender {
         OrderedStream { sender: self }
     }
 
-    pub(crate) fn as_rc_stream(self: &Arc<Self>) -> OrderedStream<Arc<Self>> {
-        OrderedStream { sender: self.clone() }
+    pub(crate) fn as_rc_stream(self: Arc<Self>) -> OrderedStream<Arc<Self>> {
+        OrderedStream { sender: self }
     }
 }
 
@@ -371,13 +371,6 @@ impl <B: Borrow<OrderingSender> + Unpin> Stream for OrderedStream<B> {
         Pin::get_mut(self).sender.borrow().take_next(cx)
     }
 }
-
-// impl<'s> Deref for OrderedStream<'s> {
-//     type Target = OrderingSender;
-//     fn deref(&self) -> &Self::Target {
-//         self.sender
-//     }
-// }
 
 #[cfg(test)]
 mod test {

@@ -1,6 +1,10 @@
 use dashmap::DashMap;
 use std::{marker::PhantomData, num::NonZeroUsize};
 use std::any::type_name;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
+use futures::Stream;
 use typenum::Unsigned;
 use crate::sync::Arc;
 
@@ -17,33 +21,81 @@ use crate::{
 };
 use crate::helpers::buffers::{OrderedStream, OrderingSender};
 
+
 /// Sending end of the gateway channel.
 pub struct SendingEnd<M: Message> {
+    sender_role: Role,
     channel_id: ChannelId,
-    my_role: Role,
-    ordering_tx: Arc<OrderingSender>,
-    total_records: TotalRecords,
+    inner: Arc<GatewaySender>,
     _phantom: PhantomData<M>,
 }
 
 /// Sending channels, indexed by (role, step).
 #[derive(Default)]
 pub(super) struct GatewaySenders {
-    inner: DashMap<ChannelId, Arc<OrderingSender>>,
+    inner: DashMap<ChannelId, Arc<GatewaySender>>,
 }
 
-impl<M: Message> SendingEnd<M> {
-    pub(super) fn new(
+pub(super) struct GatewaySender {
+    channel_id: ChannelId,
+    ordering_tx: OrderingSender,
+    total_records: TotalRecords,
+    records_sent: AtomicUsize,
+}
+
+pub(super) struct GatewaySendStream {
+    inner: Arc<GatewaySender>
+}
+
+impl GatewaySender {
+    fn new(
         channel_id: ChannelId,
-        my_role: Role,
-        tx: Arc<OrderingSender>,
+        tx: OrderingSender,
         total_records: TotalRecords,
     ) -> Self {
         Self {
             channel_id,
-            my_role,
             ordering_tx: tx,
             total_records,
+            records_sent: AtomicUsize::new(0)
+        }
+    }
+
+    pub async fn send<M: Message>(&self, record_id: RecordId, msg: M) -> Result<(), Error> {
+        if let TotalRecords::Specified(count) = self.total_records {
+            if usize::from(record_id) >= count.get() {
+                return Err(Error::TooManyRecords {
+                    record_id,
+                    channel_id: self.channel_id.clone(),
+                    total_records: self.total_records,
+                });
+            }
+        }
+
+
+        // TODO: make OrderingSender::send fallible
+        // TODO: test channel close
+        let r = Ok(self.ordering_tx
+            .send(record_id.into(), msg)
+            .await);
+
+        let records_sent = self.records_sent.fetch_add(1, Ordering::AcqRel);
+        println!("{record_id:?} sent through channel {:?}, total: {records_sent}, expected: {:?}", self.channel_id, self.total_records);
+        if Some(records_sent + 1) == self.total_records.count() {
+            println!("closing channel");
+            self.ordering_tx.close(records_sent + 1).await
+        }
+
+        r
+    }
+}
+
+impl <M: Message> SendingEnd<M> {
+    pub(super) fn new(sender: Arc<GatewaySender>, role: Role, channel_id: &ChannelId) -> Self {
+        Self {
+            sender_role: role,
+            channel_id: channel_id.clone(),
+            inner: sender,
             _phantom: PhantomData,
         }
     }
@@ -58,35 +110,11 @@ impl<M: Message> SendingEnd<M> {
     ///
     /// [`set_total_records`]: crate::protocol::context::Context::set_total_records
     pub async fn send(&self, record_id: RecordId, msg: M) -> Result<(), Error> {
-        let close = if let TotalRecords::Specified(count) = self.total_records {
-            match usize::from(record_id) {
-                v if v >= count.get() => {
-                    return Err(Error::TooManyRecords {
-                        record_id,
-                        channel_id: self.channel_id.clone(),
-                        total_records: self.total_records,
-                    });
-                },
-                v => v == count.get() - 1
-            }
-        } else {
-            false
-        };
-
+        let r = self.inner.send(record_id, msg).await;
         metrics::increment_counter!(RECORDS_SENT,
             STEP => self.channel_id.step.as_ref().to_string(),
-            ROLE => self.my_role.as_static_str()
+            ROLE => self.sender_role.as_static_str()
         );
-
-        // TODO: make OrderingSender::send fallible
-        // TODO: test channel close
-        let r = Ok(self.ordering_tx
-            .send(record_id.into(), msg)
-            .await);
-
-        if close {
-            self.ordering_tx.close(self.total_records.try_into().unwrap()).await;
-        }
 
         r
     }
@@ -100,20 +128,30 @@ impl GatewaySenders {
         &self,
         channel_id: &ChannelId,
         capacity: NonZeroUsize,
+        total_records: TotalRecords,
     ) -> (
-        Arc<OrderingSender>,
-        Option<OrderedStream<Arc<OrderingSender>>>,
+        Arc<GatewaySender>,
+        Option<GatewaySendStream>,
     ) {
         let senders = &self.inner;
         if let Some(sender) = senders.get(channel_id) {
             (Arc::clone(&sender), None)
         } else {
-            // todo: figure out the right spare size. It seems that in case where capacity mod M::size == 0
-            // we don't really need spare, but it cannot be set to 0 or any value < M::size
-            let sender = Arc::new(OrderingSender::new(capacity, NonZeroUsize::new(M::Size::USIZE + 1).unwrap()));
+            // todo: capacity is ignored
+            let capacity_bytes = NonZeroUsize::new(4096).unwrap();
+            let spare_bytes = NonZeroUsize::new(64).unwrap();
+            let sender = Arc::new(GatewaySender::new(channel_id.clone(), OrderingSender::new(capacity_bytes, spare_bytes), total_records));
             senders.insert(channel_id.clone(), Arc::clone(&sender));
-            let stream = sender.as_rc_stream();
+            let stream = GatewaySendStream { inner: Arc::clone(&sender) };
             (sender, Some(stream))
         }
+    }
+}
+
+impl Stream for GatewaySendStream {
+    type Item = Vec<u8>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::get_mut(self).inner.ordering_tx.take_next(cx)
     }
 }

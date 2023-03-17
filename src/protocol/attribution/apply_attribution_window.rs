@@ -135,12 +135,12 @@ where
 {
     // Compare the accumulated timestamp deltas with the specified attribution window
     // cap value, and zero-out trigger event values that exceed the cap.
-    let c = ctx.clone().set_total_records(input.len());
+    let c = ctx.set_total_records(input.len());
     let cmp_ctx = c.narrow(&Step::TimeDeltaLessThanCap);
     let mul_ctx = c.narrow(&Step::CompareBitTimesTriggerValue);
 
     let random_bits_generator =
-        RandomBitsGenerator::new(ctx.narrow(&Step::RandomBitsForBitDecomposition));
+        RandomBitsGenerator::new(c.narrow(&Step::RandomBitsForBitDecomposition));
     let rbg = &random_bits_generator;
 
     try_join_all(
