@@ -59,7 +59,7 @@ where
     // `exceeds_cap_bits` = 1 if `prefix_summed_credits` > `cap`
     //
     let exceeds_cap_bits =
-        is_credit_larger_than_cap(ctx.set_total_records(input_len), &prefix_summed_credits, cap).await?;
+        is_credit_larger_than_cap(ctx.clone(), &prefix_summed_credits, cap).await?;
 
     //
     // 4. Compute the `final_credit`
@@ -67,7 +67,7 @@ where
     // We compute capped credits in the method, and writes to `original_credits`.
     //
     let final_credits = compute_final_credits(
-        ctx.clone(),
+        ctx,
         input,
         &prefix_summed_credits,
         &exceeds_cap_bits,
@@ -234,6 +234,7 @@ where
         prefix_summed_credits.len(),
     );
     let rbg = &random_bits_generator;
+    let ctx = ctx.set_total_records(prefix_summed_credits.len());
 
     try_join_all(
         prefix_summed_credits

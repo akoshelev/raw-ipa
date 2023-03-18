@@ -140,7 +140,7 @@ where
     let mul_ctx = c.narrow(&Step::CompareBitTimesTriggerValue);
 
     let random_bits_generator = RandomBitsGenerator::new(
-        c.narrow(&Step::RandomBitsForBitDecomposition),
+        ctx.narrow(&Step::RandomBitsForBitDecomposition),
         input.len(),
     );
     let rbg = &random_bits_generator;

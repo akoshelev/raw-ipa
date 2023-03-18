@@ -50,12 +50,14 @@ enum RBGStep {
     /// failed to pass the prime test. It is widely inefficient to use, so field must be large enough
     /// so it does not happen often
     FallbackChannel,
+    RegChannel,
 }
 
 impl AsRef<str> for RBGStep {
     fn as_ref(&self) -> &str {
         match self {
-            RBGStep::FallbackChannel => "fallback",
+            RBGStep::FallbackChannel => "rgb_fallback",
+            RBGStep::RegChannel => "rgb_default"
         }
     }
 }
@@ -74,9 +76,10 @@ where
         // todo: remove and use capacity for the default generator
         debug_assert!(ctx.is_total_records_unspecified());
         let total_records = total_records.into();
+        println!("rnadom bits gen created: {total_records:?}");
         Self {
             total_records,
-            default_generator: CountingGenerator::new(ctx.set_total_records(total_records)),
+            default_generator: CountingGenerator::new(ctx.narrow(&RBGStep::RegChannel).set_total_records(total_records)),
             fallback_generator: CountingGenerator::new(
                 ctx.narrow(&RBGStep::FallbackChannel)
                     .set_total_records(TotalRecords::Indeterminate),

@@ -151,10 +151,15 @@ impl<'a, F: Field> Context for MaliciousContext<'a, F> {
             self.is_total_records_unspecified(),
             "attempt to set total_records more than once"
         );
+        let total_records = total_records.into();
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: ContextInner::new(
+                self.inner.upgrade_ctx.set_total_records(total_records),
+                self.inner.accumulator.clone(),
+                self.inner.r_share.clone(),
+            ),
             step: self.step.clone(),
-            total_records: total_records.into(),
+            total_records,
         }
     }
 
@@ -583,7 +588,7 @@ impl<'a, F: Field> UpgradeContext<'a, F, NoRecord> {
     ) -> Result<MaliciousReplicated<F>, Error> {
         self.inner
             .upgrade_one(
-                self.upgrade_ctx.set_total_records(1),
+                self.upgrade_ctx,
                 RecordId::from(0u32),
                 input,
                 zeros_at,
