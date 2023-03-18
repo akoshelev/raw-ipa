@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use futures::Stream;
-use typenum::Unsigned;
+use typenum::{Or, Unsigned};
 use crate::sync::Arc;
 
 use crate::{
@@ -143,7 +143,21 @@ impl GatewaySenders {
             // todo: capacity is ignored
             let capacity_bytes = NonZeroUsize::new(4096).unwrap();
             let spare_bytes = NonZeroUsize::new(64).unwrap();
-            let sender = Arc::new(GatewaySender::new(channel_id.clone(), OrderingSender::new(capacity_bytes, spare_bytes), total_records));
+            // a little trick - if number of records is indeterminate, set the spare capacity
+            // to be >> buffer capacity. What it means is that write carrying a single byte  will
+            // enable stream to flush the data and make it available on the receiving side.
+            // Effectively it disables buffering, but it does not mean that receiver will get one
+            // item at a time, because polling is still greedy.
+            // This mode is clearly inefficient, so it is ideal if we don't have a lot of cases
+            // where we need to put the sender in this mode.
+            let ordering_sender = if matches!(total_records, TotalRecords::Indeterminate) {
+                OrderingSender::new(NonZeroUsize::new(1).unwrap(), capacity_bytes)
+            } else {
+                OrderingSender::new(capacity_bytes, spare_bytes)
+            };
+
+            // , total_records));
+            let sender = Arc::new(GatewaySender::new(channel_id.clone(), ordering_sender, total_records));
             senders.insert(channel_id.clone(), Arc::clone(&sender));
             let stream = GatewaySendStream { inner: Arc::clone(&sender) };
             (sender, Some(stream))
