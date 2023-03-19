@@ -76,7 +76,6 @@ where
         // todo: remove and use capacity for the default generator
         debug_assert!(ctx.is_total_records_unspecified());
         let total_records = total_records.into();
-        println!("rnadom bits gen created: {total_records:?}");
         Self {
             total_records,
             default_generator: CountingGenerator::new(ctx.narrow(&RBGStep::RegChannel).set_total_records(total_records)),

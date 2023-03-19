@@ -83,9 +83,7 @@ impl GatewaySender {
         if matches!(self.total_records, TotalRecords::Unspecified) {
             println!("unspecified!");
         }
-        println!("{record_id:?} sent through channel {:?}, total: {records_sent}, expected: {:?}", self.channel_id, self.total_records);
         if Some(records_sent + 1) == self.total_records.count() {
-            println!("closing channel");
             self.ordering_tx.close(records_sent + 1).await
         }
 
