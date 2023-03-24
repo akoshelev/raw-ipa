@@ -19,6 +19,8 @@ use crate::{
 
 use super::TestWorld;
 
+#[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum IpaSecurityModel {
     SemiHonest,
     Malicious,
