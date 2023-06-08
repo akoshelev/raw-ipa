@@ -234,7 +234,7 @@ where
                 // TODO: configuration
                 .http_config(
                     HttpConfig::default()
-                        .http2_max_concurrent_streams(Some(256))
+                        .http2_max_concurrent_streams(Some(10000))
                         .build(),
                 )
                 .handle(handle)
