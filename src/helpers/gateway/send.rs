@@ -7,6 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 use typenum::Unsigned;
 
 use crate::{
@@ -36,6 +37,7 @@ pub(super) struct GatewaySender {
     channel_id: ChannelId,
     ordering_tx: OrderingSender,
     total_records: TotalRecords,
+    active_send_streams: Arc<AtomicU32>,
 }
 
 pub(super) struct GatewaySendStream {
@@ -43,11 +45,12 @@ pub(super) struct GatewaySendStream {
 }
 
 impl GatewaySender {
-    fn new(channel_id: ChannelId, tx: OrderingSender, total_records: TotalRecords) -> Self {
+    fn new(active_send_streams: Arc<AtomicU32>, channel_id: ChannelId, tx: OrderingSender, total_records: TotalRecords) -> Self {
         Self {
             channel_id,
             ordering_tx: tx,
             total_records,
+            active_send_streams,
         }
     }
 
@@ -72,6 +75,7 @@ impl GatewaySender {
         self.ordering_tx.send(i, msg).await;
         if self.total_records.is_last(record_id) {
             self.ordering_tx.close(i + 1).await;
+            tracing::info!("{:?} closed: {}", self.channel_id, self.active_send_streams.fetch_sub(1, Ordering::Relaxed));
         }
 
         Ok(())
@@ -118,9 +122,10 @@ impl GatewaySenders {
     /// messages to get through.
     pub(crate) fn get_or_create<M: Message>(
         &self,
+        active_streams: Arc<AtomicU32>,
         channel_id: &ChannelId,
         capacity: NonZeroUsize,
-        total_records: TotalRecords, // TODO track children for indeterminate senders
+        total_records: TotalRecords,
     ) -> (Arc<GatewaySender>, Option<GatewaySendStream>) {
         assert!(!total_records.is_unspecified());
         let senders = &self.inner;
@@ -143,8 +148,9 @@ impl GatewaySenders {
                     )
                     .expect("capacity should not overflow")
             };
-
+            tracing::info!("opening new stream: {channel_id:?}: {}", active_streams.fetch_add(1, Ordering::Relaxed));
             let sender = Arc::new(GatewaySender::new(
+                Arc::clone(&active_streams),
                 channel_id.clone(),
                 OrderingSender::new(write_size, SPARE.unwrap()),
                 total_records,

@@ -18,6 +18,8 @@ use crate::{
 #[cfg(all(feature = "shuttle", test))]
 use shuttle::future as tokio;
 use std::{fmt::Debug, num::NonZeroUsize};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 /// Alias for the currently configured transport.
 ///
@@ -42,6 +44,7 @@ pub struct Gateway<T: Transport = TransportImpl> {
     transport: RoleResolvingTransport<T>,
     senders: GatewaySenders,
     receivers: GatewayReceivers<T>,
+    active_send_streams: Arc<AtomicU32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,6 +72,7 @@ impl<T: Transport> Gateway<T> {
             },
             senders: GatewaySenders::default(),
             receivers: GatewayReceivers::default(),
+            active_send_streams: Arc::new(AtomicU32::default()),
         }
     }
 
@@ -90,17 +94,19 @@ impl<T: Transport> Gateway<T> {
     ) -> SendingEnd<M> {
         let (tx, maybe_stream) =
             self.senders
-                .get_or_create::<M>(channel_id, self.config.active_work(), total_records);
+                .get_or_create::<M>(Arc::clone(&self.active_send_streams), channel_id, self.config.active_work(), total_records);
         if let Some(stream) = maybe_stream {
             tokio::spawn({
                 let channel_id = channel_id.clone();
                 let transport = self.transport.clone();
                 async move {
                     // TODO(651): In the HTTP case we probably need more robust error handling here.
-                    transport
+                    if let Err(e) = transport
                         .send(&channel_id, stream)
-                        .await
-                        .expect("{channel_id:?} receiving end should be accepted by transport");
+                        .await {
+                        tracing::error!("{channel_id:?} failed to send data: {e:?}");
+                        panic!("{channel_id:?} receiving end should be accepted by transport");
+                    }
                 }
             });
         }
