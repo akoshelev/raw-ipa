@@ -119,7 +119,7 @@ impl<T: Transport> Gateway<T> {
 
 impl Default for GatewayConfig {
     fn default() -> Self {
-        Self::new(1024)
+        Self::new(4096)
     }
 }
 
