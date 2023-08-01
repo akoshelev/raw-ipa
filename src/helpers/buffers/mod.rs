@@ -7,7 +7,7 @@ use std::{fmt, ops::RangeInclusive};
 
 pub use ordering_mpsc::{ordering_mpsc, OrderingMpscReceiver, OrderingMpscSender};
 pub use ordering_sender::{OrderedStream, OrderingSender};
-pub use unordered_receiver::{UnorderedReceiver};
+pub use unordered_receiver::UnorderedReceiver;
 
 #[cfg(feature = "idle-tracking")]
 pub use ordering_sender::IdleTrackOrderingSender;

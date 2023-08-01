@@ -402,7 +402,6 @@ use crate::helpers::buffers::LoggingRanges;
 
 #[cfg(feature = "idle-tracking")]
 impl IdleTrackOrderingSender {
-
     pub fn new(write_size: NonZeroUsize, spare: NonZeroUsize, message_size: usize) -> Self {
         Self(OrderingSender::new(write_size, spare, message_size))
     }

@@ -199,7 +199,9 @@ impl GatewaySenders {
     }
 
     #[cfg(feature = "idle-tracking")]
-    pub fn get_all_missing_messages(&self) -> std::collections::HashMap<ChannelId, Vec<LoggingRanges>> {
+    pub fn get_all_missing_messages(
+        &self,
+    ) -> std::collections::HashMap<ChannelId, Vec<LoggingRanges>> {
         self.inner
             .iter()
             .filter_map(|entry| {

@@ -40,7 +40,6 @@ pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 pub type TransportError = <TransportImpl as Transport>::Error;
 pub type ReceivingEnd<M> = ReceivingEndBase<TransportImpl, M>;
 
-
 #[cfg(feature = "idle-tracking")]
 type SenderType = crate::sync::Arc<GatewaySenders>;
 #[cfg(feature = "idle-tracking")]
@@ -87,12 +86,15 @@ impl<T: Transport> Gateway<T> {
         let (senders, receivers, handle) = {
             let senders = crate::sync::Arc::new(GatewaySenders::default());
             let receivers = crate::sync::Arc::new(GatewayReceivers::default());
-            (crate::sync::Arc::clone(&senders), crate::sync::Arc::clone(&receivers), Some(Self::create_idle_tracker(senders, receivers)))
+            (
+                crate::sync::Arc::clone(&senders),
+                crate::sync::Arc::clone(&receivers),
+                Some(Self::create_idle_tracker(senders, receivers)),
+            )
         };
         #[cfg(not(feature = "idle-tracking"))]
-            let (senders, receivers, handle) = {
-            (GatewaySenders::default(), GatewayReceivers::default(), None)
-        };
+        let (senders, receivers, handle) =
+            { (GatewaySenders::default(), GatewayReceivers::default(), None) };
 
         Self {
             config,
@@ -283,8 +285,14 @@ mod tests {
         // sent (same batch or different does not matter here)
         let spawned = tokio::spawn(async move {
             let channel = sender_ctx.send_channel(Role::H2);
-            channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)).await.unwrap();
-            channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)).await.unwrap();
+            channel
+                .send(RecordId::from(1), Fp31::truncate_from(1_u128))
+                .await
+                .unwrap();
+            channel
+                .send(RecordId::from(0), Fp31::truncate_from(0_u128))
+                .await
+                .unwrap();
             // try_join(
             //     channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
             //     channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),
