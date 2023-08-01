@@ -2,14 +2,19 @@ mod ordering_mpsc;
 pub(crate) mod ordering_sender;
 mod unordered_receiver;
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 use std::{fmt, ops::RangeInclusive};
 
 pub use ordering_mpsc::{ordering_mpsc, OrderingMpscReceiver, OrderingMpscSender};
-pub use ordering_sender::{IdleTrackOrderingSender, OrderedStream, OrderingSender};
-pub use unordered_receiver::{IdleTrackUnorderedReceiver, UnorderedReceiver};
+pub use ordering_sender::{OrderedStream, OrderingSender};
+pub use unordered_receiver::{UnorderedReceiver};
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
+pub use ordering_sender::IdleTrackOrderingSender;
+#[cfg(feature = "idle-tracking")]
+pub use unordered_receiver::IdleTrackUnorderedReceiver;
+
+#[cfg(feature = "idle-tracking")]
 use itertools::Itertools;
 
 #[cfg(debug_assertions)]
@@ -45,19 +50,16 @@ mod waiting {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 pub struct LoggingRanges(Vec<RangeInclusive<usize>>);
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl LoggingRanges {
     pub fn from(numbers: &[usize]) -> Self {
         if numbers.is_empty() {
             return Self(Vec::new());
         }
-        #[cfg(not(debug_assertions))]
-        return Self(Vec::new());
 
-        #[cfg(debug_assertions)]
         Self(
             numbers
                 .iter()
@@ -72,13 +74,12 @@ impl LoggingRanges {
         )
     }
 
-    #[cfg(debug_assertions)]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl fmt::Debug for LoggingRanges {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Collect the formatted ranges into a vector of strings

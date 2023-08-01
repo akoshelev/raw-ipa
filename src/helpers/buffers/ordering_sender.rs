@@ -25,12 +25,6 @@ use std::{
 use typenum::Unsigned;
 
 #[cfg(debug_assertions)]
-use crate::helpers::buffers::LoggingRanges;
-
-#[cfg(debug_assertions)]
-use std::ops::{Deref, DerefMut};
-
-#[cfg(debug_assertions)]
 type StateType = IdleTrackState;
 
 #[cfg(not(debug_assertions))]
@@ -150,7 +144,7 @@ impl IdleTrackState {
 }
 
 #[cfg(debug_assertions)]
-impl Deref for IdleTrackState {
+impl std::ops::Deref for IdleTrackState {
     type Target = State;
 
     fn deref(&self) -> &Self::Target {
@@ -159,7 +153,7 @@ impl Deref for IdleTrackState {
 }
 
 #[cfg(debug_assertions)]
-impl DerefMut for IdleTrackState {
+impl std::ops::DerefMut for IdleTrackState {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
     }
@@ -400,18 +394,20 @@ impl OrderingSender {
     }
 }
 
+#[cfg(feature = "idle-tracking")]
 pub struct IdleTrackOrderingSender(OrderingSender);
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
+use crate::helpers::buffers::LoggingRanges;
+
+#[cfg(feature = "idle-tracking")]
 impl IdleTrackOrderingSender {
+
     pub fn new(write_size: NonZeroUsize, spare: NonZeroUsize, message_size: usize) -> Self {
         Self(OrderingSender::new(write_size, spare, message_size))
     }
 
     pub fn check_idle_and_reset(&self) -> bool {
-        #[cfg(not(debug_assertions))]
-        return false;
-        #[cfg(debug_assertions)]
         self.0.state.lock().unwrap().check_idle_and_reset()
     }
 
@@ -440,8 +436,8 @@ impl IdleTrackOrderingSender {
     }
 }
 
-#[cfg(debug_assertions)]
-impl Deref for IdleTrackOrderingSender {
+#[cfg(feature = "idle-tracking")]
+impl std::ops::Deref for IdleTrackOrderingSender {
     type Target = OrderingSender;
 
     fn deref(&self) -> &Self::Target {
@@ -449,8 +445,8 @@ impl Deref for IdleTrackOrderingSender {
     }
 }
 
-#[cfg(debug_assertions)]
-impl DerefMut for IdleTrackOrderingSender {
+#[cfg(feature = "idle-tracking")]
+impl std::ops::DerefMut for IdleTrackOrderingSender {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

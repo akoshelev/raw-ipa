@@ -32,6 +32,8 @@ step-trace = ["descriptive-gate"]
 # of unit tests use it. Compact uses memory-efficient gates and is suitable for production.
 descriptive-gate = []
 compact-gate = []
+# Track the idle state inside the infra gateway - if nothing happens for long enough time period, dump the internal state
+idle-tracking = []
 
 [dependencies]
 ipa-macros = { version = "*", path = "./ipa-macros" }

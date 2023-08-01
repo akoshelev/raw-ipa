@@ -6,16 +6,10 @@ use dashmap::DashMap;
 use futures::Stream;
 use std::marker::PhantomData;
 
-#[cfg(debug_assertions)]
-use crate::helpers::buffers::LoggingRanges;
-
-#[cfg(debug_assertions)]
-use std::collections::HashMap;
-
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 use crate::helpers::buffers::IdleTrackUnorderedReceiver;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 use crate::helpers::buffers::UnorderedReceiver;
 
 /// Receiving end end of the gateway channel.
@@ -30,13 +24,13 @@ pub(super) struct GatewayReceivers<T: Transport> {
     inner: DashMap<ChannelId, UR<T>>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 pub(super) type UR<T> = IdleTrackUnorderedReceiver<
     <T as Transport>::RecordsStream,
     <<T as Transport>::RecordsStream as Stream>::Item,
 >;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 pub(super) type UR<T> = UnorderedReceiver<
     <T as Transport>::RecordsStream,
     <<T as Transport>::RecordsStream as Stream>::Item,
@@ -79,6 +73,8 @@ impl<T: Transport> Default for GatewayReceivers<T> {
         }
     }
 }
+#[cfg(feature = "idle-tracking")]
+use crate::helpers::buffers::LoggingRanges;
 
 impl<T: Transport> GatewayReceivers<T> {
     pub fn get_or_create<F: FnOnce() -> UR<T>>(&self, channel_id: &ChannelId, ctr: F) -> UR<T> {
@@ -91,7 +87,8 @@ impl<T: Transport> GatewayReceivers<T> {
             stream
         }
     }
-    #[cfg(debug_assertions)]
+
+    #[cfg(feature = "idle-tracking")]
     pub fn check_idle_and_reset(&self) -> bool {
         let mut rst = true;
         for entry in self.inner.iter() {
@@ -99,8 +96,9 @@ impl<T: Transport> GatewayReceivers<T> {
         }
         rst
     }
-    #[cfg(debug_assertions)]
-    pub fn get_waiting_messages(&self) -> HashMap<ChannelId, LoggingRanges> {
+
+    #[cfg(feature = "idle-tracking")]
+    pub fn get_waiting_messages(&self) -> std::collections::HashMap<ChannelId, LoggingRanges> {
         self.inner
             .iter()
             .filter_map(|entry| {

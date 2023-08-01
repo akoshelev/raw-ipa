@@ -16,16 +16,10 @@ use std::{
 
 use typenum::Unsigned;
 
-#[cfg(debug_assertions)]
-use crate::helpers::buffers::LoggingRanges;
-
-#[cfg(debug_assertions)]
-use std::ops::{Deref, DerefMut};
-
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 type StateType<S, C> = IdleTrackOperatingState<S, C>;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 type StateType<S, C> = OperatingState<S, C>;
 
 /// A future for receiving item `i` from an `UnorderedReceiver`.
@@ -259,7 +253,7 @@ where
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 struct IdleTrackOperatingState<S, C>
 where
     S: Stream<Item = C>,
@@ -268,8 +262,10 @@ where
     state: OperatingState<S, C>,
     current_next: usize,
 }
+#[cfg(feature = "idle-tracking")]
+use crate::helpers::buffers::LoggingRanges;
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl<S, C> IdleTrackOperatingState<S, C>
 where
     S: Stream<Item = C> + Send,
@@ -293,7 +289,7 @@ where
         self.current_next = self.state.next;
         rst
     }
-    #[cfg(debug_assertions)]
+
     fn get_waiting_messages(&self) -> LoggingRanges {
         let mut response = vec![self.next];
         for i in (self.next + 1)..=(self.next + self.wakers.len()) {
@@ -305,8 +301,8 @@ where
     }
 }
 
-#[cfg(debug_assertions)]
-impl<S, C> Deref for IdleTrackOperatingState<S, C>
+#[cfg(feature = "idle-tracking")]
+impl<S, C> std::ops::Deref for IdleTrackOperatingState<S, C>
 where
     S: Stream<Item = C>,
     C: AsRef<[u8]>,
@@ -317,8 +313,8 @@ where
     }
 }
 
-#[cfg(debug_assertions)]
-impl<S, C> DerefMut for IdleTrackOperatingState<S, C>
+#[cfg(feature = "idle-tracking")]
+impl<S, C> std::ops::DerefMut for IdleTrackOperatingState<S, C>
 where
     S: Stream<Item = C>,
     C: AsRef<[u8]>,
@@ -396,12 +392,13 @@ where
     }
 }
 
+#[cfg(feature = "idle-tracking")]
 pub struct IdleTrackUnorderedReceiver<S, C>(UnorderedReceiver<S, C>)
 where
     S: Stream<Item = C>,
     C: AsRef<[u8]>;
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl<S, C> IdleTrackUnorderedReceiver<S, C>
 where
     S: Stream<Item = C> + Send,
@@ -412,9 +409,6 @@ where
     }
 
     pub fn check_idle_and_reset(&self) -> bool {
-        #[cfg(not(debug_assertions))]
-        return false;
-        #[cfg(debug_assertions)]
         self.0.inner.lock().unwrap().check_idle_and_reset()
     }
 
@@ -423,8 +417,8 @@ where
     }
 }
 
-#[cfg(debug_assertions)]
-impl<S, C> Deref for IdleTrackUnorderedReceiver<S, C>
+#[cfg(feature = "idle-tracking")]
+impl<S, C> std::ops::Deref for IdleTrackUnorderedReceiver<S, C>
 where
     S: Stream<Item = C>,
     C: AsRef<[u8]>,
@@ -436,8 +430,8 @@ where
     }
 }
 
-#[cfg(debug_assertions)]
-impl<S, C> DerefMut for IdleTrackUnorderedReceiver<S, C>
+#[cfg(feature = "idle-tracking")]
+impl<S, C> std::ops::DerefMut for IdleTrackUnorderedReceiver<S, C>
 where
     S: Stream<Item = C>,
     C: AsRef<[u8]>,
@@ -447,6 +441,7 @@ where
     }
 }
 
+#[cfg(feature = "idle-tracking")]
 impl<S, C> Clone for IdleTrackUnorderedReceiver<S, C>
 where
     S: Stream<Item = C> + Send,

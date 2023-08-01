@@ -18,12 +18,6 @@ use crate::{
     },
 };
 
-#[cfg(debug_assertions)]
-use crate::helpers::buffers::LoggingRanges;
-
-#[cfg(debug_assertions)]
-use std::collections::HashMap;
-
 /// Sending end of the gateway channel.
 pub struct SendingEnd<M: Message> {
     sender_role: Role,
@@ -38,16 +32,19 @@ pub(super) struct GatewaySenders {
     inner: DashMap<ChannelId, Arc<GatewaySender>>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 use crate::helpers::buffers::IdleTrackOrderingSender;
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 type OrderingSenderType = IdleTrackOrderingSender;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 use crate::helpers::buffers::OrderingSender;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 type OrderingSenderType = OrderingSender;
+
+#[cfg(feature = "idle-tracking")]
+use crate::helpers::buffers::LoggingRanges;
 
 pub(super) struct GatewaySender {
     channel_id: ChannelId,
@@ -93,12 +90,12 @@ impl GatewaySender {
         Ok(())
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "idle-tracking")]
     fn check_idle_and_reset(&self) -> bool {
         self.ordering_tx.check_idle_and_reset()
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "idle-tracking")]
     fn get_missing_messages(&self) -> Vec<LoggingRanges> {
         self.ordering_tx.get_missing_messages()
     }
@@ -192,7 +189,7 @@ impl GatewaySenders {
         }
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "idle-tracking")]
     pub fn check_idle_and_reset(&self) -> bool {
         let mut rst = true;
         for entry in self.inner.iter() {
@@ -201,8 +198,8 @@ impl GatewaySenders {
         rst
     }
 
-    #[cfg(debug_assertions)]
-    pub fn get_all_missing_messages(&self) -> HashMap<ChannelId, Vec<LoggingRanges>> {
+    #[cfg(feature = "idle-tracking")]
+    pub fn get_all_missing_messages(&self) -> std::collections::HashMap<ChannelId, Vec<LoggingRanges>> {
         self.inner
             .iter()
             .filter_map(|entry| {

@@ -25,7 +25,7 @@ type JoinHandle = shuttle::future::JoinHandle<()>;
 #[cfg(all(not(all(feature = "shuttle", test)), debug_assertions))]
 type JoinHandle = tokio::task::JoinHandle<()>;
 
-use std::{fmt::Debug, num::NonZeroUsize, sync::Arc};
+use std::{fmt::Debug, num::NonZeroUsize};
 
 /// Alias for the currently configured transport.
 ///
@@ -40,30 +40,28 @@ pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 pub type TransportError = <TransportImpl as Transport>::Error;
 pub type ReceivingEnd<M> = ReceivingEndBase<TransportImpl, M>;
 
+
+#[cfg(feature = "idle-tracking")]
+type SenderType = crate::sync::Arc<GatewaySenders>;
+#[cfg(feature = "idle-tracking")]
+type ReceiverType<T> = crate::sync::Arc<GatewayReceivers<T>>;
+
+#[cfg(not(feature = "idle-tracking"))]
+type SenderType = GatewaySenders;
+#[cfg(not(feature = "idle-tracking"))]
+type ReceiverType<T> = GatewayReceivers<T>;
+
 /// Gateway into IPA Infrastructure systems. This object allows sending and receiving messages.
 /// As it is generic over network/transport layer implementation, type alias [`Gateway`] should be
 /// used to avoid carrying `T` over.
 ///
 /// [`Gateway`]: crate::helpers::Gateway
-#[cfg(debug_assertions)]
-use std::time::Duration;
-
-#[cfg(debug_assertions)]
-type SenderType = Arc<GatewaySenders>;
-#[cfg(debug_assertions)]
-type ReceiverType<T> = Arc<GatewayReceivers<T>>;
-
-#[cfg(not(debug_assertions))]
-type SenderType = GatewaySenders;
-#[cfg(not(debug_assertions))]
-type ReceiverType<T> = GatewayReceivers<T>;
-
 pub struct Gateway<T: Transport = TransportImpl> {
     config: GatewayConfig,
     transport: RoleResolvingTransport<T>,
     senders: SenderType,
     receivers: ReceiverType<T>,
-    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     idle_tracking_handle: Option<JoinHandle>,
 }
 
@@ -85,22 +83,15 @@ impl<T: Transport> Gateway<T> {
         roles: RoleAssignment,
         transport: T,
     ) -> Self {
-        #[cfg(debug_assertions)]
-        let (senders, maybe_senders_clone) = Self::get_default_senders();
-        #[cfg(not(debug_assertions))]
-        let (senders, _) = Self::get_default_senders();
-        #[cfg(debug_assertions)]
-        let (receivers, maybe_receivers_clone) = Self::get_default_receivers();
-        #[cfg(not(debug_assertions))]
-        let (receivers, _) = Self::get_default_receivers();
-        #[cfg(debug_assertions)]
-        let handle = if cfg!(debug_assertions) {
-            Some(Self::create_idle_tracker(
-                maybe_senders_clone.unwrap(),
-                maybe_receivers_clone.unwrap(),
-            ))
-        } else {
-            None
+        #[cfg(feature = "idle-tracking")]
+        let (senders, receivers, handle) = {
+            let senders = crate::sync::Arc::new(GatewaySenders::default());
+            let receivers = crate::sync::Arc::new(GatewayReceivers::default());
+            (crate::sync::Arc::clone(&senders), crate::sync::Arc::clone(&receivers), Some(Self::create_idle_tracker(senders, receivers)))
+        };
+        #[cfg(not(feature = "idle-tracking"))]
+            let (senders, receivers, handle) = {
+            (GatewaySenders::default(), GatewayReceivers::default(), None)
         };
 
         Self {
@@ -113,7 +104,6 @@ impl<T: Transport> Gateway<T> {
             },
             senders,
             receivers,
-            #[cfg(debug_assertions)]
             idle_tracking_handle: handle,
         }
     }
@@ -121,28 +111,6 @@ impl<T: Transport> Gateway<T> {
     #[must_use]
     pub fn role(&self) -> Role {
         self.transport.role()
-    }
-
-    fn get_default_senders() -> (SenderType, Option<Arc<GatewaySenders>>) {
-        #[cfg(debug_assertions)]
-        {
-            let default_senders = Arc::new(GatewaySenders::default());
-            let clone = Arc::clone(&default_senders);
-            (default_senders, Some(clone))
-        }
-        #[cfg(not(debug_assertions))]
-        return (GatewaySenders::default(), None);
-    }
-
-    fn get_default_receivers() -> (ReceiverType<T>, Option<Arc<GatewayReceivers<T>>>) {
-        #[cfg(debug_assertions)]
-        {
-            let default_receivers = Arc::new(GatewayReceivers::default());
-            let clone = Arc::clone(&default_receivers);
-            (default_receivers, Some(clone))
-        }
-        #[cfg(not(debug_assertions))]
-        return (GatewayReceivers::default(), None);
     }
 
     #[must_use]
@@ -185,27 +153,27 @@ impl<T: Transport> Gateway<T> {
         )
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "idle-tracking")]
     fn create_idle_tracker(
-        senders: Arc<GatewaySenders>,
-        receivers: Arc<GatewayReceivers<T>>,
+        senders: crate::sync::Arc<GatewaySenders>,
+        receivers: crate::sync::Arc<GatewayReceivers<T>>,
     ) -> JoinHandle {
         tokio::spawn(async move {
             // Perform some periodic work in the background
             loop {
-                let _ = ::tokio::time::sleep(Duration::from_secs(5)).await;
+                let _ = ::tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 if senders.check_idle_and_reset() && receivers.check_idle_and_reset() {
                     let sender_missing_records = senders.get_all_missing_messages();
                     if !sender_missing_records.is_empty() {
                         tracing::warn!(
-                            "Idle: waiting to send messages:\n{:?}",
+                            "[timeout]: waiting to send messages:\n{:?}",
                             sender_missing_records
                         );
                     }
                     let receiver_waiting_message = receivers.get_waiting_messages();
                     if !receiver_waiting_message.is_empty() {
                         tracing::warn!(
-                            "Idle: waiting to receive messages:\n{:?}.",
+                            "[timeout]: waiting to receive messages:\n{:?}.",
                             receiver_waiting_message
                         );
                     }
@@ -215,7 +183,7 @@ impl<T: Transport> Gateway<T> {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl<T: Transport> Drop for Gateway<T> {
     fn drop(&mut self) {
         if let Some(handle) = self.idle_tracking_handle.take() {
@@ -315,14 +283,14 @@ mod tests {
         // sent (same batch or different does not matter here)
         let spawned = tokio::spawn(async move {
             let channel = sender_ctx.send_channel(Role::H2);
-            // channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)).await.unwrap();
-            // channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)).await.unwrap();
-            try_join(
-                channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
-                channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),
-            )
-            .await
-            .unwrap();
+            channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)).await.unwrap();
+            channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)).await.unwrap();
+            // try_join(
+            //     channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
+            //     channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),
+            // )
+            // .await
+            // .unwrap();
         });
 
         let recv_channel = recv_ctx.recv_channel::<Fp31>(Role::H1);

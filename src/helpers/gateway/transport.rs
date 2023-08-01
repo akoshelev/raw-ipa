@@ -6,16 +6,16 @@ use crate::{
     protocol::QueryId,
 };
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 use crate::helpers::buffers::IdleTrackUnorderedReceiver;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 use crate::helpers::buffers::UnorderedReceiver;
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 type ReceiverType<S, C> = IdleTrackUnorderedReceiver<S, C>;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 type ReceiverType<S, C> = UnorderedReceiver<S, C>;
 
 /// Transport adapter that resolves [`Role`] -> [`HelperIdentity`] mapping. As gateways created
