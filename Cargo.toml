@@ -6,7 +6,7 @@ edition = "2021"
 
 [features]
 # by default remove all TRACE, DEBUG spans from release builds
-default = ["web-app", "in-memory-infra", "tracing/max_level_trace", "tracing/release_max_level_info", "descriptive-gate", "idle-tracking"]
+default = ["web-app", "in-memory-infra", "tracing/max_level_trace", "tracing/release_max_level_info", "descriptive-gate"]
 cli = ["comfy-table", "clap"]
 enable-serde = ["serde", "serde_json"]
 disable-metrics = []
