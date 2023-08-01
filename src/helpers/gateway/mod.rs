@@ -156,8 +156,14 @@ impl<T: Transport> Gateway<T> {
     ) -> crate::task::JoinHandle<()> {
         tokio::spawn(async move {
             // Perform some periodic work in the background
+            if cfg!(feature = "shuttle") {
+                return;
+            }
+
             loop {
+                #[cfg(not(feature = "shuttle"))]
                 let _ = ::tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
                 if senders.check_idle_and_reset() && receivers.check_idle_and_reset() {
                     let sender_missing_records = senders.get_all_missing_messages();
                     if !sender_missing_records.is_empty() {
