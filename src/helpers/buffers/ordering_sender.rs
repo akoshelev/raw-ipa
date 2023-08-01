@@ -24,10 +24,10 @@ use std::{
 };
 use typenum::Unsigned;
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 type StateType = IdleTrackState;
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "idle-tracking"))]
 type StateType = State;
 
 /// The operating state for an `OrderingSender`.
@@ -118,13 +118,13 @@ impl State {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 struct IdleTrackState {
     state: State,
     idle: bool,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl IdleTrackState {
     fn new(capacity: NonZeroUsize, spare: NonZeroUsize) -> Self {
         IdleTrackState {
@@ -136,6 +136,7 @@ impl IdleTrackState {
         self.idle = false;
         self.state.write(m, cx)
     }
+
     fn check_idle_and_reset(&mut self) -> bool {
         let rst = self.idle;
         self.idle = true;
@@ -143,7 +144,7 @@ impl IdleTrackState {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl std::ops::Deref for IdleTrackState {
     type Target = State;
 
@@ -152,7 +153,7 @@ impl std::ops::Deref for IdleTrackState {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "idle-tracking")]
 impl std::ops::DerefMut for IdleTrackState {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
