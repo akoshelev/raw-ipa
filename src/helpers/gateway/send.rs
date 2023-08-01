@@ -180,6 +180,7 @@ impl GatewaySenders {
                 .insert(channel_id.clone(), Arc::clone(&sender))
                 .is_some()
             {
+                tracing::error!("Channel {channel_id:?} was already created");
                 panic!("TODO - make sender creation contention less dangerous");
             }
             let stream = GatewaySendStream {
