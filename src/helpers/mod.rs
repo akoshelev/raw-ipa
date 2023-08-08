@@ -406,7 +406,7 @@ impl ChannelId {
 
 impl Debug for ChannelId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "channel[{:?},{:?}]", self.role, self.gate)
+        write!(f, "channel[{:?},{:?}]", self.role, self.gate.as_ref())
     }
 }
 
@@ -448,8 +448,8 @@ pub enum TotalRecords {
 
 impl TotalRecords {
     #[must_use]
-    pub fn is_unspecified(&self) -> bool {
-        matches!(self, &TotalRecords::Unspecified)
+    pub fn is_specified(&self) -> bool {
+        !matches!(self, &TotalRecords::Unspecified)
     }
 
     #[must_use]
