@@ -162,7 +162,7 @@ impl<T: Transport> Gateway<T> {
 
             loop {
                 #[cfg(not(feature = "shuttle"))]
-                let _ = ::tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let _ = ::tokio::time::sleep(std::time::Duration::from_secs(180)).await;
 
                 if senders.check_idle_and_reset() && receivers.check_idle_and_reset() {
                     let sender_missing_records = senders.get_all_missing_messages();
