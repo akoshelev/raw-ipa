@@ -24,6 +24,7 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll},
 };
+use std::time::Duration;
 use tokio_rustls::{
     rustls,
     rustls::{Certificate, PrivateKey, RootCertStore},
@@ -415,6 +416,7 @@ fn make_http_connector() -> HttpConnector {
     // IPA uses HTTP2 and it is sensitive to those delays especially in high-latency network
     // configurations.
     connector.set_nodelay(true);
+    connector.set_keepalive(Duration::from_secs(30).into());
 
     connector
 }
