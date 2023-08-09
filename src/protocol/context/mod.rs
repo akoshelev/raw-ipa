@@ -242,7 +242,7 @@ impl<'a> Context for Base<'a> {
     fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M> {
         self.inner
             .gateway
-            .get_receiver(&ChannelId::new(role, self.gate.clone()))
+            .get_receiver(&ChannelId::new(role, self.gate.clone()), self.total_records)
     }
 }
 

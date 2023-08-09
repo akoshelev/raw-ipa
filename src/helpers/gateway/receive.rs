@@ -16,6 +16,7 @@ use crate::helpers::buffers::UnorderedReceiver;
 pub struct ReceivingEnd<T: Transport, M: Message> {
     channel_id: ChannelId,
     unordered_rx: UR<T>,
+    total_records: TotalRecords,
     _phantom: PhantomData<M>,
 }
 
@@ -37,10 +38,11 @@ pub(super) type UR<T> = UnorderedReceiver<
 >;
 
 impl<T: Transport, M: Message> ReceivingEnd<T, M> {
-    pub(super) fn new(channel_id: ChannelId, rx: UR<T>) -> Self {
+    pub(super) fn new(channel_id: ChannelId, rx: UR<T>, total_records: TotalRecords) -> Self {
         Self {
             channel_id,
             unordered_rx: rx,
+            total_records,
             _phantom: PhantomData,
         }
     }
@@ -55,14 +57,28 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
     /// This will panic if message size does not fit into 8 bytes and it somehow got serialized
     /// and sent to this helper.
     pub async fn receive(&self, record_id: RecordId) -> Result<M, Error> {
-        self.unordered_rx
+        let v = self
+            .unordered_rx
             .recv::<M, _>(record_id)
             .await
             .map_err(|e| Error::ReceiveError {
                 source: self.channel_id.role,
                 step: self.channel_id.gate.to_string(),
                 inner: Box::new(e),
-            })
+            });
+
+        // it is safe to close the stream after the last record is received
+        // because this future only resolves after all previous receive calls have succeeded
+        if self.total_records.is_last(record_id) {
+            if let Err(e) = self.unordered_rx.close().await {
+                panic!(
+                    "failed to close the rx stream: {:?}: {e:?}",
+                    self.channel_id
+                )
+            }
+        }
+
+        v
     }
 }
 
@@ -75,6 +91,7 @@ impl<T: Transport> Default for GatewayReceivers<T> {
 }
 #[cfg(feature = "idle-tracking")]
 use crate::helpers::buffers::LoggingRanges;
+use crate::helpers::TotalRecords;
 
 impl<T: Transport> GatewayReceivers<T> {
     pub fn get_or_create<F: FnOnce() -> UR<T>>(&self, channel_id: &ChannelId, ctr: F) -> UR<T> {
@@ -103,6 +120,9 @@ impl<T: Transport> GatewayReceivers<T> {
             .iter()
             .filter_map(|entry| {
                 let (channel_id, rec) = entry.pair();
+                if rec.is_closed() {
+                    return None;
+                }
                 let message = rec.get_waiting_messages();
                 if message.is_empty() {
                     None

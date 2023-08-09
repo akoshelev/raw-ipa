@@ -23,8 +23,8 @@ use std::{
     iter::repeat,
     pin::Pin,
     task::{ready, Context, Poll},
+    time::Duration,
 };
-use std::time::Duration;
 use tokio_rustls::{
     rustls,
     rustls::{Certificate, PrivateKey, RootCertStore},

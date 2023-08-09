@@ -14,6 +14,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::error::BoxError;
 use typenum::Unsigned;
 
 #[cfg(feature = "idle-tracking")]
@@ -72,6 +73,11 @@ impl Spare {
         } else {
             None
         }
+    }
+
+    #[allow(dead_code)]
+    fn is_empty(&self) -> bool {
+        self.offset == self.buf.len()
     }
 
     /// Replace the stored value with the given slice.
@@ -150,6 +156,7 @@ where
     /// that easing load on this mechanism.  There might also need to be some
     /// end-to-end back pressure for tasks that do not involve sending at all.
     overflow_wakers: Vec<Waker>,
+    closed: bool,
     _marker: PhantomData<C>,
 }
 
@@ -172,6 +179,7 @@ where
             spare,
             wakers,
             overflow_wakers,
+            closed: false,
             _marker: marker,
         }
     }
@@ -334,6 +342,16 @@ where
     inner: Arc<Mutex<StateType<S, C>>>,
 }
 
+impl<S, C> UnorderedReceiver<S, C>
+where
+    S: Stream<Item = C>,
+    C: AsRef<[u8]>,
+{
+    pub(crate) fn is_closed(&self) -> bool {
+        self.inner.lock().unwrap().closed
+    }
+}
+
 #[allow(dead_code)]
 impl<S, C> UnorderedReceiver<S, C>
 where
@@ -364,6 +382,12 @@ where
         }
     }
 
+    pub fn close(&self) -> Close<S, C> {
+        Close {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
     /// Receive from the stream at index `i`.
     ///
     /// # Panics
@@ -376,6 +400,41 @@ where
             i: i.into(),
             receiver: Arc::clone(&self.inner),
             _marker: PhantomData,
+        }
+    }
+}
+
+pub struct Close<S, C>
+where
+    S: Stream<Item = C> + Send,
+    C: AsRef<[u8]>,
+{
+    inner: Arc<Mutex<StateType<S, C>>>,
+}
+
+impl<S, C> Future for Close<S, C>
+where
+    S: Stream<Item = C> + Send,
+    C: AsRef<[u8]>,
+{
+    type Output = Result<(), BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.inner.lock().unwrap();
+        loop {
+            match Stream::poll_next(state.stream.as_mut(), cx) {
+                Poll::Ready(None) => {
+                    state.closed = true;
+                    break Poll::Ready(Ok(()));
+                }
+                Poll::Ready(Some(x)) => {
+                    // Axum stream sometimes yields an empty vec (thank you).
+                    if !x.as_ref().is_empty() {
+                        break Poll::Ready(Err("Stream is not properly closed".into()));
+                    }
+                }
+                Poll::Pending => break Poll::Pending,
+            }
         }
     }
 }
@@ -414,6 +473,10 @@ where
 
     pub fn get_waiting_messages(&self) -> LoggingRanges {
         self.0.inner.lock().unwrap().get_waiting_messages()
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
     }
 }
 
