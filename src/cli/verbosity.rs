@@ -1,10 +1,16 @@
-use crate::cli::install_collector;
-use crate::cli::metric_collector::CollectorHandle;
+use std::io::stderr;
+
 use clap::Parser;
 use metrics_tracing_context::MetricsLayer;
-use std::io::stderr;
 use tracing::{info, metadata::LevelFilter, Level};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    fmt, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
+};
+
+use crate::{
+    cli::{install_collector, metric_collector::CollectorHandle},
+    error::set_global_panic_hook,
+};
 
 #[derive(Debug, Parser)]
 pub struct Verbosity {
@@ -12,8 +18,8 @@ pub struct Verbosity {
     #[clap(short, long, global = true)]
     quiet: bool,
 
-    /// Verbose mode (-v, -vv, -vvv, etc)
-    #[arg(short, long, action = clap::ArgAction::Count)]
+    /// Verbose mode (-v, or -vv for even more verbose)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 }
 
@@ -26,7 +32,9 @@ impl Verbosity {
     #[must_use]
     pub fn setup_logging(&self) -> LoggingHandle {
         let filter_layer = self.level_filter();
-        let fmt_layer = fmt::layer().without_time().with_writer(stderr);
+        let fmt_layer = fmt::layer()
+            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+            .with_writer(stderr);
 
         tracing_subscriber::registry()
             .with(self.level_filter())
@@ -37,6 +45,7 @@ impl Verbosity {
         let handle = LoggingHandle {
             metrics_handle: (!self.quiet).then(install_collector),
         };
+        set_global_panic_hook();
 
         info!("Logging setup at level {}", filter_layer);
 
@@ -48,10 +57,8 @@ impl Verbosity {
             LevelFilter::OFF
         } else {
             LevelFilter::from_level(match self.verbose {
-                0 => Level::ERROR,
-                1 => Level::WARN,
-                2 => Level::INFO,
-                3 => Level::DEBUG,
+                0 => Level::INFO,
+                1 => Level::DEBUG,
                 _ => Level::TRACE,
             })
         }

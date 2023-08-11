@@ -1,12 +1,16 @@
-use crate::models::{Epoch, Event, EventTimestamp, GenericReport, MatchKey, Number};
-
-use super::sample::Sample;
-use byteorder::WriteBytesExt;
-use rand::distributions::Bernoulli;
-use rand::distributions::Distribution;
-use rand::{CryptoRng, Rng, RngCore};
 use std::io;
+
+use bitvec::view::BitViewSized;
+use rand::{
+    distributions::{Bernoulli, Distribution},
+    CryptoRng, Rng, RngCore,
+};
 use tracing::{debug, info, trace};
+
+use crate::{
+    models::{Epoch, Event, EventTimestamp, GenericReport, MatchKey, Number},
+    sample::Sample,
+};
 
 // 0x1E. https://datatracker.ietf.org/doc/html/rfc7464
 const RECORD_SEPARATOR: u8 = 30;
@@ -62,7 +66,7 @@ pub fn generate_events<R: RngCore + CryptoRng, W: io::Write>(
             total_conversions += u32::from(conversions);
 
             for e in events {
-                out.write_u8(RECORD_SEPARATOR).unwrap();
+                out.write_all(RECORD_SEPARATOR.as_raw_slice()).unwrap();
                 out.write_all(serde_json::to_string(&e).unwrap().as_bytes())
                     .unwrap();
                 writeln!(out).unwrap();
@@ -166,16 +170,17 @@ fn add_event_timestamps(rhs: EventTimestamp, lhs: EventTimestamp) -> EventTimest
     EventTimestamp::new((epoch % (c(Epoch::MAX) + 1)) as Epoch, offset)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unit_test))]
 mod tests {
-    use super::{gen_reports, generate_events, EventTimestamp, GenericReport};
-    use crate::{gen_events::add_event_timestamps, models::Epoch, sample::Sample};
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
     use std::{
         cmp::Ordering,
         io::{Cursor, Write},
     };
+
+    use rand::{rngs::StdRng, SeedableRng};
+
+    use super::{gen_reports, generate_events, EventTimestamp, GenericReport};
+    use crate::{gen_events::add_event_timestamps, models::Epoch, sample::Sample};
 
     const DATA: &str = r#"
       {

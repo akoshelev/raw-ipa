@@ -1,10 +1,31 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "src/**/*"
+      - "benches/**/*"
+      - "tests/**/*"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "src/**/*"
+      - "benches/**/*"
+      - "tests/**/*"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
 jobs:
-  rust-check:
-    name: Rust Checks
+  basic:
+    name: Basic Checks
     env:
-      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+
     runs-on: ubuntu-latest
 
     steps:
@@ -24,22 +45,102 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check --config "imports_granularity=Crate,group_imports=StdExternalCrate"
+
+      - name: Clippy
+        if: ${{ success() || failure() }}
+        run: cargo clippy --tests
+
+      - name: Clippy concurrency tests
+        if: ${{ success() || failure() }}
+        run: cargo clippy --tests --features shuttle
+
       - name: Build
+        if: ${{ success() || failure() }}
         run: cargo build --tests
+
+      - name: Run Tests
+        run: cargo test
+
+      - name: Run Web Tests
+        run: cargo test --no-default-features --features "cli web-app real-world-infra test-fixture descriptive-gate"
+
+      - name: Run compact gate tests
+        run: cargo test --no-default-features --features "cli web-app real-world-infra test-fixture compact-gate"
+
+  extra-builds:
+    name: Additional Builds
+    env:
+      RUSTFLAGS: -D warnings -C target-cpu=native
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Release Build
         run: cargo build --release
 
       - name: Build benchmarks
-        run: cargo build --benches --all-features
+        run: cargo build --benches --no-default-features --features "enable-benches descriptive-gate"
 
-      - name: Check formatting
-        if: ${{ success() || failure() }}
-        run: cargo fmt --all -- --check
+      - name: Build concurrency tests
+        run: cargo build --release --features shuttle
 
-      - name: Clippy
-        if: ${{ success() || failure() }}
-        run: cargo clippy --tests -- -D warnings -D clippy::pedantic
+      - name: Build concurrency tests (debug mode)
+        run: cargo build --features shuttle
 
-      - name: Run Tests
-        run: cargo test
+  benches-and-fuzzy:
+    name: Run benchmarks and concurrency tests
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Run concurrency tests
+        run: cargo test --release --features shuttle
+
+      - name: Run IPA bench
+        run: cargo bench --bench oneshot_ipa --no-default-features --features "enable-benches descriptive-gate"
+
+  codecov-tarpaulin:
+    name: Generate code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+      - uses: actions-rs/tarpaulin@v0.1
+      # Note: closed-source code needs to provide a token,
+      # but open source code does not.
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v2
