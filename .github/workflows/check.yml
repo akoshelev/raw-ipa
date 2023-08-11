@@ -132,3 +132,15 @@ jobs:
 
       - name: Run IPA bench
         run: cargo bench --bench oneshot_ipa --no-default-features --features "enable-benches descriptive-gate"
+
+  codecov-tarpaulin:
+    name: Generate code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+      - uses: actions-rs/tarpaulin@v0.1
+      # Note: closed-source code needs to provide a token,
+      # but open source code does not.
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v2

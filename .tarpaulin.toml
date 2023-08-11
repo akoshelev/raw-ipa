@@ -1,0 +1,4 @@
+[descriptive_gate_coverage]
+no_default_features = true
+features = "cli web-app in-memory-infra descriptive-gate"
+release = true
