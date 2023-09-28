@@ -1,6 +1,8 @@
-use std::iter::{repeat, zip};
+use std::iter::{Flatten, repeat, zip};
+use futures::TryStream;
 
 use futures_util::future::try_join;
+use futures_util::TryStreamExt;
 use ipa_macros::Step;
 
 use super::{basics::if_else, boolean::saturating_sum::SaturatingSum, step::BitOpStep};
@@ -290,7 +292,10 @@ where
     let binary_m_ctx = binary_validator.context();
     let mut num_users_who_encountered_row_depth = Vec::with_capacity(histogram.len());
     let ctx_for_row_number = set_up_contexts(&binary_m_ctx, &histogram);
-    let mut futures = Vec::with_capacity(rows_chunked_by_user.len());
+    // let mut futures = Vec::with_capacity(rows_chunked_by_user.len());
+
+    let mut spawner = sh_ctx.spawner();
+
     for rows_for_user in rows_chunked_by_user {
         for i in 0..rows_for_user.len() {
             if i >= num_users_who_encountered_row_depth.len() {
@@ -299,7 +304,7 @@ where
             num_users_who_encountered_row_depth[i] += 1;
         }
 
-        futures.push(evaluate_per_user_attribution_circuit(
+        spawner.spawn(evaluate_per_user_attribution_circuit(
             &ctx_for_row_number,
             num_users_who_encountered_row_depth
                 .iter()
@@ -309,10 +314,23 @@ where
             rows_for_user,
             num_saturating_sum_bits,
         ));
+
+        // futures.push(evaluate_per_user_attribution_circuit(
+        //     &ctx_for_row_number,
+        //     num_users_who_encountered_row_depth
+        //         .iter()
+        //         .take(rows_for_user.len())
+        //         .map(|x| RecordId(x - 1))
+        //         .collect(),
+        //     rows_for_user,
+        //     num_saturating_sum_bits,
+        // ));
     }
-    let outputs_chunked_by_user = seq_try_join_all(sh_ctx.active_work(), futures).await?;
+    let outputs_chunked_by_user: Vec<_> = spawner.collect().await;
+    // let outputs_chunked_by_user = seq_try_join_all(sh_ctx.active_work(), futures).await?;
     Ok(outputs_chunked_by_user
         .into_iter()
+        .map(|r| r.unwrap().unwrap())
         .flatten()
         .collect::<Vec<CappedAttributionOutputs>>())
 }

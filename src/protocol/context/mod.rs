@@ -87,6 +87,12 @@ pub trait UpgradableContext: Context {
     type Validator<F: ExtendableField>: Validator<Self, F>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F>;
+
+    fn spawner<T: Send + 'static>(&self) -> async_scoped::TokioScope<'_, T> {
+        unsafe {
+            async_scoped::TokioScope::create()
+        }
+    }
 }
 
 #[async_trait]
