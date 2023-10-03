@@ -1,9 +1,11 @@
-use std::iter::{Flatten, repeat, zip};
-use futures::TryStream;
+use std::fmt::Debug;
+use std::iter::{repeat, zip, Flatten};
 
-use futures_util::future::try_join;
-use futures_util::TryStreamExt;
+use futures::TryStream;
+use futures_util::{future::try_join, TryStreamExt};
 use ipa_macros::Step;
+use tokio::task::JoinError;
+use tokio_stream::StreamExt;
 
 use super::{basics::if_else, boolean::saturating_sum::SaturatingSum, step::BitOpStep};
 use crate::{
@@ -21,6 +23,8 @@ use crate::{
     },
     seq_join::seq_try_join_all,
 };
+use crate::ff::PrimeField;
+use crate::protocol::context::Context;
 
 pub struct PrfShardedIpaInputRow<BK: GaloisField, TV: GaloisField> {
     prf_of_match_key: u64,
@@ -254,6 +258,30 @@ where
     rows_chunked_by_user
 }
 
+#[cfg(test)]
+pub async fn toy_protocol<C, F>(ctx: C, input: Vec<Replicated<F>>) -> Vec<Replicated<F>>
+    where
+        C: UpgradableContext,
+        C::UpgradedContext<Gf2>: UpgradedContext<Gf2, Share = Replicated<Gf2>>,
+        F: PrimeField
+{
+    let mut spawner = ctx.spawner();
+    let validator = ctx.narrow("test").validator::<F>();
+    let v_context = validator.context();
+    let ctx = v_context.set_total_records(input.len());
+
+    for (i, r) in input.into_iter().enumerate() {
+        let record_id = RecordId::from(i);
+        let ctx = ctx.clone();
+        spawner.spawn_cancellable(async move {
+            r.multiply(&r, ctx, record_id).await.unwrap()
+        }, || Replicated::ZERO);
+    }
+
+    let results: Vec<Result<_, JoinError>> = spawner.collect().await;
+    results.into_iter().map(|r| r.unwrap()).collect()
+}
+
 /// Sub-protocol of the PRF-sharded IPA Protocol
 ///
 /// After the computation of the per-user PRF, addition of dummy records and shuffling,
@@ -303,8 +331,10 @@ where
             }
             num_users_who_encountered_row_depth[i] += 1;
         }
-
-        spawner.spawn(evaluate_per_user_attribution_circuit(
+    // }
+    //
+    // for rows_for_user in rows_chunked_by_user {
+        spawner.spawn_cancellable(evaluate_per_user_attribution_circuit(
             &ctx_for_row_number,
             num_users_who_encountered_row_depth
                 .iter()
@@ -313,7 +343,7 @@ where
                 .collect(),
             rows_for_user,
             num_saturating_sum_bits,
-        ));
+        ), || Ok(Vec::new()));
 
         // futures.push(evaluate_per_user_attribution_circuit(
         //     &ctx_for_row_number,
@@ -326,11 +356,19 @@ where
         //     num_saturating_sum_bits,
         // ));
     }
-    let outputs_chunked_by_user: Vec<_> = spawner.collect().await;
+    let mut outputs_chunked_by_user = Vec::with_capacity(spawner.len());
+    while let Some(r) = spawner.next().await {
+        tracing::error!("one future resolved to {:?}, remained {:?}", r, spawner.remaining());
+        outputs_chunked_by_user.push(r.unwrap());
+    }
+
+    // let outputs_chunked_by_user: Vec<_> = spawner.collect().await;
     // let outputs_chunked_by_user = seq_try_join_all(sh_ctx.active_work(), futures).await?;
     Ok(outputs_chunked_by_user
         .into_iter()
-        .map(|r| r.unwrap().unwrap())
+        // todo: this is utter garbage
+        // .map(|r| r.unwrap().unwrap())
+        .map(|r| r.unwrap())
         .flatten()
         .collect::<Vec<CappedAttributionOutputs>>())
 }
@@ -549,6 +587,8 @@ pub mod tests {
         test_executor::run,
         test_fixture::{Reconstruct, Runner, TestWorld},
     };
+    use crate::ff::Fp31;
+    use crate::protocol::prf_sharding::toy_protocol;
 
     struct PreShardedAndSortedOPRFTestInput<BK: GaloisField, TV: GaloisField> {
         prf_of_match_key: u64,
@@ -690,7 +730,7 @@ pub mod tests {
                 test_input(345, true, 0, 7),
             ];
 
-            let expected: [PreAggregationTestOutput; 11] = [
+            let mut expected: [PreAggregationTestOutput; 11] = [
                 test_output(17, 7),
                 test_output(20, 0),
                 test_output(20, 3),
@@ -704,8 +744,9 @@ pub mod tests {
                 test_output(12, 4),
             ];
             let num_saturating_bits: usize = 5;
+            expected.sort_by(|a, b| a.attributed_breakdown_key.cmp(&b.attributed_breakdown_key));
 
-            let result: Vec<_> = world
+            let mut result: Vec<_> = world
                 .semi_honest(records.into_iter(), |ctx, input_rows| async move {
                     attribution_and_capping::<_, Gf5Bit, Gf3Bit>(
                         ctx,
@@ -717,7 +758,27 @@ pub mod tests {
                 })
                 .await
                 .reconstruct();
+            result.sort_by(|a, b| a.attributed_breakdown_key.cmp(&b.attributed_breakdown_key));
             assert_eq!(result, &expected);
+        });
+    }
+
+    #[test]
+    fn toy_parallel() {
+        run(|| async move {
+            let world = TestWorld::default();
+
+            let records: Vec<Fp31> = (0u8..2)
+                .map(|v| Fp31::truncate_from(v))
+                .collect();
+
+            let result: Vec<_> = world
+                .semi_honest(records.into_iter(), |ctx, input_rows| async move {
+                    toy_protocol(ctx, input_rows).await
+                })
+                .await
+                .reconstruct();
+            // assert_eq!(result, &expected);
         });
     }
 }

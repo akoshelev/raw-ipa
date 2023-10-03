@@ -48,7 +48,9 @@ impl<S: Stream> StreamCollection<S> {
     /// ## Panics
     /// If there was another stream associated with the same key some time in the past.
     pub fn add_stream(&self, key: StreamKey, stream: S) {
+        tracing::trace!("{key:?} adding new stream...");
         let mut streams = self.inner.lock().unwrap();
+        let kk = key.clone();
         match streams.entry(key) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 rs @ StreamState::Waiting(_) => {
@@ -57,6 +59,7 @@ impl<S: Stream> StreamCollection<S> {
                     else {
                         unreachable!()
                     };
+                    tracing::trace!("{kk:?} stream is already waiting, waking up...");
                     waker.wake();
                 }
                 rs @ (StreamState::Ready(_) | StreamState::Completed) => {
@@ -67,6 +70,7 @@ impl<S: Stream> StreamCollection<S> {
                 }
             },
             Entry::Vacant(entry) => {
+                tracing::trace!("{kk:?} nobody requested this stream, adding...");
                 entry.insert(StreamState::Ready(stream));
             }
         }

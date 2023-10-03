@@ -117,6 +117,7 @@ pub(crate) mod test_executor {
         Fut: Future<Output = ()>,
     {
         tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(3)
             .enable_all()
             .build()
             .unwrap()

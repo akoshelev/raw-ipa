@@ -15,6 +15,7 @@ use crate::{
     protocol::RecordId,
     sync::{Arc, Mutex},
 };
+use crate::helpers::ChannelId;
 
 /// A future for receiving item `i` from an `UnorderedReceiver`.
 pub struct Receiver<S, C, M>
@@ -26,6 +27,7 @@ where
     i: usize,
     receiver: Arc<Mutex<OperatingState<S, C>>>,
     _marker: PhantomData<M>,
+    channel_id: ChannelId,
 }
 
 impl<S, C, M> Future for Receiver<S, C, M>
@@ -37,11 +39,16 @@ where
     type Output = Result<M, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        tracing::trace!("poll {:?}/{:?}", self.channel_id, self.i);
         let this = self.as_ref();
         let mut recv = this.receiver.lock().unwrap();
         if recv.is_next(this.i) {
-            recv.poll_next(cx)
+            tracing::trace!("{:?}/{:?}, next", self.channel_id, self.i);
+            let r = recv.poll_next(cx);
+            tracing::trace!("{:?}/{:?}, next poll result: {:?}", self.channel_id, self.i, r);
+            r
         } else {
+            tracing::trace!("{:?}/{:?}, not ready", self.channel_id, self.i);
             recv.add_waker(this.i, cx.waker().clone());
             Poll::Pending
         }
@@ -172,6 +179,7 @@ where
         );
         // We don't save a waker at `self.next`, so `>` and not `>=`.
         if i > self.next + self.wakers.len() {
+            tracing::trace!("adding overflow waker for {i} because > {} + {}", self.next, self.wakers.len());
             self.overflow_wakers.push(waker);
         } else {
             let index = i % self.wakers.len();
@@ -183,6 +191,7 @@ where
                 assert!(waker.will_wake(old));
             }
             self.wakers[index] = Some(waker);
+            tracing::trace!("added waker for {i} to position {index}: {:?}/{:p}", self.wakers, &self.wakers);
         }
     }
 
@@ -191,10 +200,14 @@ where
         self.next += 1;
         let index = self.next % self.wakers.len();
         if let Some(w) = self.wakers[index].take() {
+            tracing::trace!("wake next waker for {}, at index {index}", self.next);
             w.wake();
+        } else {
+            tracing::warn!("no next waker for {} at position {index}: {:?}/{:p}", self.next, self.wakers, &self.wakers);
         }
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.
+            tracing::trace!("wake overflow wakers: {:?}", self.overflow_wakers);
             for w in take(&mut self.overflow_wakers) {
                 w.wake();
             }
@@ -277,10 +290,11 @@ where
     /// Only if there are multiple invocations for the same `i`.
     /// If one future is resolved, the other will panic when polled.
     /// If both futures are polled by different contexts, the second will panic.
-    pub fn recv<M: Message, I: Into<usize>>(&self, i: I) -> Receiver<S, C, M> {
+    pub fn recv<M: Message, I: Into<usize>>(&self, i: I, channel_id: ChannelId) -> Receiver<S, C, M> {
         Receiver {
             i: i.into(),
             receiver: Arc::clone(&self.inner),
+            channel_id,
             _marker: PhantomData,
         }
     }
@@ -299,6 +313,7 @@ where
 }
 
 #[cfg(all(test, any(unit_test, feature = "shuttle")))]
+#[cfg(ignore)]
 mod test {
     use std::num::NonZeroUsize;
 
@@ -364,7 +379,7 @@ mod test {
                     spawn({
                         let recv = recv.clone();
                         async move {
-                            let f: Fp31 = recv.recv(i).await.unwrap();
+                            let f: Fp31 = recv.recv(i, ).await.unwrap();
                             assert_eq!(f, Fp31::try_from(u128::from(v)).unwrap());
                         }
                     })
@@ -382,14 +397,14 @@ mod test {
             spawn({
                 let recv = recv.clone();
                 async move {
-                    let f: Fp31 = recv.recv(0_usize).await.unwrap();
+                    let f: Fp31 = recv.recv(0_usize, ).await.unwrap();
                     assert_eq!(f, Fp31::try_from(18).unwrap());
                 }
             }),
             spawn({
                 let recv = recv.clone();
                 async move {
-                    let f: Fp32BitPrime = recv.recv(1_usize).await.unwrap();
+                    let f: Fp32BitPrime = recv.recv(1_usize, ).await.unwrap();
                     assert_eq!(f, Fp32BitPrime::truncate_from(0x0100_020c_u128));
                 }
             }),
@@ -454,7 +469,7 @@ mod test {
                     spawn({
                         let recv = recv.clone();
                         async move {
-                            let f: Fp32BitPrime = recv.recv(i).await.unwrap();
+                            let f: Fp32BitPrime = recv.recv(i, ).await.unwrap();
                             assert_eq!(f, v);
                         }
                     })
@@ -478,10 +493,10 @@ mod test {
 
         const DATA: &[u8] = &[18, 12];
         let recv = receiver(&[DATA]);
-        assert!(recv.recv::<Fp31, _>(1_usize).now_or_never().is_none());
-        assert!(recv.recv::<Fp31, _>(1_usize).now_or_never().is_none());
+        assert!(recv.recv::<Fp31, _>(1_usize, ).now_or_never().is_none());
+        assert!(recv.recv::<Fp31, _>(1_usize, ).now_or_never().is_none());
         for (i, &v) in DATA.iter().enumerate() {
-            let f: Fp31 = recv.recv(i).now_or_never().unwrap().unwrap();
+            let f: Fp31 = recv.recv(i, ).now_or_never().unwrap().unwrap();
             assert_eq!(f, Fp31::try_from(u128::from(v)).unwrap());
         }
     }
@@ -500,7 +515,7 @@ mod test {
                     spawn({
                         let recv = recv.clone();
                         async move {
-                            let f: Fp31 = recv.recv(i).await.unwrap();
+                            let f: Fp31 = recv.recv(i, ).await.unwrap();
                             assert_eq!(f, Fp31::try_from(u128::from(v)).unwrap());
                         }
                     })

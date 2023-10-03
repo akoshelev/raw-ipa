@@ -308,8 +308,8 @@ impl Debug for Addr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Addr[route={:?}, query_id={:?}, step={:?}, params={}]",
-            self.route, self.query_id, self.gate, self.params
+            "Addr[origin={:?}, route={:?}, query_id={:?}, step={:?}, params={}]",
+            self.origin, self.route, self.query_id, self.gate, self.params
         )
     }
 }
