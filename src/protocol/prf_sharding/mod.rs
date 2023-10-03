@@ -274,12 +274,14 @@ pub async fn toy_protocol<C, F>(ctx: C, input: Vec<Replicated<F>>) -> Vec<Replic
         let record_id = RecordId::from(i);
         let ctx = ctx.clone();
         spawner.spawn_cancellable(async move {
-            r.multiply(&r, ctx, record_id).await.unwrap()
-        }, || Replicated::ZERO);
+            (record_id, r.multiply(&r, ctx, record_id).await.unwrap())
+        }, || panic!("Cancelled"));
     }
 
     let results: Vec<Result<_, JoinError>> = spawner.collect().await;
-    results.into_iter().map(|r| r.unwrap()).collect()
+    println!("collected results = {:?}", results);
+    let results = results.into_iter().map(|r| r.unwrap().1).collect();
+    results
 }
 
 /// Sub-protocol of the PRF-sharded IPA Protocol
@@ -589,6 +591,7 @@ pub mod tests {
     };
     use crate::ff::Fp31;
     use crate::protocol::prf_sharding::toy_protocol;
+    use crate::secret_sharing::replicated::ReplicatedSecretSharing;
 
     struct PreShardedAndSortedOPRFTestInput<BK: GaloisField, TV: GaloisField> {
         prf_of_match_key: u64,
@@ -768,16 +771,36 @@ pub mod tests {
         run(|| async move {
             let world = TestWorld::default();
 
+            // let value = Fp31::truncate_from(0u8);
+            // let shares = world.semi_honest(value, |ctx, a| async move {
+            //     let r = toy_protocol(ctx, vec![a]).await.remove(0);
+            //
+            //     r
+            // }).await;
+            //
+            // tracing::trace!("{:?}", shares);
+            // assert_eq!(shares[0].right(), shares[1].left());
+            // assert_eq!(shares[1].right(), shares[2].left());
+            // assert_eq!(shares[2].right(), shares[0].left());
+
             let records: Vec<Fp31> = (0u8..2)
                 .map(|v| Fp31::truncate_from(v))
                 .collect();
 
-            let result: Vec<_> = world
+            let result = world
                 .semi_honest(records.into_iter(), |ctx, input_rows| async move {
                     toy_protocol(ctx, input_rows).await
                 })
-                .await
-                .reconstruct();
+                .await;
+            tracing::trace!("{:?}", result);
+            let [shares0, shares1, shares2] = result;
+            shares0.iter().zip(shares1).zip(shares2).enumerate().for_each(|(i, ((s0, s1), s2))| {
+                // tracing::trace!("{i}: {:?}", s0);
+                assert_eq!(s0.right(), s1.left());
+                assert_eq!(s1.right(), s2.left());
+                assert_eq!(s2.right(), s0.left());
+            });
+                // .reconstruct();
             // assert_eq!(result, &expected);
         });
     }
