@@ -146,7 +146,7 @@ impl GatewaySenders {
             "unspecified total records for {channel_id:?}"
         );
 
-        /// raw entry API is desperately needed here
+        // raw entry API is desperately needed here
         match self.inner.entry(channel_id.clone()) {
             Entry::Occupied(entry) => {
                 (Arc::clone(entry.get()), None)

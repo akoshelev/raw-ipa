@@ -284,6 +284,54 @@ pub async fn toy_protocol<C, F>(ctx: C, input: Vec<Replicated<F>>) -> Vec<Replic
     results
 }
 
+pub async fn attribution_and_capping<C, BK, TV>(
+    sh_ctx: C,
+    input_rows: Vec<PrfShardedIpaInputRow<BK, TV>>,
+    num_saturating_sum_bits: usize,
+) -> Result<Vec<CappedAttributionOutputs>, Error>
+    where
+        C: UpgradableContext,
+        C::UpgradedContext<Gf2>: UpgradedContext<Gf2, Share = Replicated<Gf2>>,
+        BK: GaloisField,
+        TV: GaloisField,
+{
+    assert!(num_saturating_sum_bits > TV::BITS as usize);
+    assert!(TV::BITS > 0);
+    assert!(BK::BITS > 0);
+
+    let rows_chunked_by_user = chunk_rows_by_user(input_rows);
+    let histogram = compute_histogram_of_users_with_row_count(&rows_chunked_by_user);
+    let binary_validator = sh_ctx.narrow(&Step::BinaryValidator).validator::<Gf2>();
+    let binary_m_ctx = binary_validator.context();
+    let mut num_users_who_encountered_row_depth = Vec::with_capacity(histogram.len());
+    let ctx_for_row_number = set_up_contexts(&binary_m_ctx, &histogram);
+    let mut futures = Vec::with_capacity(rows_chunked_by_user.len());
+    for rows_for_user in rows_chunked_by_user {
+        for i in 0..rows_for_user.len() {
+            if i >= num_users_who_encountered_row_depth.len() {
+                num_users_who_encountered_row_depth.push(0);
+            }
+            num_users_who_encountered_row_depth[i] += 1;
+        }
+
+        futures.push(evaluate_per_user_attribution_circuit(
+            &ctx_for_row_number,
+            num_users_who_encountered_row_depth
+                .iter()
+                .take(rows_for_user.len())
+                .map(|x| RecordId(x - 1))
+                .collect(),
+            rows_for_user,
+            num_saturating_sum_bits,
+        ));
+    }
+    let outputs_chunked_by_user = seq_try_join_all(sh_ctx.active_work(), futures).await?;
+    Ok(outputs_chunked_by_user
+        .into_iter()
+        .flatten()
+        .collect::<Vec<CappedAttributionOutputs>>())
+}
+
 /// Sub-protocol of the PRF-sharded IPA Protocol
 ///
 /// After the computation of the per-user PRF, addition of dummy records and shuffling,
@@ -301,7 +349,7 @@ pub async fn toy_protocol<C, F>(ctx: C, input: Vec<Replicated<F>>) -> Vec<Replic
 /// Propagates errors from multiplications
 /// # Panics
 /// Propagates errors from multiplications
-pub async fn attribution_and_capping<C, BK, TV>(
+pub async fn attribution_and_capping_par<C, BK, TV>(
     sh_ctx: C,
     input_rows: Vec<PrfShardedIpaInputRow<BK, TV>>,
     num_saturating_sum_bits: usize,
@@ -333,9 +381,7 @@ where
             }
             num_users_who_encountered_row_depth[i] += 1;
         }
-    // }
-    //
-    // for rows_for_user in rows_chunked_by_user {
+
         spawner.spawn_cancellable(evaluate_per_user_attribution_circuit(
             &ctx_for_row_number,
             num_users_who_encountered_row_depth
@@ -346,31 +392,17 @@ where
             rows_for_user,
             num_saturating_sum_bits,
         ), || Ok(Vec::new()));
-
-        // futures.push(evaluate_per_user_attribution_circuit(
-        //     &ctx_for_row_number,
-        //     num_users_who_encountered_row_depth
-        //         .iter()
-        //         .take(rows_for_user.len())
-        //         .map(|x| RecordId(x - 1))
-        //         .collect(),
-        //     rows_for_user,
-        //     num_saturating_sum_bits,
-        // ));
     }
     let mut outputs_chunked_by_user = Vec::with_capacity(spawner.len());
     while let Some(r) = spawner.next().await {
-        tracing::error!("one future resolved to {:?}, remained {:?}", r, spawner.remaining());
         outputs_chunked_by_user.push(r.unwrap());
     }
 
-    // let outputs_chunked_by_user: Vec<_> = spawner.collect().await;
-    // let outputs_chunked_by_user = seq_try_join_all(sh_ctx.active_work(), futures).await?;
+    let outputs_chunked_by_user: Vec<_> = spawner.collect().await;
     Ok(outputs_chunked_by_user
         .into_iter()
         // todo: this is utter garbage
-        // .map(|r| r.unwrap().unwrap())
-        .map(|r| r.unwrap())
+        .map(|r| r.unwrap().unwrap())
         .flatten()
         .collect::<Vec<CappedAttributionOutputs>>())
 }
@@ -578,6 +610,10 @@ where
 
 #[cfg(all(test, unit_test))]
 pub mod tests {
+    use std::ops::Range;
+    use rand::{random, thread_rng};
+    use rand::rngs::StdRng;
+    use rand_core::SeedableRng;
     use super::{attribution_and_capping, CappedAttributionOutputs, PrfShardedIpaInputRow};
     use crate::{
         ff::{Field, GaloisField, Gf2, Gf3Bit, Gf5Bit},
@@ -590,7 +626,7 @@ pub mod tests {
         test_fixture::{Reconstruct, Runner, TestWorld},
     };
     use crate::ff::Fp31;
-    use crate::protocol::prf_sharding::toy_protocol;
+    use crate::protocol::prf_sharding::{attribution_and_capping_par, toy_protocol};
     use crate::secret_sharing::replicated::ReplicatedSecretSharing;
 
     struct PreShardedAndSortedOPRFTestInput<BK: GaloisField, TV: GaloisField> {
@@ -706,6 +742,42 @@ pub mod tests {
                     .fold(0_u128, |acc, (i, x)| acc + (x << i)),
             }
         }
+    }
+
+
+    #[test]
+    fn load_test() {
+        const UNIQUE_USERS: u64 = 50;
+        const EVENTS_PER_USER: Range<u64> = 10..50;
+        const SEED: u64 = 652102342824;
+        // let SEED: u64 = thread_rng().gen();
+
+        run(move || async move {
+            let world = TestWorld::default();
+            let mut records: Vec<PreShardedAndSortedOPRFTestInput<Gf5Bit, Gf3Bit>> = Vec::default();
+            let mut rng = StdRng::seed_from_u64(SEED);
+            for user in 1..=UNIQUE_USERS {
+                let events_for_this_user = rng.gen_range(EVENTS_PER_USER);
+                for event in 1..=events_for_this_user {
+                    let is_trigger = rng.gen();
+                    let breakdown_key = rng.gen();
+                    let trigger_value = if is_trigger { rng.gen() } else { 0 };
+                    records.push(test_input(user, is_trigger, breakdown_key, trigger_value ));
+                }
+            }
+            let num_saturating_bits: usize = 5;
+            let result = world
+                .semi_honest(records.into_iter(), |ctx, input_rows| async move {
+                    attribution_and_capping::<_, Gf5Bit, Gf3Bit>(
+                        ctx,
+                        input_rows,
+                        num_saturating_bits,
+                    )
+                        .await
+                        .unwrap()
+                })
+                .await;
+        });
     }
 
     #[test]
