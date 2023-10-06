@@ -2,6 +2,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     num::NonZeroU32,
 };
+use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -133,9 +134,13 @@ impl RouteParams<RouteId, NoQueryId, NoStep> for &QueryConfig {
 }
 
 impl From<&QueryConfig> for GatewayConfig {
-    fn from(_value: &QueryConfig) -> Self {
+    fn from(value: &QueryConfig) -> Self {
         // TODO: pick the correct value for active and test it
-        Self::default()
+        let active: usize = std::cmp::min(50000, value.size.into());
+
+        Self {
+            active: NonZeroUsize::new(active).unwrap(),
+        }
     }
 }
 

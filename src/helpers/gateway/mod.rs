@@ -49,7 +49,7 @@ pub struct Gateway<T: Transport = TransportImpl> {
 pub struct GatewayConfig {
     /// The number of items that can be active at the one time.
     /// This is used to determine the size of sending and receiving buffers.
-    active: NonZeroUsize,
+    pub active: NonZeroUsize,
 }
 
 impl<T: Transport> Gateway<T> {
