@@ -9,7 +9,7 @@ pub trait SecretSharing<V: SharedValue>: Clone + Debug + Sized + Send + Sync {
 }
 
 /// Secret share of a secret that has additive and multiplicative properties.
-pub trait Linear<V: SharedValue>: SecretSharing<V> + ArithmeticRefOps<V> {}
+pub trait Linear<V: SharedValue>: SecretSharing<V> + ArithmeticRefOps<V> + 'static {}
 
 /// Secret share of a secret in bits. It has additive and multiplicative properties.
 pub trait Bitwise<V: GaloisField>: SecretSharing<V> + Linear<V> {}

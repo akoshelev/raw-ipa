@@ -244,35 +244,35 @@ where
 /// # Panics
 /// If the total record count on the context is unspecified.
 #[tracing::instrument(name = "modulus_conversion", skip_all, fields(bits = ?bit_range, gate = %ctx.gate().as_ref()))]
-pub fn convert_bits<F, V, C, S, VS>(
+pub fn convert_bits<'a, F, V, C, S, VS>(
     ctx: C,
     binary_shares: VS,
     bit_range: Range<u32>,
-) -> impl Stream<Item = Result<BitDecomposed<S>, Error>>
+) -> impl Stream<Item = Result<BitDecomposed<S>, Error>> + 'a
 where
     F: PrimeField,
-    V: ToBitConversionTriples,
-    C: UpgradedContext<F, Share = S>,
+    V: ToBitConversionTriples + 'a,
+    C: UpgradedContext<F, Share = S> + 'a,
     S: LinearSecretSharing<F> + SecureMul<C>,
-    VS: Stream<Item = V> + Unpin + Send,
+    VS: Stream<Item = V> + Unpin + Send + 'a,
     for<'u> UpgradeContext<'u, C, F, RecordId>:
         UpgradeToMalicious<'u, BitConversionTriple<Replicated<F>>, BitConversionTriple<C::Share>>,
 {
     convert_some_bits(ctx, binary_shares, RecordId::FIRST, bit_range)
 }
 
-pub(crate) fn convert_some_bits<F, V, C, S, VS>(
+pub(crate) fn convert_some_bits<'a, F, V, C, S, VS>(
     ctx: C,
     binary_shares: VS,
     first_record: RecordId,
     bit_range: Range<u32>,
-) -> impl Stream<Item = Result<BitDecomposed<S>, Error>>
+) -> impl Stream<Item = Result<BitDecomposed<S>, Error>> + 'a
 where
     F: PrimeField,
-    V: ToBitConversionTriples,
-    C: UpgradedContext<F, Share = S>,
+    V: ToBitConversionTriples + 'a,
+    C: UpgradedContext<F, Share = S> + 'a,
     S: LinearSecretSharing<F> + SecureMul<C>,
-    VS: Stream<Item = V> + Unpin + Send,
+    VS: Stream<Item = V> + Unpin + Send + 'a,
     for<'u> UpgradeContext<'u, C, F, RecordId>:
         UpgradeToMalicious<'u, BitConversionTriple<Replicated<F>>, BitConversionTriple<C::Share>>,
 {
