@@ -203,7 +203,7 @@ where
             tracing::trace!("wake next waker for {}, at index {index}", self.next);
             w.wake();
         } else {
-            tracing::warn!("no next waker for {} at position {index}: {:?}/{:p}", self.next, self.wakers, &self.wakers);
+            tracing::trace!("no next waker for {} at position {index}: {:?}/{:p}", self.next, self.wakers, &self.wakers);
         }
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.

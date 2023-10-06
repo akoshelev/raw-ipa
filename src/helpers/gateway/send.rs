@@ -77,7 +77,7 @@ impl GatewaySender {
         let i = usize::from(record_id);
         let send_num = unsafe { ATOMIC_CNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) };
         let is_last = self.total_records.is_last(record_id);
-        tracing::info!("{:?}: s{} (last = {is_last}) sending record {:?} to {:?}",
+        tracing::trace!("{:?}: s{} (last = {is_last}) sending record {:?} to {:?}",
             std::thread::current().id(),
             send_num,
             record_id,
@@ -85,11 +85,11 @@ impl GatewaySender {
         );
         self.ordering_tx.send(i, msg).await;
         if !is_last {
-            tracing::info!("{:?}: s{} sent", std::thread::current().id(), send_num);
+            tracing::trace!("{:?}: s{} sent", std::thread::current().id(), send_num);
         }
         if self.total_records.is_last(record_id) {
             self.ordering_tx.close(i + 1).await;
-            tracing::info!("{:?}: s{} sent and channel closed", std::thread::current().id(), send_num);
+            tracing::trace!("{:?}: s{} sent and channel closed", std::thread::current().id(), send_num);
         }
 
         Ok(())

@@ -32,6 +32,7 @@ mod exact;
 mod seq_join;
 #[cfg(feature = "enable-serde")]
 mod serde;
+mod runtime;
 
 pub use app::{HelperApp, Setup as AppSetup};
 
@@ -99,7 +100,7 @@ pub(crate) mod test_executor {
     }
 }
 
-#[cfg(all(test, unit_test, not(feature = "shuttle")))]
+#[cfg(any(feature = "test-fixture", all(test, unit_test, not(feature = "shuttle"))))]
 pub(crate) mod test_executor {
     use std::future::Future;
 

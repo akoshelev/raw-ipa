@@ -96,6 +96,8 @@ typenum = "1.16"
 # hpke is pinned to it
 x25519-dalek = "2.0.0-pre.0"
 async-scoped = { version = "0.7.1", features = ["use-tokio"] }
+core_affinity = "0.8.1"
+lazy_static = "1.4.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5.0"
@@ -114,6 +116,7 @@ tokio-rustls = { version = "0.24.0", features = ["dangerous_configuration"] }
 [profile.release]
 incremental = true
 lto = "thin"
+debug = true
 
 [profile.bench]
 debug-assertions = true
@@ -128,6 +131,11 @@ debug = 1
 [lib]
 name = "ipa"
 path = "src/lib.rs"
+bench = false
+
+[[bin]]
+name = "oprf"
+required-features = ["test-fixture", "in-memory-infra"]
 bench = false
 
 [[bin]]

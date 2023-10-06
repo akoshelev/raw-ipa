@@ -53,7 +53,7 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
     /// and sent to this helper.
     #[instrument("receive", skip_all, fields(my_role = ?self.my_role))]
     pub async fn receive(&self, record_id: RecordId) -> Result<M, Error> {
-        tracing::info!("{:?} start {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
+        tracing::trace!("{:?} start {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
         let r = self.unordered_rx
             .recv::<M, _>(record_id, self.channel_id.clone())
             .await
@@ -62,7 +62,7 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
                 step: self.channel_id.gate.to_string(),
                 inner: Box::new(e),
             });
-        tracing::info!("{:?} complete {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
+        tracing::trace!("{:?} complete {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
 
         r
     }

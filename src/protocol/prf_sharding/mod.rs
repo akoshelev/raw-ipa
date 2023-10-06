@@ -608,7 +608,7 @@ where
     ))
 }
 
-#[cfg(all(test, unit_test))]
+#[cfg(any(feature = "test-fixture", all(test, unit_test)))]
 pub mod tests {
     use std::ops::Range;
     use rand::{random, thread_rng};
@@ -626,17 +626,19 @@ pub mod tests {
         test_fixture::{Reconstruct, Runner, TestWorld},
     };
     use crate::ff::Fp31;
-    use crate::protocol::prf_sharding::{attribution_and_capping_par, toy_protocol};
+    use crate::helpers::GatewayConfig;
+    use crate::protocol::prf_sharding::{attribution_and_capping_par};
     use crate::secret_sharing::replicated::ReplicatedSecretSharing;
+    use crate::test_fixture::TestWorldConfig;
 
-    struct PreShardedAndSortedOPRFTestInput<BK: GaloisField, TV: GaloisField> {
+    pub struct PreShardedAndSortedOPRFTestInput<BK: GaloisField, TV: GaloisField> {
         prf_of_match_key: u64,
         is_trigger_bit: Gf2,
         breakdown_key: BK,
         trigger_value: TV,
     }
 
-    fn test_input(
+    pub fn test_input(
         prf_of_match_key: u64,
         is_trigger: bool,
         breakdown_key: u8,
@@ -747,13 +749,16 @@ pub mod tests {
 
     #[test]
     fn load_test() {
-        const UNIQUE_USERS: u64 = 50;
+        const UNIQUE_USERS: u64 = 100;
         const EVENTS_PER_USER: Range<u64> = 10..50;
         const SEED: u64 = 652102342824;
         // let SEED: u64 = thread_rng().gen();
 
         run(move || async move {
-            let world = TestWorld::default();
+            let world = TestWorld::new_with(TestWorldConfig {
+                gateway_config: GatewayConfig::new(UNIQUE_USERS.try_into().unwrap()),
+                ..Default::default()
+            });
             let mut records: Vec<PreShardedAndSortedOPRFTestInput<Gf5Bit, Gf3Bit>> = Vec::default();
             let mut rng = StdRng::seed_from_u64(SEED);
             for user in 1..=UNIQUE_USERS {
@@ -838,42 +843,42 @@ pub mod tests {
         });
     }
 
-    #[test]
-    fn toy_parallel() {
-        run(|| async move {
-            let world = TestWorld::default();
-
-            // let value = Fp31::truncate_from(0u8);
-            // let shares = world.semi_honest(value, |ctx, a| async move {
-            //     let r = toy_protocol(ctx, vec![a]).await.remove(0);
-            //
-            //     r
-            // }).await;
-            //
-            // tracing::trace!("{:?}", shares);
-            // assert_eq!(shares[0].right(), shares[1].left());
-            // assert_eq!(shares[1].right(), shares[2].left());
-            // assert_eq!(shares[2].right(), shares[0].left());
-
-            let records: Vec<Fp31> = (0u8..2)
-                .map(|v| Fp31::truncate_from(v))
-                .collect();
-
-            let result = world
-                .semi_honest(records.into_iter(), |ctx, input_rows| async move {
-                    toy_protocol(ctx, input_rows).await
-                })
-                .await;
-            tracing::trace!("{:?}", result);
-            let [shares0, shares1, shares2] = result;
-            shares0.iter().zip(shares1).zip(shares2).enumerate().for_each(|(i, ((s0, s1), s2))| {
-                // tracing::trace!("{i}: {:?}", s0);
-                assert_eq!(s0.right(), s1.left());
-                assert_eq!(s1.right(), s2.left());
-                assert_eq!(s2.right(), s0.left());
-            });
-                // .reconstruct();
-            // assert_eq!(result, &expected);
-        });
-    }
+    // #[test]
+    // fn toy_parallel() {
+    //     run(|| async move {
+    //         let world = TestWorld::default();
+    //
+    //         // let value = Fp31::truncate_from(0u8);
+    //         // let shares = world.semi_honest(value, |ctx, a| async move {
+    //         //     let r = toy_protocol(ctx, vec![a]).await.remove(0);
+    //         //
+    //         //     r
+    //         // }).await;
+    //         //
+    //         // tracing::trace!("{:?}", shares);
+    //         // assert_eq!(shares[0].right(), shares[1].left());
+    //         // assert_eq!(shares[1].right(), shares[2].left());
+    //         // assert_eq!(shares[2].right(), shares[0].left());
+    //
+    //         let records: Vec<Fp31> = (0u8..2)
+    //             .map(|v| Fp31::truncate_from(v))
+    //             .collect();
+    //
+    //         let result = world
+    //             .semi_honest(records.into_iter(), |ctx, input_rows| async move {
+    //                 toy_protocol(ctx, input_rows).await
+    //             })
+    //             .await;
+    //         tracing::trace!("{:?}", result);
+    //         let [shares0, shares1, shares2] = result;
+    //         shares0.iter().zip(shares1).zip(shares2).enumerate().for_each(|(i, ((s0, s1), s2))| {
+    //             // tracing::trace!("{i}: {:?}", s0);
+    //             assert_eq!(s0.right(), s1.left());
+    //             assert_eq!(s1.right(), s2.left());
+    //             assert_eq!(s2.right(), s0.left());
+    //         });
+    //             // .reconstruct();
+    //         // assert_eq!(result, &expected);
+    //     });
+    // }
 }

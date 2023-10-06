@@ -1,5 +1,3 @@
-#![allow(dead_code)] // TODO remove
-
 use std::{
     borrow::Borrow,
     cmp::Ordering,
@@ -10,6 +8,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use std::fmt::{Debug, Formatter};
 
 use futures::{task::Waker, Future, Stream};
 use generic_array::GenericArray;
@@ -116,6 +115,7 @@ impl State {
 }
 
 /// An saved waker for a given index.
+#[derive(Debug)]
 struct WakerItem {
     /// The index.
     i: usize,
@@ -124,15 +124,49 @@ struct WakerItem {
 }
 
 /// A collection of saved wakers.
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct WaitingShard {
+    /// The maximum index that was used to wake a task that belongs to this shard.
+    /// Updates to this shard will be rejected if th supplied index is less than this value.
+    /// See [`Add`] for more details
+    woken_at: usize,
     /// The saved wakers.  These are sorted on insert (see `add`) and
     /// presumably removed constantly, so a circular buffer is used.
     wakers: VecDeque<WakerItem>,
 }
 
+struct WakerRejected(usize, usize);
+
+impl WakerRejected {
+    fn new(expected_pos: usize, actual_pos: usize) -> Self {
+        Self(expected_pos, actual_pos)
+    }
+}
+
+impl std::fmt::Display for WakerRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+impl Debug for WakerRejected {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Adding waker is rejected because the expected position {} is behind actual {}. \
+        Refresh your view and try again.", self.0, self.1)
+    }
+}
+
+impl std::error::Error for WakerRejected {}
+
 impl WaitingShard {
-    fn add(&mut self, i: usize, w: Waker) {
+    fn add(&mut self, expected: usize, i: usize, w: Waker) -> Result<(), WakerRejected> {
+        if expected < self.woken_at {
+            // this means this thread is out of sync and there was an update to channel's current
+            // position. Accepting a waker could mean it will never be awakened. Rejecting this operation
+            // will let the current thread to read the position again.
+            Err(WakerRejected::new(expected, self.woken_at))?
+        }
+
         // Each new addition will tend to have a larger index, so search backwards and
         // replace an equal index or insert after a smaller index.
         // TODO: consider a binary search if the item cannot be added to the end.
@@ -143,18 +177,23 @@ impl WaitingShard {
                 Ordering::Equal => {
                     assert!(item.w.will_wake(&self.wakers[j].w));
                     self.wakers[j] = item;
-                    return;
+                    return Ok(());
                 }
                 Ordering::Less => {
                     self.wakers.insert(j + 1, item);
-                    return;
+                    return Ok(());
                 }
             }
         }
         self.wakers.insert(0, item);
+        Ok(())
     }
 
     fn wake(&mut self, i: usize) {
+        // Waking thread may have lost the race and got the lock after the successful write
+        // to the next element. Moving `woken_at` back will introduce a concurrency bug.
+        self.woken_at = std::cmp::max(self.woken_at, i);
+
         if let Some(idx) = self
             .wakers
             .iter()
@@ -192,8 +231,8 @@ impl Waiting {
         self.shards[idx].lock().unwrap()
     }
 
-    fn add(&self, i: usize, w: Waker) {
-        self.shard(i).add(i, w);
+    fn add(&self, curr: usize, i: usize, w: Waker) -> Result<(), WakerRejected> {
+        self.shard(i).add(curr, i, w)
     }
 
     fn wake(&self, i: usize) {
@@ -239,7 +278,7 @@ impl OrderingSender {
         }
     }
 
-    /// Send a message, `m`, at the index `i`.  
+    /// Send a message, `m`, at the index `i`.
     /// This method blocks until all previous messages are sent and until sufficient
     /// space becomes available in the sender's buffer.
     ///
@@ -271,31 +310,35 @@ impl OrderingSender {
 
     /// Perform the next `send` or `close` operation.
     fn next_op<F>(&self, i: usize, cx: &Context<'_>, f: F) -> Poll<()>
-    where
-        F: FnOnce(&mut MutexGuard<'_, State>) -> Poll<()>,
+        where
+            F: FnOnce(&mut MutexGuard<'_, State>) -> Poll<()>,
     {
         // This load here is on the hot path.
         // Don't acquire the state mutex unless this test passes.
-        match self.next.load(Acquire).cmp(&i) {
-            Ordering::Greater => {
-                panic!("attempt to write/close at index {i} twice");
-            }
-            Ordering::Equal => {
-                // OK, now it is our turn, so we need to hold a lock.
-                // No one else should be incrementing this atomic, so
-                // there should be no contention on this lock except for
-                // any calls to `take()`, which is tolerable.
-                let res = f(&mut self.state.lock().unwrap());
-                if res.is_ready() {
-                    let curr = self.next.fetch_add(1, AcqRel);
-                    debug_assert_eq!(i, curr, "we just checked this");
+        loop {
+            let curr = self.next.load(Acquire);
+            match curr.cmp(&i) {
+                Ordering::Greater => {
+                    panic!("attempt to write/close at index {i} twice");
                 }
-                res
-            }
-            Ordering::Less => {
-                // This is the hot path. Wait our turn.
-                self.waiting.add(i, cx.waker().clone());
-                Poll::Pending
+                Ordering::Equal => {
+                    // OK, now it is our turn, so we need to hold a lock.
+                    // No one else should be incrementing this atomic, so
+                    // there should be no contention on this lock except for
+                    // any calls to `take()`, which is tolerable.
+                    let res = f(&mut self.state.lock().unwrap());
+                    if res.is_ready() {
+                        let curr = self.next.fetch_add(1, AcqRel);
+                        debug_assert_eq!(i, curr, "we just checked this");
+                    }
+                    break res
+                }
+                Ordering::Less => {
+                    // This is the hot path. Wait our turn.
+                    if let Ok(()) = self.waiting.add(curr, i, cx.waker().clone()) {
+                        break Poll::Pending
+                    }
+                }
             }
         }
     }
@@ -309,7 +352,9 @@ impl OrderingSender {
         let mut b = self.state.lock().unwrap();
 
         if let Poll::Ready(v) = b.take(cx) {
-            self.waiting.wake(self.next.load(Acquire));
+            let curr = self.next.load(Acquire);
+            tracing::trace!("take next at {curr}");
+            self.waiting.wake(curr);
             Poll::Ready(Some(v))
         } else if b.closed {
             Poll::Ready(None)
@@ -403,8 +448,11 @@ mod test {
         stream::StreamExt,
         FutureExt,
     };
+    use futures_util::future::try_join_all;
     use generic_array::GenericArray;
     use rand::Rng;
+    #[cfg(feature = "shuttle")]
+    use shuttle::future as tokio;
     use typenum::Unsigned;
 
     use super::OrderingSender;
@@ -414,6 +462,7 @@ mod test {
         sync::Arc,
         test_executor::run,
     };
+    use crate::test_fixture::logging;
 
     fn sender() -> Arc<OrderingSender> {
         Arc::new(OrderingSender::new(
@@ -538,7 +587,7 @@ mod test {
                 sender.close(values.len()),
                 sender.as_stream().collect::<Vec<_>>(),
             )
-            .await;
+                .await;
 
             let buf = output.into_iter().flatten().collect::<Vec<_>>();
             for (&v, b) in zip(values.iter(), buf.chunks(SZ)) {
@@ -573,12 +622,36 @@ mod test {
                 sender.close(values.len()),
                 sender.as_stream().collect::<Vec<_>>(),
             )
-            .await;
+                .await;
 
             let buf = output.into_iter().flatten().collect::<Vec<_>>();
             for (&v, b) in zip(values.iter(), buf.chunks(SZ)) {
                 assert_eq!(v, Fp31::deserialize(GenericArray::from_slice(b)));
             }
+        });
+    }
+
+    /// This test is supposed to eventually hang if there is a concurrency bug inside `OrderingSender`.
+    #[test]
+    fn parallel_send() {
+        logging::setup();
+        const PARALLELISM: usize = 10;
+        run(|| async {
+            let sender = Arc::new(OrderingSender::new(
+                NonZeroUsize::new(PARALLELISM * <Fp31 as Serializable>::Size::USIZE).unwrap(),
+                NonZeroUsize::new(5).unwrap(),
+            ));
+
+            try_join_all((0..PARALLELISM).map(|i| {
+                tokio::spawn({
+                    let sender = Arc::clone(&sender);
+                    async move {
+                        sender.send(i, Fp31::truncate_from(i as u128)).await;
+                    }
+                })
+            }))
+                .await
+                .unwrap();
         });
     }
 }
