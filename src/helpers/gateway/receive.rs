@@ -51,7 +51,6 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
     /// ## Panics
     /// This will panic if message size does not fit into 8 bytes and it somehow got serialized
     /// and sent to this helper.
-    #[instrument("receive", skip_all, fields(my_role = ?self.my_role))]
     pub async fn receive(&self, record_id: RecordId) -> Result<M, Error> {
         tracing::trace!("{:?} start {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
         let r = self.unordered_rx

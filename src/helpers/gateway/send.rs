@@ -117,7 +117,7 @@ impl<M: Message> SendingEnd<M> {
     /// [`set_total_records`]: crate::protocol::context::Context::set_total_records
     pub async fn send(&self, record_id: RecordId, msg: M) -> Result<(), Error> {
         // .instrument(tracing::info_span!("receive", my_role = ?self.my_role))
-        let r = self.inner.send(record_id, msg).instrument(tracing::info_span!("send", my_role = ?self.sender_role)).await;
+        let r = self.inner.send(record_id, msg).await;
         metrics::increment_counter!(RECORDS_SENT,
             STEP => self.channel_id.gate.as_ref().to_string(),
             ROLE => self.sender_role.as_static_str()
