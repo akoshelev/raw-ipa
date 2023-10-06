@@ -5,9 +5,11 @@ use std::{
     path::{Path, PathBuf},
     process,
 };
+use std::sync::atomic::AtomicUsize;
 
 use clap::{self, Parser, Subcommand};
 use hyper::http::uri::Scheme;
+use tokio::runtime::Builder;
 use ipa::{
     cli::{
         client_config_setup, keygen, test_setup, ConfGenArgs, KeygenArgs, TestSetupArgs, Verbosity,
@@ -189,8 +191,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
     Ok(())
 }
 
-#[tokio::main]
-pub async fn main() {
+async fn run() {
     let args = Args::parse();
     let _handle = args.logging.setup_logging();
 
@@ -205,4 +206,21 @@ pub async fn main() {
         error!("{e}");
         process::exit(1);
     }
+}
+
+fn main() {
+    let next_core = AtomicUsize::default();
+    let rt = Builder::new_multi_thread()
+        // .worker_threads(args.threads)
+        .enable_all()
+        .on_thread_start(move || {
+            let mut core_ids = core_affinity::get_core_ids().unwrap();
+            let random_core = next_core.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % core_ids.len();
+            core_affinity::set_for_current(core_ids[random_core]);
+        })
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    let task = rt.spawn(run());
+    rt.block_on(task).unwrap();
 }
