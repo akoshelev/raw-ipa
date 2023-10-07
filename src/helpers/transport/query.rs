@@ -136,7 +136,7 @@ impl RouteParams<RouteId, NoQueryId, NoStep> for &QueryConfig {
 impl From<&QueryConfig> for GatewayConfig {
     fn from(value: &QueryConfig) -> Self {
         // TODO: pick the correct value for active and test it
-        let active: usize = std::cmp::min(50000, value.size.into());
+        let active: usize = std::cmp::min(5000, value.size.into());
 
         Self {
             active: NonZeroUsize::new(active).unwrap(),
