@@ -40,11 +40,14 @@ impl Verbosity {
         tracing_subscriber::registry()
             .with(self.level_filter())
             .with(fmt_layer)
-            .with(MetricsLayer::new())
+            // .with(MetricsLayer::new())
             .init();
 
+        // let handle = LoggingHandle {
+        //     metrics_handle: (!self.quiet).then(install_collector),
+        // };
         let handle = LoggingHandle {
-            metrics_handle: (!self.quiet).then(install_collector),
+            metrics_handle: None
         };
         set_global_panic_hook();
 

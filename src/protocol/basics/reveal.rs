@@ -47,7 +47,7 @@ pub trait Reveal<C: Context, B: RecordBinding>: Sized {
 /// i.e. their own shares and received share.
 #[async_trait]
 #[embed_doc_image("reveal", "images/reveal.png")]
-impl<C: Context, F: Field> Reveal<C, RecordId> for Replicated<F> {
+impl<C: Context, F: crate::secret_sharing::SharedValue> Reveal<C, RecordId> for Replicated<F> {
     type Output = F;
 
     async fn reveal<'fut>(&self, ctx: C, record_id: RecordId) -> Result<F, Error>
