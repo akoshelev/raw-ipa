@@ -101,6 +101,10 @@ where
     }
 }
 
+struct ParallelFutures<'a, S, F> {
+    spawner: UnsafeSpawner<'a, F>
+}
+
 /// The `SeqJoin` trait wraps `seq_try_join_all`, providing the `active` parameter
 /// from the provided context so that the value can be made consistent.
 pub trait SeqJoin {
@@ -141,7 +145,7 @@ pub trait SeqJoin {
         I::Item: futures::future::TryFuture,
     {
         #[allow(clippy::disallowed_methods)] // Just in this one place.
-        futures::future::try_join_all(iterable)
+        futures::future::try_join_all(iterable.into_iter().map(|f| tokio::spawn()))
     }
 
     /// The amount of active work that is concurrently permitted.
