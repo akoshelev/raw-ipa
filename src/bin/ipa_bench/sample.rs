@@ -1,7 +1,9 @@
-use rand::distributions::Distribution;
-use rand::distributions::WeightedIndex;
-use rand::{CryptoRng, Rng, RngCore};
 use std::time::Duration;
+
+use rand::{
+    distributions::{Distribution, WeightedIndex},
+    CryptoRng, Rng, RngCore,
+};
 
 use crate::config::Config;
 

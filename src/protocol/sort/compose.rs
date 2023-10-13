@@ -1,125 +1,121 @@
-use crate::{
-    error::BoxError,
-    ff::Field,
-    protocol::{context::ProtocolContext, reveal::reveal_a_permutation},
-    secret_sharing::Replicated,
-};
 use embed_doc_image::embed_doc_image;
 
-use super::{
-    apply::apply_inv,
-    shuffle::{get_two_of_three_random_permutations, Shuffle},
-    ComposeStep::{RevealPermutation, ShuffleSigma, UnshuffleRho},
+use crate::{
+    error::Error,
+    ff::Field,
+    protocol::{
+        basics::Reshare,
+        context::Context,
+        sort::{apply::apply, shuffle::unshuffle_shares, ComposeStep::UnshuffleRho},
+        RecordId,
+    },
+    secret_sharing::SecretSharing,
 };
 
+#[embed_doc_image("compose", "images/sort/compose.png")]
 /// This is an implementation of Compose (Algorithm 5) found in the paper:
 /// "An Efficient Secure Three-Party Sorting Protocol with an Honest Majority"
 /// by K. Chida, K. Hamada, D. Ikarashi, R. Kikuchi, N. Kiribuchi, and B. Pinkas
 /// <https://eprint.iacr.org/2019/695.pdf>
+///
 /// This protocol composes two permutations by applying one secret-shared permutation(sigma) to another secret-shared permutation(rho)
 /// Input: First permutation(sigma) i.e. permutation that sorts all i-1th bits and other permutation(rho) i.e. sort permutation for ith bit
 /// Output: All helpers receive secret shares of permutation which sort inputs until ith bits.
-#[derive(Debug)]
-pub struct Compose<'a, F> {
-    sigma: &'a mut Vec<Replicated<F>>,
-    rho: &'a mut Vec<Replicated<F>>,
+///
+/// This algorithm composes two permutations (`rho` and `sigma`). Both permutations are secret-shared,
+/// and none of the helpers should learn it through this protocol.
+///
+/// Steps
+///
+/// 1. Generate random permutations using prss
+/// 2. First permutation (sigma) is shuffled with random permutations
+/// 3. Reveal the permutation
+/// 4. Revealed permutation is applied locally on another permutation shares (rho)
+/// 5. Unshuffle the permutation with the same random permutations used in step 2, to undo the effect of the shuffling
+///
+/// ![Compose steps][compose]
+pub async fn compose<F: Field, S: SecretSharing<F> + Reshare<C, RecordId>, C: Context>(
+    ctx: C,
+    random_permutations_for_shuffle: (&[u32], &[u32]),
+    shuffled_sigma: &[u32],
+    mut rho: Vec<S>,
+) -> Result<Vec<S>, Error> {
+    apply(shuffled_sigma, &mut rho);
+
+    let unshuffled_rho = unshuffle_shares(
+        rho,
+        random_permutations_for_shuffle,
+        ctx.narrow(&UnshuffleRho),
+    )
+    .await?;
+
+    Ok(unshuffled_rho)
 }
 
-impl<'a, F: Field> Compose<'a, F> {
-    #[allow(dead_code)]
-    pub fn new(sigma: &'a mut Vec<Replicated<F>>, rho: &'a mut Vec<Replicated<F>>) -> Self {
-        Self { sigma, rho }
-    }
-    #[embed_doc_image("compose", "images/sort/compose.png")]
-    /// This algorithm composes two permutations (`rho` and `sigma`). Both permutations are secret-shared,
-    /// and none of the helpers should learn it through this protocol.
-    /// Steps
-    /// ![Compose steps][compose]
-    /// 1. Generate random permutations using prss
-    /// 2. First permutation (sigma) is shuffled with random permutations
-    /// 3. Reveal the permutation
-    /// 4. Revealed permutation is applied locally on another permutation shares (rho)
-    /// 5. Unshuffle the permutation with the same random permutations used in step 2, to undo the effect of the shuffling
-    #[allow(dead_code)]
-    pub async fn execute(&mut self, ctx: ProtocolContext<'_, F>) -> Result<(), BoxError> {
-        let mut random_permutations =
-            get_two_of_three_random_permutations(self.rho.len(), &ctx.prss());
-        let mut random_permutations_copy = random_permutations.clone();
-
-        Shuffle::new(self.sigma)
-            .execute(ctx.narrow(&ShuffleSigma), &mut random_permutations)
-            .await?;
-
-        let mut perms = reveal_a_permutation(ctx.narrow(&RevealPermutation), self.sigma).await?;
-
-        apply_inv(&mut perms, &mut self.rho);
-
-        Shuffle::new(self.rho)
-            .execute_unshuffle(ctx.narrow(&UnshuffleRho), &mut random_permutations_copy)
-            .await?;
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, unit_test))]
 mod tests {
-    use permutation::Permutation;
     use rand::seq::SliceRandom;
-    use tokio::try_join;
 
     use crate::{
-        error::BoxError,
+        ff::{Field, Fp31},
         protocol::{
-            sort::{apply::apply_inv, compose::Compose},
-            QueryId,
+            context::{Context, SemiHonestContext, UpgradableContext, Validator},
+            sort::{
+                apply::apply, compose::compose,
+                generate_permutation::shuffle_and_reveal_permutation,
+            },
         },
-        test_fixture::{
-            generate_shares, make_contexts, make_world, validate_list_of_shares, TestWorld,
-        },
+        rand::thread_rng,
+        test_fixture::{Reconstruct, Runner, TestWorld},
     };
 
     #[tokio::test]
-    pub async fn compose() -> Result<(), BoxError> {
-        const BATCHSIZE: usize = 25;
-        for _ in 0..10 {
-            let mut rng_sigma = rand::thread_rng();
-            let mut rng_rho = rand::thread_rng();
+    pub async fn semi_honest() {
+        const BATCHSIZE: u32 = 25;
+        let world = TestWorld::default();
+        let mut rng_sigma = thread_rng();
+        let mut rng_rho = thread_rng();
 
-            let mut sigma: Vec<usize> = (0..BATCHSIZE).collect();
-            sigma.shuffle(&mut rng_sigma);
+        let mut sigma: Vec<u32> = (0..BATCHSIZE).collect();
+        sigma.shuffle(&mut rng_sigma);
 
-            let sigma_u128: Vec<u128> = sigma.iter().map(|x| *x as u128).collect();
+        let mut rho: Vec<u128> = (0..BATCHSIZE.try_into().unwrap()).collect();
+        rho.shuffle(&mut rng_rho);
 
-            let mut rho: Vec<usize> = (0..BATCHSIZE).collect();
-            rho.shuffle(&mut rng_rho);
-            let rho_u128: Vec<u128> = rho.iter().map(|x| *x as u128).collect();
+        let mut expected_result = rho.clone();
+        apply(&sigma, &mut expected_result);
 
-            let mut rho_composed = rho_u128.clone();
-            apply_inv(&mut Permutation::oneline(sigma.clone()), &mut rho_composed);
+        let result = world
+            .semi_honest(
+                (
+                    sigma.into_iter().map(u128::from).map(Fp31::truncate_from),
+                    rho.into_iter().map(Fp31::truncate_from),
+                ),
+                |ctx, (m_sigma_shares, m_rho_shares)| async move {
+                    let v = ctx.narrow("shuffle_reveal").validator();
+                    let sigma_and_randoms = shuffle_and_reveal_permutation::<
+                        SemiHonestContext,
+                        _,
+                        Fp31,
+                    >(v.context(), m_sigma_shares, v)
+                    .await
+                    .unwrap();
 
-            let mut sigma_shares = generate_shares(sigma_u128);
-            let mut rho_shares = generate_shares(rho_u128);
-            let world: TestWorld = make_world(QueryId);
-            let [ctx0, ctx1, ctx2] = make_contexts(&world);
+                    compose(
+                        ctx,
+                        (
+                            sigma_and_randoms.randoms_for_shuffle.0.as_slice(),
+                            sigma_and_randoms.randoms_for_shuffle.1.as_slice(),
+                        ),
+                        &sigma_and_randoms.revealed,
+                        m_rho_shares,
+                    )
+                    .await
+                    .unwrap()
+                },
+            )
+            .await;
 
-            let mut compose0 = Compose::new(&mut sigma_shares.0, &mut rho_shares.0);
-            let mut compose1 = Compose::new(&mut sigma_shares.1, &mut rho_shares.1);
-            let mut compose2 = Compose::new(&mut sigma_shares.2, &mut rho_shares.2);
-
-            let h0_future = compose0.execute(ctx0);
-            let h1_future = compose1.execute(ctx1);
-            let h2_future = compose2.execute(ctx2);
-
-            try_join!(h0_future, h1_future, h2_future)?;
-
-            assert_eq!(rho_shares.0.len(), BATCHSIZE);
-            assert_eq!(rho_shares.1.len(), BATCHSIZE);
-            assert_eq!(rho_shares.2.len(), BATCHSIZE);
-
-            // We should get the same result of applying inverse of sigma on rho as in clear
-            validate_list_of_shares(&rho_composed, &rho_shares);
-        }
-        Ok(())
+        assert_eq!(&expected_result[..], &result.reconstruct());
     }
 }

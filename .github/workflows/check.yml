@@ -1,10 +1,32 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "src/**/*"
+      - "benches/**/*"
+      - "tests/**/*"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "src/**/*"
+      - "benches/**/*"
+      - "tests/**/*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
 jobs:
-  rust-check:
-    name: Rust Checks
+  basic:
+    name: Basic Checks
     env:
-      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+
     runs-on: ubuntu-latest
 
     steps:
@@ -24,22 +46,114 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check --config "imports_granularity=Crate,group_imports=StdExternalCrate"
+
+      - name: Clippy
+        if: ${{ success() || failure() }}
+        run: cargo clippy --tests
+
+      - name: Clippy concurrency tests
+        if: ${{ success() || failure() }}
+        run: cargo clippy --tests --features shuttle
+
       - name: Build
+        if: ${{ success() || failure() }}
         run: cargo build --tests
+
+      - name: Run Tests
+        run: cargo test
+
+      - name: Run Web Tests
+        run: cargo test --no-default-features --features "cli web-app real-world-infra test-fixture descriptive-gate"
+
+      - name: Run compact gate tests
+        run: cargo test --no-default-features --features "cli web-app real-world-infra test-fixture compact-gate"
+
+  release:
+    name: Release builds and tests
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -C target-cpu=native
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Release Build
         run: cargo build --release
 
+      - name: Build concurrency tests
+        run: cargo build --release --features shuttle
+
+      - name: Run concurrency tests
+        run: cargo test --release --features shuttle
+
+  extra:
+    name: Additional Builds and Concurrency Tests
+    env:
+      RUSTFLAGS: -D warnings -C target-cpu=native
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
       - name: Build benchmarks
-        run: cargo build --benches --all-features
+        run: cargo build --benches --no-default-features --features "enable-benches descriptive-gate"
 
-      - name: Check formatting
-        if: ${{ success() || failure() }}
-        run: cargo fmt --all -- --check
+      - name: Build concurrency tests (debug mode)
+        run: cargo build --features shuttle
 
-      - name: Clippy
-        if: ${{ success() || failure() }}
-        run: cargo clippy --tests -- -D warnings -D clippy::pedantic
+      - name: Run IPA bench
+        run: cargo bench --bench oneshot_ipa --no-default-features --features "enable-benches descriptive-gate"
 
-      - name: Run Tests
-        run: cargo test
+      - name: Run arithmetic bench
+        run: cargo bench --bench oneshot_arithmetic --no-default-features --features "enable-benches descriptive-gate"
+
+      - name: Run compact gate tests
+        run: cargo test --no-default-features --features "cli web-app real-world-infra test-fixture compact-gate"
+
+  # sanitizers currently require nightly https://github.com/rust-lang/rust/issues/39699
+  sanitize:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [ address, leak ]
+    env:
+      TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Add Rust sources
+        run: rustup component add rust-src
+      - name: Run tests with sanitizer
+        run: RUSTFLAGS="-Z sanitizer=${{ matrix.sanitizer }} -Z sanitizer-memory-track-origins" cargo test -Z build-std --target $TARGET --no-default-features --features "cli web-app real-world-infra test-fixture descriptive-gate"
+

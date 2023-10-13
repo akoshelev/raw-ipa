@@ -1,8 +1,11 @@
+use std::{
+    fmt::{Debug, Formatter},
+    io::{Error as IoError, ErrorKind as IoErrorKind},
+    ops::Range,
+};
+
 use rand::{CryptoRng, Rng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Formatter};
-use std::io::{Error as IoError, ErrorKind as IoErrorKind};
-use std::ops::Range;
 
 // Type aliases to indicate whether the parameter should be encrypted, secret shared, etc.
 // Underlying types are temporalily assigned for PoC.
@@ -304,7 +307,6 @@ struct TriggerFanoutQuery {
     value_range: Range<u32>,
 }
 
-#[cfg(feature = "debug")]
 impl Debug for TriggerFanoutQuery {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
@@ -315,11 +317,10 @@ impl Debug for TriggerFanoutQuery {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unit_test))]
 mod tests {
-    use crate::models::Epoch;
-
     use super::EventTimestamp;
+    use crate::models::Epoch;
 
     #[test]
     fn event_timestamp_new() {

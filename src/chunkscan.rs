@@ -1,11 +1,15 @@
-use crate::error::BoxError;
+use std::{
+    future::Future,
+    mem,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use futures::{ready, Stream};
 use pin_project::pin_project;
-use std::future::Future;
-use std::mem;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use tracing::error;
+
+use crate::error::BoxError;
 
 /// A variant of stream transform that combines semantic of `StreamExt::chunks` and `StreamExt::scan`.
 /// Consumes the input stream and keeps accumulating items in the internal buffer until it reaches
@@ -31,7 +35,7 @@ pub struct ChunkScan<St: Stream, F, Fut> {
     /// Buffer for items taken off the input stream
     buf: Vec<St::Item>,
 
-    /// Transforms Vec<Item> -> Future<Output=Result<Item, Error>>
+    /// Transforms `Vec<Item>` -> Future<Output=Result<Item, Error>>
     f: F,
 
     /// future in progress
