@@ -153,7 +153,7 @@ where
     /// Note: in protocols we try to send before receiving, so we can rely on
     /// that easing load on this mechanism.  There might also need to be some
     /// end-to-end back pressure for tasks that do not involve sending at all.
-    overflow_wakers: Vec<Waker>,
+    overflow_wakers: Vec<(Waker, usize)>,
     /// If this receiver is closed and no longer capable of receiving data.
     closed: bool,
     _marker: PhantomData<C>,
@@ -184,7 +184,7 @@ where
         );
         // We don't save a waker at `self.next`, so `>` and not `>=`.
         if i > self.next + self.wakers.len() {
-            self.overflow_wakers.push(waker);
+            self.overflow_wakers.push((waker, i));
         } else {
             let index = i % self.wakers.len();
             if let Some(old) = self.wakers[index].as_ref() {
@@ -207,7 +207,8 @@ where
         }
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.
-            for w in take(&mut self.overflow_wakers) {
+            // todo: we may want to wake specific wakers now
+            for (w, _) in take(&mut self.overflow_wakers) {
                 w.wake();
             }
         }
@@ -288,6 +289,42 @@ where
             self.spare = Spare::default();
         }
     }
+
+    fn waiting(&self) -> impl Iterator<Item = usize> + '_ {
+        // we are under-reporting overflow wakers as there is no information about their
+        // let mut r = Vec::new();
+        let start = self.next % self.wakers.len();
+        self.wakers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, waker)| waker.as_ref().map(|_| i))
+            .map(move |i| {
+                if i < start {
+                    self.next + (self.wakers.len() - start + i)
+                } else {
+                    self.next + (i - start)
+                }
+            })
+            .chain(self.overflow_wakers.iter().map(|v| v.1))
+
+        // for (i, maybe_waker) in self.wakers.iter().enumerate() {
+        //     if let Some(waker) = maybe_waker {
+        //         if i < start {
+        //             r.push(self.next + (self.wakers.len() - start + i))
+        //         } else {
+        //             r.push(self.next + (i - start))
+        //         }
+        //     }
+        // }
+        //
+        // for (_, i) in &self.overflow_wakers {
+        //     r.push(*i);
+        // }
+        //
+        // r.sort_unstable();
+        //
+        // r.into_iter()
+    }
 }
 
 /// Take an ordered stream of bytes and make messages from that stream
@@ -356,6 +393,13 @@ where
         // If this function is ever called on the hot path, consider caching closed status.
         // Closed streams cannot move back to open.
         self.inner.lock().unwrap().is_closed()
+    }
+
+    pub fn waiting(&self) -> Vec<usize> {
+        let mut r = self.inner.lock().unwrap().waiting().collect::<Vec<_>>();
+        r.sort_unstable();
+
+        r
     }
 }
 

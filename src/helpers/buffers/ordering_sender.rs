@@ -188,6 +188,10 @@ impl WaitingShard {
             self.wakers.pop_front().unwrap().w.wake();
         }
     }
+
+    pub fn waiting(&self) -> impl Iterator<Item = usize> + '_ {
+        self.wakers.iter().map(|waker| waker.i)
+    }
 }
 
 /// A collection of wakers that are indexed by the send index (`i`).
@@ -223,6 +227,12 @@ impl Waiting {
 
     fn wake(&self, i: usize) {
         self.shard(i).wake(i);
+    }
+
+    fn waiting(&self, indices: &mut Vec<usize>) {
+        self.shards
+            .iter()
+            .for_each(|shard| indices.extend(shard.lock().unwrap().waiting()));
     }
 }
 
@@ -374,6 +384,14 @@ impl OrderingSender {
         self: crate::sync::Arc<Self>,
     ) -> OrderedStream<crate::sync::Arc<Self>> {
         OrderedStream { sender: self }
+    }
+
+    pub fn waiting(&self) -> Vec<usize> {
+        let mut buf = Vec::new();
+        self.waiting.waiting(&mut buf);
+        buf.sort_unstable();
+
+        buf
     }
 }
 

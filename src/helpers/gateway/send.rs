@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    fmt::{Debug, Formatter},
     marker::PhantomData,
     num::NonZeroUsize,
     pin::Pin,
@@ -6,11 +8,19 @@ use std::{
 };
 
 use dashmap::{mapref::entry::Entry, DashMap};
+use delegate::delegate;
 use futures::Stream;
 use typenum::Unsigned;
 
 use crate::{
-    helpers::{buffers::OrderingSender, ChannelId, Error, Message, Role, TotalRecords},
+    helpers::{
+        buffers::OrderingSender,
+        gateway::{
+            observable::{ObserveState, Observed},
+            to_ranges,
+        },
+        ChannelId, Error, Message, Role, TotalRecords,
+    },
     protocol::RecordId,
     sync::Arc,
     telemetry::{
@@ -27,10 +37,52 @@ pub struct SendingEnd<M: Message> {
     _phantom: PhantomData<M>,
 }
 
+impl<M: Message> Observed<SendingEnd<M>> {
+    delegate! {
+        to { self.inc_sn(); self.inner() } {
+            #[inline]
+            pub async fn send(&self, record_id: RecordId, msg: M) -> Result<(), Error>;
+        }
+    }
+}
+
 /// Sending channels, indexed by (role, step).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct GatewaySenders {
     inner: DashMap<ChannelId, Arc<GatewaySender>>,
+}
+
+pub struct WaitingTasks(HashMap<ChannelId, Vec<String>>);
+
+impl Debug for WaitingTasks {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (channel, records) in &self.0 {
+            write!(
+                f,
+                "\n\"{:?}\", to={:?}. Waiting to send records {:?}.",
+                channel.gate, channel.role, records
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl ObserveState for GatewaySenders {
+    type State = WaitingTasks;
+
+    fn get_state(&self) -> Option<Self::State> {
+        let mut state = HashMap::new();
+        for entry in &self.inner {
+            let channel = entry.key();
+            let sender = entry.value();
+            if let Some(sender_state) = sender.get_state() {
+                state.insert(channel.clone(), sender_state);
+            }
+        }
+
+        Some(WaitingTasks(state))
+    }
 }
 
 pub(super) struct GatewaySender {
@@ -41,6 +93,15 @@ pub(super) struct GatewaySender {
 
 pub(super) struct GatewaySendStream {
     inner: Arc<GatewaySender>,
+}
+
+impl ObserveState for GatewaySender {
+    type State = Vec<String>;
+
+    fn get_state(&self) -> Option<Self::State> {
+        let waiting_indices = self.ordering_tx.waiting();
+        to_ranges(waiting_indices).get_state()
+    }
 }
 
 impl GatewaySender {

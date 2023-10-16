@@ -1,24 +1,20 @@
+#[allow(clippy::module_inception)] // private
+mod gateway;
+mod observable;
+#[cfg(not(feature = "shuttle"))] // todo its own feature
+pub mod observer;
 mod receive;
 mod send;
 mod transport;
 
-use std::{fmt::Debug, num::NonZeroUsize};
+use std::ops::RangeInclusive;
 
-pub use send::SendingEnd;
-#[cfg(all(feature = "shuttle", test))]
-use shuttle::future as tokio;
+// TODO: feature flag
+pub type SendingEnd<M> = Observed<send::SendingEnd<M>>;
+pub type ReceivingEnd<M> = Observed<receive::ReceivingEnd<M>>;
+pub type Gateway = Observed<gateway::Gateway>;
 
-use crate::{
-    helpers::{
-        gateway::{
-            receive::{GatewayReceivers, ReceivingEnd as ReceivingEndBase},
-            send::GatewaySenders,
-            transport::RoleResolvingTransport,
-        },
-        ChannelId, Message, Role, RoleAssignment, TotalRecords, Transport,
-    },
-    protocol::QueryId,
-};
+use crate::helpers::{gateway::observable::Observed, Transport};
 
 /// Alias for the currently configured transport.
 ///
@@ -31,120 +27,21 @@ pub type TransportImpl = super::transport::InMemoryTransport;
 pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 
 pub type TransportError = <TransportImpl as Transport>::Error;
-pub type ReceivingEnd<M> = ReceivingEndBase<TransportImpl, M>;
 
-/// Gateway into IPA Infrastructure systems. This object allows sending and receiving messages.
-/// As it is generic over network/transport layer implementation, type alias [`Gateway`] should be
-/// used to avoid carrying `T` over.
-///
-/// [`Gateway`]: crate::helpers::Gateway
-pub struct Gateway<T: Transport = TransportImpl> {
-    config: GatewayConfig,
-    transport: RoleResolvingTransport<T>,
-    senders: GatewaySenders,
-    receivers: GatewayReceivers<T>,
-}
+pub use gateway::GatewayConfig;
 
-#[derive(Clone, Copy, Debug)]
-pub struct GatewayConfig {
-    /// The number of items that can be active at the one time.
-    /// This is used to determine the size of sending and receiving buffers.
-    active: NonZeroUsize,
-}
-
-impl<T: Transport> Gateway<T> {
-    #[must_use]
-    pub fn new(
-        query_id: QueryId,
-        config: GatewayConfig,
-        roles: RoleAssignment,
-        transport: T,
-    ) -> Self {
-        Self {
-            config,
-            transport: RoleResolvingTransport {
-                query_id,
-                roles,
-                inner: transport,
-                config,
-            },
-            senders: GatewaySenders::default(),
-            receivers: GatewayReceivers::default(),
-        }
-    }
-
-    #[must_use]
-    pub fn role(&self) -> Role {
-        self.transport.role()
-    }
-
-    #[must_use]
-    pub fn config(&self) -> &GatewayConfig {
-        &self.config
-    }
-
-    ///
-    /// ## Panics
-    /// If there is a failure connecting via HTTP
-    #[must_use]
-    pub fn get_sender<M: Message>(
-        &self,
-        channel_id: &ChannelId,
-        total_records: TotalRecords,
-    ) -> SendingEnd<M> {
-        let (tx, maybe_stream) =
-            self.senders
-                .get_or_create::<M>(channel_id, self.config.active_work(), total_records);
-        if let Some(stream) = maybe_stream {
-            tokio::spawn({
-                let channel_id = channel_id.clone();
-                let transport = self.transport.clone();
-                async move {
-                    // TODO(651): In the HTTP case we probably need more robust error handling here.
-                    transport
-                        .send(&channel_id, stream)
-                        .await
-                        .expect("{channel_id:?} receiving end should be accepted by transport");
-                }
-            });
-        }
-
-        SendingEnd::new(tx, self.role(), channel_id)
-    }
-
-    #[must_use]
-    pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId) -> ReceivingEndBase<T, M> {
-        ReceivingEndBase::new(
-            channel_id.clone(),
-            self.receivers
-                .get_or_create(channel_id, || self.transport.receive(channel_id)),
-        )
-    }
-}
-
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self::new(1024)
-    }
-}
-
-impl GatewayConfig {
-    /// Generate a new configuration with the given active limit.
-    ///
-    /// ## Panics
-    /// If `active` is 0.
-    #[must_use]
-    pub fn new(active: usize) -> Self {
-        Self {
-            active: NonZeroUsize::new(active).unwrap(),
-        }
-    }
-
-    /// The configured amount of active work.
-    #[must_use]
-    pub fn active_work(&self) -> NonZeroUsize {
-        self.active
-    }
+fn to_ranges(nums: Vec<usize>) -> Vec<std::ops::RangeInclusive<usize>> {
+    nums.into_iter()
+        .fold(Vec::<RangeInclusive<usize>>::new(), |mut ranges, num| {
+            if let Some(last_range) = ranges.last_mut().filter(|r| *r.end() == num - 1) {
+                *last_range = *last_range.start()..=num;
+            } else {
+                ranges.push(num..=num);
+            }
+            ranges
+        })
+        .into_iter()
+        .collect()
 }
 
 #[cfg(all(test, unit_test))]
@@ -215,6 +112,8 @@ mod tests {
         // sent (same batch or different does not matter here)
         let spawned = tokio::spawn(async move {
             let channel = sender_ctx.send_channel(Role::H2);
+            // channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)).await.unwrap();
+            // channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)).await.unwrap();
             try_join(
                 channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
                 channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),

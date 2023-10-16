@@ -120,6 +120,18 @@ impl TestWorld {
         }
         let gateways = gateways.map(Option::unwrap);
 
+        #[cfg(not(feature = "shuttle"))]
+        gateways
+            .iter()
+            .map(|g| {
+                crate::helpers::observer::spawn(
+                    tracing::info_span!("Observer", role=?g.role()),
+                    config.gateway_config.progress_check_interval,
+                    g.to_observed(),
+                )
+            })
+            .for_each(drop);
+
         TestWorld {
             gateways,
             participants,

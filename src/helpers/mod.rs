@@ -3,6 +3,8 @@ use std::{
     num::NonZeroUsize,
 };
 
+use generic_array::GenericArray;
+
 mod buffers;
 mod error;
 mod gateway;
@@ -15,11 +17,12 @@ use std::ops::{Index, IndexMut};
 #[cfg(test)]
 pub use buffers::OrderingSender;
 pub use error::{Error, Result};
+#[cfg(not(feature = "shuttle"))]
+pub use gateway::observer;
 // TODO: this type should only be available within infra. Right now several infra modules
 // are exposed at the root level. That makes it impossible to have a proper hierarchy here.
 pub use gateway::{Gateway, TransportError, TransportImpl};
 pub use gateway::{GatewayConfig, ReceivingEnd, SendingEnd};
-use generic_array::GenericArray;
 pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
