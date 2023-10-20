@@ -4,7 +4,7 @@ use super::SharedValue;
 use crate::ff::{ArithmeticRefOps, GaloisField};
 
 /// Secret sharing scheme i.e. Replicated secret sharing
-pub trait SecretSharing<V: SharedValue>: Clone + Debug + Sized + Send + Sync {
+pub trait SecretSharing<V: SharedValue>: Clone + Debug + Sized + Send + Sync + 'static {
     const ZERO: Self;
 }
 

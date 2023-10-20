@@ -6,6 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 use std::marker::PhantomData;
+use clap::builder::TypedValueParser;
 
 use futures::{
     stream::{iter, Iter as StreamIter, TryCollect},
@@ -108,13 +109,22 @@ struct ParallelFutures<'a, I, F> {
 }
 
 #[pin_project]
-pub struct ParallelFutures2<'a, F: futures::future::TryFuture> {
+pub struct ParallelFutures2<'a, F>
+    where F: futures::future::TryFuture,
+F::Ok: Send + 'static,
+F::Error: Send + 'static
+{
     spawner: UnsafeSpawner<'a, Result<F::Ok, F::Error>>,
     #[pin]
-    inner: TryJoinAll<F>
+    inner: TryJoinAll<UnsafeSpawnerHandle<Result<F::Ok, F::Error>>>,
 }
 
-impl <F: futures::future::TryFuture> Future for ParallelFutures2<'_, F> {
+impl <F> Future for ParallelFutures2<'_, F>
+
+    where F: futures::future::TryFuture,
+F::Ok: Send + 'static,
+F::Error: Send + 'static
+{
     type Output = Result<Vec<F::Ok>, F::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -156,14 +166,23 @@ pub trait SeqJoin {
     }
 
     /// Join multiple tasks in parallel.  Only do this if you can't use a sequential join.
-    fn parallel_join<'a, I>(&self, iterable: I) -> ParallelFutures2<'a, I::Item>
+    fn parallel_join<'a, I, F, O, E>(&self, iterable: I) -> ParallelFutures2<'a, I::Item>
     where
-        I: IntoIterator,
-        I::Item: futures::future::TryFuture,
+        I: IntoIterator<Item = F>,
+        // F: futures::future::TryFuture + Send,
+        F: Future<Output = Result<O, E>> + Send + 'a,
+        O: Send + 'static,
+        E: Send + 'static
+        // F::Ok: Send + 'static,
+        // F::Error: Send + 'static,
     {
+        // let iterable = iterable.into_iter().map(|f| {
+        //     spawner.spawn(f)
+        // });
+        let spawner = UnsafeSpawner::default();
         ParallelFutures2 {
-            spawner: UnsafeSpawner::default(),
-            inner: futures::future::try_join_all(iterable.into_iter())
+            spawner,
+            inner: futures::future::try_join_all(iterable.into_iter().map(|f| spawner.spawn(f))),
         }
         // #[allow(clippy::disallowed_methods)] // Just in this one place.
         // futures::future::try_join_all(iterable.into_iter()
