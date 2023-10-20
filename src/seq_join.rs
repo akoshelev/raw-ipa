@@ -11,6 +11,7 @@ use futures::{
     stream::{iter, Iter as StreamIter, TryCollect},
     Future, Stream, StreamExt, TryStreamExt,
 };
+use futures_util::future::TryJoinAll;
 use pin_project::pin_project;
 
 use crate::exact::ExactSizeStream;
@@ -101,8 +102,24 @@ where
     }
 }
 
-struct ParallelFutures<'a, S, F> {
-    spawner: UnsafeSpawner<'a, F>
+struct ParallelFutures<'a, I, F> {
+    spawner: UnsafeSpawner<'a, F>,
+    iterable: I,
+}
+
+#[pin_project]
+pub struct ParallelFutures2<'a, F: futures::future::TryFuture> {
+    spawner: UnsafeSpawner<'a, Result<F::Ok, F::Error>>,
+    #[pin]
+    inner: TryJoinAll<F>
+}
+
+impl <F: futures::future::TryFuture> Future for ParallelFutures2<'_, F> {
+    type Output = Result<Vec<F::Ok>, F::Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().inner.poll(cx)
+    }
 }
 
 /// The `SeqJoin` trait wraps `seq_try_join_all`, providing the `active` parameter
@@ -139,13 +156,18 @@ pub trait SeqJoin {
     }
 
     /// Join multiple tasks in parallel.  Only do this if you can't use a sequential join.
-    fn parallel_join<I>(&self, iterable: I) -> futures::future::TryJoinAll<I::Item>
+    fn parallel_join<'a, I>(&self, iterable: I) -> ParallelFutures2<'a, I::Item>
     where
         I: IntoIterator,
         I::Item: futures::future::TryFuture,
     {
-        #[allow(clippy::disallowed_methods)] // Just in this one place.
-        futures::future::try_join_all(iterable.into_iter().map(|f| tokio::spawn()))
+        ParallelFutures2 {
+            spawner: UnsafeSpawner::default(),
+            inner: futures::future::try_join_all(iterable.into_iter())
+        }
+        // #[allow(clippy::disallowed_methods)] // Just in this one place.
+        // futures::future::try_join_all(iterable.into_iter()
+            // .map(|f| tokio::spawn()))
     }
 
     /// The amount of active work that is concurrently permitted.
