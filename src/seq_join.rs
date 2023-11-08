@@ -5,6 +5,9 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use async_scoped::spawner::use_tokio::Tokio;
+use async_scoped::TokioScope;
+use async_trait::async_trait;
 
 use futures::{
     stream::{iter, Iter as StreamIter, TryCollect},
@@ -82,13 +85,35 @@ pub trait SeqJoin {
     }
 
     /// Join multiple tasks in parallel.  Only do this if you can't use a sequential join.
-    fn parallel_join<I>(&self, iterable: I) -> futures::future::TryJoinAll<I::Item>
-    where
-        I: IntoIterator,
-        I::Item: futures::future::TryFuture,
+    fn parallel_join<'a, I, F, O, E>(&self, iterable: I) -> Pin<Box<dyn Future<Output = Result<Vec<O>, E>> + Send + 'a>>
+        where
+            I: IntoIterator<Item = F> + Send,
+            F: Future<Output = Result<O, E>> + Send + 'a,
+            O: Send + 'static,
+            E: Send + 'static
     {
-        #[allow(clippy::disallowed_methods)] // Just in this one place.
-        futures::future::try_join_all(iterable)
+        // TODO: implement spawner for shuttle
+        let mut scope = {
+            let iter = iterable.into_iter();
+            let mut scope = unsafe { TokioScope::create(Tokio) };
+            for element in iter {
+                // it is important to make those cancellable.
+                // TODO: elaborate why
+                scope.spawn_cancellable(element, || panic!("Future is cancelled."));
+            }
+            scope
+        };
+
+        Box::pin(async move {
+            let mut result = Vec::with_capacity(scope.len());
+            while let Some(item) = scope.next().await { // join error is nothing we can do about
+                result.push(item.unwrap()?)
+            }
+            Ok(result)
+        })
+
+        // #[allow(clippy::disallowed_methods)] // Just in this one place.
+        // futures::future::try_join_all(iterable)
     }
 
     /// The amount of active work that is concurrently permitted.

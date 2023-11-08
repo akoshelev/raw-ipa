@@ -101,10 +101,10 @@ impl<F: PrimeField, C: Context> Iterator for RawRandomBitIter<F, C> {
 /// # Panics
 /// If the provided context has an unspecified total record count.
 /// An indeterminate limit works, but setting a fixed value greatly helps performance.
-pub fn random_bits<F, C>(ctx: C) -> impl Stream<Item = Result<BitDecomposed<C::Share>, Error>>
+pub fn random_bits<'ctx, F, C>(ctx: C) -> impl Stream<Item = Result<BitDecomposed<C::Share>, Error>> + 'ctx
 where
     F: PrimeField,
-    C: UpgradedContext<F>,
+    C: UpgradedContext<F> + 'ctx,
     C::Share: LinearSecretSharing<F> + SecureMul<C>,
 {
     debug_assert!(ctx.total_records().is_specified());
