@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/rm@v1
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -69,12 +69,11 @@ jobs:
 
   release:
     name: Release builds and tests
-    needs: free-disk-space
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -C target-cpu=native
     steps:
-      - uses: actions/rm@v1
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -102,14 +101,13 @@ jobs:
 
   extra:
     name: Additional Builds and Concurrency Tests
-    needs: free-disk-space
     env:
       RUSTFLAGS: -D warnings -C target-cpu=native
 
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/rm@v1
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
