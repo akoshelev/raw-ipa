@@ -1,19 +1,22 @@
 mod receive;
 mod send;
+#[cfg(feature = "stall-detection")]
+pub(super) mod stall_detection;
 mod transport;
 
-use std::{fmt::Debug, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
-pub use send::SendingEnd;
-#[cfg(all(feature = "shuttle", test))]
+pub(super) use receive::ReceivingEnd;
+pub(super) use send::SendingEnd;
+#[cfg(all(test, feature = "shuttle"))]
 use shuttle::future as tokio;
+#[cfg(feature = "stall-detection")]
+pub(super) use stall_detection::InstrumentedGateway;
 
 use crate::{
     helpers::{
         gateway::{
-            receive::{GatewayReceivers, ReceivingEnd as ReceivingEndBase},
-            send::GatewaySenders,
-            transport::RoleResolvingTransport,
+            receive::GatewayReceivers, send::GatewaySenders, transport::RoleResolvingTransport,
         },
         ChannelId, Message, Role, RoleAssignment, TotalRecords, Transport,
     },
@@ -31,18 +34,21 @@ pub type TransportImpl = super::transport::InMemoryTransport;
 pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 
 pub type TransportError = <TransportImpl as Transport>::Error;
-pub type ReceivingEnd<M> = ReceivingEndBase<TransportImpl, M>;
 
-/// Gateway into IPA Infrastructure systems. This object allows sending and receiving messages.
-/// As it is generic over network/transport layer implementation, type alias [`Gateway`] should be
-/// used to avoid carrying `T` over.
-///
-/// [`Gateway`]: crate::helpers::Gateway
-pub struct Gateway<T: Transport = TransportImpl> {
+/// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
+pub struct Gateway {
     config: GatewayConfig,
-    transport: RoleResolvingTransport<T>,
+    transport: RoleResolvingTransport,
+    #[cfg(feature = "stall-detection")]
+    inner: crate::sync::Arc<State>,
+    #[cfg(not(feature = "stall-detection"))]
+    inner: State,
+}
+
+#[derive(Default)]
+pub struct State {
     senders: GatewaySenders,
-    receivers: GatewayReceivers<T>,
+    receivers: GatewayReceivers,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -50,16 +56,23 @@ pub struct GatewayConfig {
     /// The number of items that can be active at the one time.
     /// This is used to determine the size of sending and receiving buffers.
     pub active: NonZeroUsize,
+
+    /// Time to wait before checking gateway progress. If no progress has been made between
+    /// checks, the gateway is considered to be stalled and will create a report with outstanding
+    /// send/receive requests
+    #[cfg(feature = "stall-detection")]
+    pub progress_check_interval: std::time::Duration,
 }
 
-impl<T: Transport> Gateway<T> {
+impl Gateway {
     #[must_use]
     pub fn new(
         query_id: QueryId,
         config: GatewayConfig,
         roles: RoleAssignment,
-        transport: T,
+        transport: TransportImpl,
     ) -> Self {
+        #[allow(clippy::useless_conversion)] // not useless in stall-detection build
         Self {
             config,
             transport: RoleResolvingTransport {
@@ -68,8 +81,7 @@ impl<T: Transport> Gateway<T> {
                 inner: transport,
                 config,
             },
-            senders: GatewaySenders::default(),
-            receivers: GatewayReceivers::default(),
+            inner: State::default().into(),
         }
     }
 
@@ -91,10 +103,12 @@ impl<T: Transport> Gateway<T> {
         &self,
         channel_id: &ChannelId,
         total_records: TotalRecords,
-    ) -> SendingEnd<M> {
-        let (tx, maybe_stream) =
-            self.senders
-                .get_or_create::<M>(channel_id, self.config.active_work(), total_records);
+    ) -> send::SendingEnd<M> {
+        let (tx, maybe_stream) = self.inner.senders.get_or_create::<M>(
+            channel_id,
+            self.config.active_work(),
+            total_records,
+        );
         if let Some(stream) = maybe_stream {
             tokio::spawn({
                 let channel_id = channel_id.clone();
@@ -109,15 +123,16 @@ impl<T: Transport> Gateway<T> {
             });
         }
 
-        SendingEnd::new(tx, self.role(), channel_id)
+        send::SendingEnd::new(tx, self.role(), channel_id)
     }
 
     #[must_use]
-    pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId) -> ReceivingEndBase<T, M> {
-        ReceivingEndBase::new(
+    pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId) -> receive::ReceivingEnd<M> {
+        receive::ReceivingEnd::new(
             self.transport.role(),
             channel_id.clone(),
-            self.receivers
+            self.inner
+                .receivers
                 .get_or_create(channel_id, || self.transport.receive(channel_id)),
         )
     }
@@ -136,8 +151,18 @@ impl GatewayConfig {
     /// If `active` is 0.
     #[must_use]
     pub fn new(active: usize) -> Self {
+        // In-memory tests are fast, so progress check intervals can be lower.
+        // Real world scenarios currently over-report stalls because of inefficiencies inside
+        // infrastructure and actual networking issues. This checks is only valuable to report
+        // bugs, so keeping it large enough to avoid false positives.
         Self {
             active: NonZeroUsize::new(active).unwrap(),
+            #[cfg(feature = "stall-detection")]
+            progress_check_interval: std::time::Duration::from_secs(if cfg!(test) {
+                5
+            } else {
+                30
+            }),
         }
     }
 
@@ -150,12 +175,13 @@ impl GatewayConfig {
 
 #[cfg(all(test, unit_test))]
 mod tests {
-    use futures_util::future::{join, try_join};
+    use std::iter::{repeat, zip};
 
-    use super::*;
+    use futures_util::future::{join, try_join, try_join_all};
+
     use crate::{
         ff::{Field, Fp31, Fp32BitPrime, Gf2},
-        helpers::{Direction, GatewayConfig, SendingEnd},
+        helpers::{Direction, GatewayConfig, Role, SendingEnd},
         protocol::{context::Context, RecordId},
         test_fixture::{Runner, TestWorld, TestWorldConfig},
     };
@@ -181,7 +207,7 @@ mod tests {
 
         let world = TestWorld::new_with(config);
         world
-            .semi_honest((), |ctx, _| async move {
+            .semi_honest((), |ctx, ()| async move {
                 let fp2_ctx = ctx.narrow("fp2").set_total_records(100);
                 let fp32_ctx = ctx.narrow("fp32").set_total_records(100);
                 let role = ctx.role();
@@ -237,5 +263,111 @@ mod tests {
         );
         spawned.await.unwrap();
         let _world = unsafe { Box::from_raw(world_ptr) };
+    }
+
+    /// this test requires quite a few threads to simulate send contention and will panic if
+    /// there is more than one sender channel created per step.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
+    pub async fn send_contention() {
+        let (world, world_ptr) = make_world();
+
+        try_join_all(world.contexts().map(|ctx| {
+            tokio::spawn(async move {
+                const TOTAL_RECORDS: usize = 10;
+                let ctx = ctx
+                    .narrow("send_contention")
+                    .set_total_records(TOTAL_RECORDS);
+
+                let receive_handle = tokio::spawn({
+                    let ctx = ctx.clone();
+                    async move {
+                        for record in 0..TOTAL_RECORDS {
+                            let v = Fp31::truncate_from(u128::try_from(record).unwrap());
+                            let r = ctx
+                                .recv_channel::<Fp31>(ctx.role().peer(Direction::Left))
+                                .receive(record.into())
+                                .await
+                                .unwrap();
+
+                            assert_eq!(v, r, "Bad value for record {record}");
+                        }
+                    }
+                });
+
+                try_join_all(zip(0..TOTAL_RECORDS, repeat(ctx)).map(|(record, ctx)| {
+                    tokio::spawn(async move {
+                        let r = Fp31::truncate_from(u128::try_from(record).unwrap());
+                        ctx.send_channel(ctx.role().peer(Direction::Right))
+                            .send(RecordId::from(record), r)
+                            .await
+                            .unwrap();
+                    })
+                }))
+                .await
+                .unwrap();
+
+                receive_handle.await.unwrap();
+            })
+        }))
+        .await
+        .unwrap();
+
+        let _world = unsafe { Box::from_raw(world_ptr) };
+    }
+
+    /// This test should hang if receiver channel is not created atomically. It may occasionally
+    /// pass, but it will not give false negatives.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
+    pub async fn receive_contention() {
+        let (world, world_ptr) = make_world();
+        let contexts = world.contexts();
+
+        try_join_all(contexts.map(|ctx| {
+            tokio::spawn(async move {
+                const TOTAL_RECORDS: u32 = 20;
+                let ctx = ctx
+                    .narrow("receive_contention")
+                    .set_total_records(usize::try_from(TOTAL_RECORDS).unwrap());
+
+                tokio::spawn({
+                    let ctx = ctx.clone();
+                    async move {
+                        for record in 0..TOTAL_RECORDS {
+                            ctx.send_channel(ctx.role().peer(Direction::Right))
+                                .send(RecordId::from(record), Fp31::truncate_from(record))
+                                .await
+                                .unwrap();
+                        }
+                    }
+                });
+
+                try_join_all((0..TOTAL_RECORDS).zip(repeat(ctx)).map(|(record, ctx)| {
+                    tokio::spawn(async move {
+                        let r = ctx
+                            .recv_channel::<Fp31>(ctx.role().peer(Direction::Left))
+                            .receive(RecordId::from(record))
+                            .await
+                            .unwrap();
+                        assert_eq!(
+                            Fp31::truncate_from(record),
+                            r,
+                            "received bad value for record {record}"
+                        );
+                    })
+                }))
+                .await
+                .unwrap();
+            })
+        }))
+        .await
+        .unwrap();
+
+        let _world = unsafe { Box::from_raw(world_ptr) };
+    }
+
+    fn make_world() -> (&'static TestWorld, *mut TestWorld) {
+        let world = Box::leak(Box::<TestWorld>::default());
+        let world_ptr = world as *mut _;
+        (world, world_ptr)
     }
 }

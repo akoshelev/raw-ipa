@@ -6,8 +6,7 @@ use std::{
 };
 use std::sync::atomic::AtomicU64;
 
-use dashmap::DashMap;
-use dashmap::mapref::entry::Entry;
+use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
 use tracing::Instrument;
 use typenum::Unsigned;
@@ -33,7 +32,7 @@ pub struct SendingEnd<M: Message> {
 /// Sending channels, indexed by (role, step).
 #[derive(Default)]
 pub(super) struct GatewaySenders {
-    inner: DashMap<ChannelId, Arc<GatewaySender>>,
+    pub(super) inner: DashMap<ChannelId, Arc<GatewaySender>>,
 }
 
 pub(super) struct GatewaySender {
@@ -94,6 +93,16 @@ impl GatewaySender {
 
         Ok(())
     }
+
+    #[cfg(feature = "stall-detection")]
+    pub fn waiting(&self) -> Vec<usize> {
+        self.ordering_tx.waiting()
+    }
+
+    #[cfg(feature = "stall-detection")]
+    pub fn total_records(&self) -> TotalRecords {
+        self.total_records
+    }
 }
 
 impl<M: Message> SendingEnd<M> {
@@ -115,6 +124,7 @@ impl<M: Message> SendingEnd<M> {
     /// call.
     ///
     /// [`set_total_records`]: crate::protocol::context::Context::set_total_records
+    #[tracing::instrument(level = "trace", "send", skip_all, fields(i = %record_id, total = %self.inner.total_records, to = ?self.channel_id.role, gate = ?self.channel_id.gate.as_ref()))]
     pub async fn send(&self, record_id: RecordId, msg: M) -> Result<(), Error> {
         // .instrument(tracing::info_span!("receive", my_role = ?self.my_role))
         let r = self.inner.send(record_id, msg).await;
@@ -146,11 +156,9 @@ impl GatewaySenders {
             "unspecified total records for {channel_id:?}"
         );
 
-        // raw entry API is desperately needed here
+        // TODO: raw entry API would be nice to have here but it's not exposed yet
         match self.inner.entry(channel_id.clone()) {
-            Entry::Occupied(entry) => {
-                (Arc::clone(entry.get()), None)
-            }
+            Entry::Occupied(entry) => (Arc::clone(entry.get()), None),
             Entry::Vacant(entry) => {
                 const SPARE: Option<NonZeroUsize> = NonZeroUsize::new(64);
                 // a little trick - if number of records is indeterminate, set the capacity to 1.
@@ -175,10 +183,11 @@ impl GatewaySenders {
                     total_records,
                 ));
                 entry.insert(Arc::clone(&sender));
-                let stream = GatewaySendStream {
-                    inner: Arc::clone(&sender),
-                };
-                (sender, Some(stream))
+
+                (
+                    Arc::clone(&sender),
+                    Some(GatewaySendStream { inner: sender }),
+                )
             }
         }
     }

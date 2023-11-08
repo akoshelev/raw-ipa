@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
-use dashmap::DashMap;
+use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
 use std::sync::atomic::AtomicU64;
-use dashmap::mapref::entry::Entry;
 use tracing::{Instrument, instrument};
 
 use crate::{
-    helpers::{buffers::UnorderedReceiver, ChannelId, Error, Message, Transport},
+    helpers::{buffers::UnorderedReceiver, ChannelId, Error, Message, Transport, TransportImpl},
     protocol::RecordId,
 };
 use crate::helpers::Role;
@@ -15,25 +14,26 @@ use crate::helpers::Role;
 static mut ATOMIC_CNT: AtomicU64 = AtomicU64::new(0);
 
 /// Receiving end end of the gateway channel.
-pub struct ReceivingEnd<T: Transport, M: Message> {
+pub struct ReceivingEnd<M: Message> {
     channel_id: ChannelId,
-    unordered_rx: UR<T>,
+    unordered_rx: UR,
     _phantom: PhantomData<M>,
     pub my_role: Role,
 }
 
 /// Receiving channels, indexed by (role, step).
-pub(super) struct GatewayReceivers<T: Transport> {
-    inner: DashMap<ChannelId, UR<T>>,
+#[derive(Default)]
+pub(super) struct GatewayReceivers {
+    pub(super) inner: DashMap<ChannelId, UR>,
 }
 
-pub(super) type UR<T> = UnorderedReceiver<
-    <T as Transport>::RecordsStream,
-    <<T as Transport>::RecordsStream as Stream>::Item,
+pub(super) type UR = UnorderedReceiver<
+    <TransportImpl as Transport>::RecordsStream,
+    <<TransportImpl as Transport>::RecordsStream as Stream>::Item,
 >;
 
-impl<T: Transport, M: Message> ReceivingEnd<T, M> {
-    pub(super) fn new(my_role: Role,channel_id: ChannelId, rx: UR<T>) -> Self {
+impl<M: Message> ReceivingEnd<M> {
+    pub(super) fn new(my_role: Role,channel_id: ChannelId, rx: UR) -> Self {
         Self {
             channel_id,
             my_role,
@@ -51,6 +51,7 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
     /// ## Panics
     /// This will panic if message size does not fit into 8 bytes and it somehow got serialized
     /// and sent to this helper.
+    #[tracing::instrument(level = "trace", "receive", skip_all, fields(i = %record_id, from = ?self.channel_id.role, gate = ?self.channel_id.gate.as_ref()))]
     pub async fn receive(&self, record_id: RecordId) -> Result<M, Error> {
         tracing::trace!("{:?} start {:?}/{record_id:?}", std::thread::current().id(), self.channel_id);
         let r = self.unordered_rx
@@ -67,21 +68,11 @@ impl<T: Transport, M: Message> ReceivingEnd<T, M> {
     }
 }
 
-impl<T: Transport> Default for GatewayReceivers<T> {
-    fn default() -> Self {
-        Self {
-            inner: DashMap::default(),
-        }
-    }
-}
-
-impl<T: Transport> GatewayReceivers<T> {
-    pub fn get_or_create<F: FnOnce() -> UR<T>>(&self, channel_id: &ChannelId, ctr: F) -> UR<T> {
-        let receivers = &self.inner;
-        match receivers.entry(channel_id.clone()) {
-            Entry::Occupied(entry) => {
-                entry.get().clone()
-            }
+impl GatewayReceivers {
+    pub fn get_or_create<F: FnOnce() -> UR>(&self, channel_id: &ChannelId, ctr: F) -> UR {
+        // TODO: raw entry API if it becomes available to avoid cloning the key
+        match self.inner.entry(channel_id.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 let stream = ctr();
                 entry.insert(stream.clone());

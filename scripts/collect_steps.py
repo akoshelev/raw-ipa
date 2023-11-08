@@ -50,22 +50,7 @@ ROOT_STEP_PREFIX = "protocol/alloc::string::String::run-0"
 DEPTH_DYNAMIC_STEPS = [
     "ipa::protocol::attribution::InteractionPatternStep",
 ]
-# Same here. There are steps that are executed depending on the number of bits in the
-# used field.
-BIT_DYNAMIC_STEPS = [
-    "ipa::protocol::attribution::aggregate_credit::Step::compute_equality_checks",
-    "ipa::protocol::attribution::aggregate_credit::Step::check_times_credit",
-]
-# another one for modulus conversion
-MODULUS_CONVERSION_DYNAMIC_STEPS = [
-    "ipa::protocol::sort::SortStep::convert",
-    "ipa::protocol::attribution::AttributionStep::convert_helper_bits",
-    "ipa::protocol::boolean::solved_bits::Step::random_bits",
-    "ipa::protocol::attribution::aggregate_credit::Step::mod_conv_breakdown_key_bits",
-]
 MAXIMUM_DEPTH = 32
-MAXIMUM_BIT_LENGTH = 32
-MAXIMUM_CONVERT_BIT_LENGTH = 64
 
 
 def set_env():
@@ -82,8 +67,6 @@ def remove_root_step_name_from_line(l):
 def collect_steps(args):
     output = set()
     depth_dynamic_steps = set()
-    bit_dynamic_steps = set()
-    modulus_conversion_dynamic_steps = set()
 
     proc = subprocess.Popen(
         args=args,
@@ -111,14 +94,6 @@ def collect_steps(args):
             depth_dynamic_steps.add(remove_root_step_name_from_line(line))
             # continue without adding to the `output`. we'll generate the dynamic steps later
             continue
-        if any(s in line for s in BIT_DYNAMIC_STEPS):
-            line = re.sub(r"bit\d+", "bitX", line)
-            bit_dynamic_steps.add(remove_root_step_name_from_line(line))
-            continue
-        if any(s in line for s in MODULUS_CONVERSION_DYNAMIC_STEPS):
-            line = re.sub(r"mc\d+", "mcX", line)
-            modulus_conversion_dynamic_steps.add(remove_root_step_name_from_line(line))
-            continue
 
         output.update([remove_root_step_name_from_line(line)])
 
@@ -131,14 +106,6 @@ def collect_steps(args):
     for i in range(MAXIMUM_DEPTH):
         for s in depth_dynamic_steps:
             line = re.sub(r"depthX", "depth" + str(i), s)
-            output.add(line)
-    for i in range(MAXIMUM_BIT_LENGTH):
-        for s in bit_dynamic_steps:
-            line = re.sub(r"bitX", "bit" + str(i), s)
-            output.add(line)
-    for i in range(MAXIMUM_CONVERT_BIT_LENGTH):
-        for s in modulus_conversion_dynamic_steps:
-            line = re.sub(r"mcX", "mc" + str(i), s)
             output.add(line)
 
     return output
@@ -182,9 +149,8 @@ def extract_intermediate_steps(steps):
 
     return steps
 
-
-if __name__ == "__main__":
-    steps = set()
+def ipa_steps():
+    output = set()
     for c in PER_USER_CAP:
         for w in ATTRIBUTION_WINDOW:
             for b in BREAKDOWN_KEYS:
@@ -202,7 +168,42 @@ if __name__ == "__main__":
                         m,
                     ]
                     print(" ".join(args), file=sys.stderr)
-                    steps.update(collect_steps(args))
+                    output.update(collect_steps(args))
+    return output
+
+OPRF_BREAKDOWN_KEY = 256
+OPRF_USER_CAP = [16, 64, 128]
+OPRF_SECURITY_MODEL = "semi-honest"
+OPRF_TRIGGER_VALUE = [6, 7]
+
+def oprf_steps():
+    output = set()
+    for c in OPRF_USER_CAP:
+        for w in ATTRIBUTION_WINDOW:
+            for tv in OPRF_TRIGGER_VALUE:
+                args = ARGS + [
+                    "-n",
+                    str(QUERY_SIZE),
+                    "-c",
+                    str(c),
+                    "-w",
+                    str(w),
+                    "-b",
+                    str(OPRF_BREAKDOWN_KEY),
+                    "-m",
+                    OPRF_SECURITY_MODEL,
+                    "-t",
+                    str(tv),
+                    "-o"
+            ]
+            print(" ".join(args), file=sys.stderr)
+            output.update(collect_steps(args))
+    return output
+
+if __name__ == "__main__":
+    steps = set()
+    steps.update(ipa_steps())
+    steps.update(oprf_steps())
 
     full_steps = extract_intermediate_steps(steps)
     sorted_steps = sorted(full_steps)

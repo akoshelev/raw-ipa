@@ -3,7 +3,7 @@ use rand_core::{CryptoRng, RngCore};
 use x25519_dalek::PublicKey;
 
 use crate::{
-    helpers::{ChannelId, Direction, Error, Gateway, TotalRecords, Transport},
+    helpers::{ChannelId, Direction, Error, Gateway, TotalRecords},
     protocol::{
         prss,
         step::{Gate, Step, StepNarrow},
@@ -24,8 +24,8 @@ impl Step for PrssExchangeStep {}
 /// establish the prss endpoint by exchanging public keys with the other helpers
 /// # Errors
 /// if communication with other helpers fails
-pub async fn negotiate<T: Transport, R: RngCore + CryptoRng>(
-    gateway: &Gateway<T>,
+pub async fn negotiate<R: RngCore + CryptoRng>(
+    gateway: &Gateway,
     gate: &Gate,
     rng: &mut R,
 ) -> Result<prss::Endpoint, Error> {
@@ -47,7 +47,7 @@ pub async fn negotiate<T: Transport, R: RngCore + CryptoRng>(
     let (send_left_pk, send_right_pk) = ep_setup.public_keys();
     let record_id = RecordId::FIRST;
 
-    let (_, _, recv_left_pk, recv_right_pk) = try_join4(
+    let ((), (), recv_left_pk, recv_right_pk) = try_join4(
         left_sender.send(record_id, send_left_pk),
         right_sender.send(record_id, send_right_pk),
         left_receiver.receive(record_id),

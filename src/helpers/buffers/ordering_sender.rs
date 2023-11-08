@@ -2,13 +2,12 @@ use std::{
     borrow::Borrow,
     cmp::Ordering,
     collections::VecDeque,
+    fmt::Debug,
     mem::drop,
     num::NonZeroUsize,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
-use std::fmt::{Debug, Formatter};
 
 use futures::{task::Waker, Future, Stream};
 use generic_array::GenericArray;
@@ -127,50 +126,33 @@ struct WakerItem {
 #[derive(Default, Debug)]
 struct WaitingShard {
     /// The maximum index that was used to wake a task that belongs to this shard.
-    /// Updates to this shard will be rejected if th supplied index is less than this value.
-    /// See [`Add`] for more details
+    /// Updates to this shard will be rejected if the supplied index is less than this value.
+    /// See [`Add`] for more details.
+    ///
+    /// [`Add`]: WaitingShard::add
     woken_at: usize,
     /// The saved wakers.  These are sorted on insert (see `add`) and
     /// presumably removed constantly, so a circular buffer is used.
     wakers: VecDeque<WakerItem>,
 }
 
-struct WakerRejected(usize, usize);
-
-impl WakerRejected {
-    fn new(expected_pos: usize, actual_pos: usize) -> Self {
-        Self(expected_pos, actual_pos)
-    }
-}
-
-impl std::fmt::Display for WakerRejected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(self, f)
-    }
-}
-
-impl Debug for WakerRejected {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Adding waker is rejected because the expected position {} is behind actual {}. \
-        Refresh your view and try again.", self.0, self.1)
-    }
-}
-
-impl std::error::Error for WakerRejected {}
-
 impl WaitingShard {
-    fn add(&mut self, expected: usize, i: usize, w: Waker) -> Result<(), WakerRejected> {
-        if expected < self.woken_at {
+    /// Add a waker that will be used to wake up a write to `i`.
+    ///
+    /// ## Errors
+    /// If `current` is behind the current position recorded in this shard.
+    fn add(&mut self, current: usize, i: usize, w: &Waker) -> Result<(), ()> {
+        if current < self.woken_at {
             // this means this thread is out of sync and there was an update to channel's current
             // position. Accepting a waker could mean it will never be awakened. Rejecting this operation
             // will let the current thread to read the position again.
-            Err(WakerRejected::new(expected, self.woken_at))?
+            Err(())?;
         }
 
         // Each new addition will tend to have a larger index, so search backwards and
         // replace an equal index or insert after a smaller index.
         // TODO: consider a binary search if the item cannot be added to the end.
-        let item = WakerItem { i, w };
+        let item = WakerItem { i, w: w.clone() };
         for j in (0..self.wakers.len()).rev() {
             match self.wakers[j].i.cmp(&i) {
                 Ordering::Greater => (),
@@ -206,6 +188,11 @@ impl WaitingShard {
             self.wakers.pop_front().unwrap().w.wake();
         }
     }
+
+    #[cfg(feature = "stall-detection")]
+    pub fn waiting(&self) -> impl Iterator<Item = usize> + '_ {
+        self.wakers.iter().map(|waker| waker.i)
+    }
 }
 
 /// A collection of wakers that are indexed by the send index (`i`).
@@ -231,12 +218,29 @@ impl Waiting {
         self.shards[idx].lock().unwrap()
     }
 
-    fn add(&self, curr: usize, i: usize, w: Waker) -> Result<(), WakerRejected> {
-        self.shard(i).add(curr, i, w)
+    /// Add a waker that will be used to wake up a write to `i`.
+    ///
+    /// ## Errors
+    /// If `current` is behind the current position recorded in this shard.
+    fn add(&self, current: usize, i: usize, w: &Waker) -> Result<(), ()> {
+        self.shard(i).add(current, i, w)
     }
 
     fn wake(&self, i: usize) {
         self.shard(i).wake(i);
+    }
+
+    /// Returns all records currently waiting to be sent in sorted order.
+    #[cfg(feature = "stall-detection")]
+    fn waiting(&self) -> Vec<usize> {
+        let mut records = Vec::new();
+        self.shards
+            .iter()
+            .for_each(|shard| records.extend(shard.lock().unwrap().waiting()));
+
+        records.sort_unstable();
+
+        records
     }
 }
 
@@ -331,12 +335,25 @@ impl OrderingSender {
                         let curr = self.next.fetch_add(1, AcqRel);
                         debug_assert_eq!(i, curr, "we just checked this");
                     }
-                    break res
+                    break res;
                 }
                 Ordering::Less => {
-                    // This is the hot path. Wait our turn.
-                    if let Ok(()) = self.waiting.add(curr, i, cx.waker().clone()) {
-                        break Poll::Pending
+                    // This is the hot path. Wait our turn. If our view of the world is obsolete
+                    // we won't be able to add a waker and need to read the atomic again.
+                    //
+                    // Here is why it works:
+                    // * The only thread updating the atomic is the one that is writing to `i`.
+                    // * If the write to `i` is successful, it wakes up the thread waiting to write `i` + 1.
+                    // * Adding a waker and waking it is within a critical section.
+                    //
+                    // There are two possible scenarios for two threads competing for `i` + 1 waker.
+                    // * Waiting thread adds a waker before writer thread attempts to wake it. This is a normal case
+                    // scenario and things work as expected
+                    // * Waiting thread attempts to add a waker after writer tried to wake it. This attempt will
+                    // be rejected because writer has moved the waiting shard position ahead and it won't match
+                    // the value of `self.next` read by the waiting thread.
+                    if self.waiting.add(curr, i, cx.waker()).is_ok() {
+                        break Poll::Pending;
                     }
                 }
             }
@@ -352,9 +369,7 @@ impl OrderingSender {
         let mut b = self.state.lock().unwrap();
 
         if let Poll::Ready(v) = b.take(cx) {
-            let curr = self.next.load(Acquire);
-            tracing::trace!("take next at {curr}");
-            self.waiting.wake(curr);
+            self.waiting.wake(self.next.load(Acquire));
             Poll::Ready(Some(v))
         } else if b.closed {
             Poll::Ready(None)
@@ -367,12 +382,21 @@ impl OrderingSender {
     /// The stream interface requires a mutable reference to the stream itself.
     /// That's not possible here as we create a ton of immutable references to this.
     /// This wrapper takes a trivial reference so that we can implement `Stream`.
-    pub(crate) fn as_stream(&self) -> OrderedStream<&Self> {
+    #[cfg(all(test, any(unit_test, feature = "shuttle")))]
+    fn as_stream(&self) -> OrderedStream<&Self> {
         OrderedStream { sender: self }
     }
 
-    pub(crate) fn as_rc_stream(self: Arc<Self>) -> OrderedStream<Arc<Self>> {
+    #[cfg(all(test, unit_test))]
+    pub(crate) fn as_rc_stream(
+        self: crate::sync::Arc<Self>,
+    ) -> OrderedStream<crate::sync::Arc<Self>> {
         OrderedStream { sender: self }
+    }
+
+    #[cfg(feature = "stall-detection")]
+    pub fn waiting(&self) -> Vec<usize> {
+        self.waiting.waiting()
     }
 }
 
@@ -462,7 +486,6 @@ mod test {
         sync::Arc,
         test_executor::run,
     };
-    use crate::test_fixture::logging;
 
     fn sender() -> Arc<OrderingSender> {
         Arc::new(OrderingSender::new(
@@ -582,7 +605,7 @@ mod test {
             values.resize_with(COUNT, || rng.gen::<Fp32BitPrime>());
 
             let sender = sender();
-            let (_, _, output) = join3(
+            let (_, (), output) = join3(
                 join_all(values.iter().enumerate().map(|(i, &v)| sender.send(i, v))),
                 sender.close(values.len()),
                 sender.as_stream().collect::<Vec<_>>(),
@@ -617,7 +640,7 @@ mod test {
             let indices = shuffle_indices(COUNT);
 
             let sender = sender();
-            let (_, _, output) = join3(
+            let (_, (), output) = join3(
                 join_all(indices.into_iter().map(|i| sender.send(i, values[i]))),
                 sender.close(values.len()),
                 sender.as_stream().collect::<Vec<_>>(),
@@ -634,8 +657,8 @@ mod test {
     /// This test is supposed to eventually hang if there is a concurrency bug inside `OrderingSender`.
     #[test]
     fn parallel_send() {
-        logging::setup();
-        const PARALLELISM: usize = 10;
+        const PARALLELISM: usize = 100;
+
         run(|| async {
             let sender = Arc::new(OrderingSender::new(
                 NonZeroUsize::new(PARALLELISM * <Fp31 as Serializable>::Size::USIZE).unwrap(),

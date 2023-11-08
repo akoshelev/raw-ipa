@@ -31,12 +31,13 @@ type IpaKdf = hpke::kdf::HkdfSha256;
 
 pub type IpaPublicKey = <IpaKem as hpke::kem::Kem>::PublicKey;
 pub type IpaPrivateKey = <IpaKem as hpke::kem::Kem>::PrivateKey;
+pub type IpaEncappedKey = <IpaKem as hpke::kem::Kem>::EncappedKey;
 
 pub use hpke::{Deserializable, Serializable};
 
 pub trait FieldShareCrypt: GaloisField + IpaSerializable {
-    type EncapKeySize: ArrayLength<u8>;
-    type CiphertextSize: ArrayLength<u8>;
+    type EncapKeySize: ArrayLength;
+    type CiphertextSize: ArrayLength;
     type SemiHonestShares: IpaSerializable + Clone + Debug + Eq;
 }
 
@@ -50,7 +51,7 @@ where
     AdditiveShare<F>: IpaSerializable + Clone + Debug + Eq,
     AeadTag<IpaAead>: Serializable<OutputSize = U16>,
     <AdditiveShare<F> as IpaSerializable>::Size: Add<U16>,
-    <<AdditiveShare<F> as IpaSerializable>::Size as Add<U16>>::Output: ArrayLength<u8>,
+    <<AdditiveShare<F> as IpaSerializable>::Size as Add<U16>>::Output: ArrayLength,
 {
     type EncapKeySize = <<IpaKem as hpke::Kem>::EncappedKey as Serializable>::OutputSize;
     type CiphertextSize = <<AdditiveShare<F> as IpaSerializable>::Size as Add<U16>>::Output;
@@ -359,6 +360,7 @@ mod tests {
         proptest::proptest! {
             #![proptest_config(ProptestConfig::with_cases(50))]
             #[test]
+            #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
             fn arbitrary_ct_corruption(bad_byte in 0..23_usize, bad_bit in 0..7_usize, seed: [u8; 32]) {
                 let rng = StdRng::from_seed(seed);
                 let mut suite = EncryptionSuite::new(1, rng);
@@ -372,6 +374,7 @@ mod tests {
         proptest::proptest! {
             #![proptest_config(ProptestConfig::with_cases(50))]
             #[test]
+            #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
              fn arbitrary_enc_corruption(bad_byte in 0..32_usize, bad_bit in 0..7_usize, seed: [u8; 32]) {
                 let rng = StdRng::from_seed(seed);
                 let mut suite = EncryptionSuite::new(1, rng);
@@ -416,6 +419,7 @@ mod tests {
         proptest::proptest! {
             #![proptest_config(ProptestConfig::with_cases(50))]
             #[test]
+            #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
             fn arbitrary_info_corruption(corrupted_info_field in 1..5,
                                          site_domain in "[a-z]{10}",
                                          helper_origin in "[a-z]{10}",

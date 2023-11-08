@@ -2,20 +2,22 @@
 //
 // This is where we store arithmetic shared secret data models.
 
+pub mod curve_points;
+pub mod ec_prime_field;
 mod field;
 mod galois_field;
 mod prime_field;
 
-use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 pub use field::{Field, FieldType};
-pub use galois_field::{GaloisField, Gf2, Gf32Bit, Gf3Bit, Gf40Bit, Gf5Bit, Gf8Bit};
+pub use galois_field::{
+    GaloisField, Gf2, Gf20Bit, Gf32Bit, Gf3Bit, Gf40Bit, Gf5Bit, Gf8Bit, Gf9Bit,
+};
 use generic_array::{ArrayLength, GenericArray};
 #[cfg(any(test, feature = "weak-field"))]
 pub use prime_field::Fp31;
 pub use prime_field::{Fp32BitPrime, PrimeField};
-
-use crate::secret_sharing::SharedValue;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -23,56 +25,24 @@ pub enum Error {
     UnknownField { type_str: String },
 }
 
-pub trait ArithmeticOps:
-    Add<Output = Self>
-    + AddAssign
-    + Sub<Output = Self>
-    + SubAssign
-    + Mul<Output = Self>
-    + MulAssign
-    + Neg<Output = Self>
-    + Sized
+/// Addition and subtraction operations that are supported by secret sharings and shared values.
+pub trait AddSub<Rhs = Self, Output = Self>:
+    Add<Rhs, Output = Output> + Sub<Rhs, Output = Output> + Sized
 {
 }
 
-impl<T> ArithmeticOps for T where
-    T: Add<Output = Self>
-        + AddAssign
-        + Sub<Output = Self>
-        + SubAssign
-        + Mul<Output = Self>
-        + MulAssign
-        + Neg<Output = Self>
-        + Sized
+impl<T, Rhs, Output> AddSub<Rhs, Output> for T where
+    T: Add<Rhs, Output = Output> + Sub<Rhs, Output = Output> + Sized
 {
 }
 
-pub trait ArithmeticRefOps<V: SharedValue>:
-    for<'a> Add<&'a Self, Output = Self>
-    + for<'a> AddAssign<&'a Self>
-    + Neg<Output = Self>
-    + for<'a> Sub<&'a Self, Output = Self>
-    + for<'a> SubAssign<&'a Self>
-    + Mul<V, Output = Self>
-{
-}
-
-impl<T, V> ArithmeticRefOps<V> for T
-where
-    T: for<'a> Add<&'a Self, Output = Self>
-        + for<'a> AddAssign<&'a Self>
-        + Neg<Output = Self>
-        + for<'a> Sub<&'a Self, Output = Self>
-        + for<'a> SubAssign<&'a Self>
-        + Mul<V, Output = Self>,
-    V: SharedValue,
-{
-}
+pub trait AddSubAssign<Rhs = Self>: AddAssign<Rhs> + SubAssign<Rhs> {}
+impl<T, Rhs> AddSubAssign<Rhs> for T where T: AddAssign<Rhs> + SubAssign<Rhs> {}
 
 /// Trait for items that have fixed-byte length representation.
 pub trait Serializable: Sized {
     /// Required number of bytes to store this message on disk/network
-    type Size: ArrayLength<u8>;
+    type Size: ArrayLength;
 
     /// Serialize this message to a mutable slice. It is enforced at compile time or on the caller
     /// side that this slice is sized to fit this instance. Implementations do not need to check

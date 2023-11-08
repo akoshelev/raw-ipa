@@ -123,6 +123,8 @@ where
     stream: Pin<Box<S>>,
     /// The absolute index of the next value that will be received.
     next: usize,
+    /// The maximum value that has ever been requested to receive.
+    max_polled_idx: usize,
     /// The underlying stream can provide chunks of data larger than a single
     /// message.  Save any spare data here.
     spare: Spare,
@@ -150,6 +152,12 @@ where
     /// Note: in protocols we try to send before receiving, so we can rely on
     /// that easing load on this mechanism.  There might also need to be some
     /// end-to-end back pressure for tasks that do not involve sending at all.
+    ///
+    /// If stall detection is enabled, the index of that waker is stored alongside with it, in order
+    /// to correctly identify the `i` awaiting completion
+    #[cfg(feature = "stall-detection")]
+    overflow_wakers: Vec<(Waker, usize)>,
+    #[cfg(not(feature = "stall-detection"))]
     overflow_wakers: Vec<Waker>,
     _marker: PhantomData<C>,
 }
@@ -179,8 +187,11 @@ where
         );
         // We don't save a waker at `self.next`, so `>` and not `>=`.
         if i > self.next + self.wakers.len() {
-            tracing::trace!("adding overflow waker for {i} because > {} + {}", self.next, self.wakers.len());
-            self.overflow_wakers.push(waker);
+            #[cfg(feature = "stall-detection")]
+            let overflow = (waker, i);
+            #[cfg(not(feature = "stall-detection"))]
+            let overflow = waker;
+            self.overflow_wakers.push(overflow);
         } else {
             let index = i % self.wakers.len();
             if let Some(old) = self.wakers[index].as_ref() {
@@ -207,7 +218,11 @@ where
         }
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.
-            tracing::trace!("wake overflow wakers: {:?}", self.overflow_wakers);
+            #[cfg(feature = "stall-detection")]
+            for (w, _) in take(&mut self.overflow_wakers) {
+                w.wake();
+            }
+            #[cfg(not(feature = "stall-detection"))]
             for w in take(&mut self.overflow_wakers) {
                 w.wake();
             }
@@ -217,6 +232,7 @@ where
     /// Poll for the next record.  This should only be invoked when
     /// the future for the next message is polled.
     fn poll_next<M: Message>(&mut self, cx: &mut Context<'_>) -> Poll<Result<M, Error>> {
+        self.max_polled_idx = std::cmp::max(self.max_polled_idx, self.next);
         if let Some(m) = self.spare.read() {
             self.wake_next();
             return Poll::Ready(Ok(m));
@@ -240,6 +256,46 @@ where
                 }
             }
         }
+    }
+
+    #[cfg(feature = "stall-detection")]
+    fn waiting(&self) -> impl Iterator<Item = usize> + '_ {
+        /// There is no waker for self.next and it could be advanced past the end of the stream.
+        /// This helps to conditionally add self.next to the waiting list.
+        struct MaybeNext {
+            currently_at: usize,
+            next: usize,
+        }
+        impl Iterator for MaybeNext {
+            type Item = usize;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.currently_at == self.next {
+                    self.currently_at += 1;
+                    Some(self.next)
+                } else {
+                    None
+                }
+            }
+        }
+
+        let start = self.next % self.wakers.len();
+        self.wakers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, waker)| waker.as_ref().map(|_| i))
+            .map(move |i| {
+                if i < start {
+                    self.next + (self.wakers.len() - start + i)
+                } else {
+                    self.next + (i - start)
+                }
+            })
+            .chain(self.overflow_wakers.iter().map(|v| v.1))
+            .chain(MaybeNext {
+                currently_at: self.max_polled_idx,
+                next: self.next,
+            })
     }
 }
 
@@ -275,6 +331,7 @@ where
             inner: Arc::new(Mutex::new(OperatingState {
                 stream,
                 next: 0,
+                max_polled_idx: 0,
                 spare: Spare::default(),
                 wakers,
                 overflow_wakers: Vec::new(),
@@ -297,6 +354,16 @@ where
             channel_id,
             _marker: PhantomData,
         }
+    }
+
+    #[cfg(feature = "stall-detection")]
+    pub fn waiting(&self) -> Vec<usize> {
+        let state = self.inner.lock().unwrap();
+        let mut r = state.waiting().collect::<Vec<_>>();
+
+        r.sort_unstable();
+
+        r
     }
 }
 

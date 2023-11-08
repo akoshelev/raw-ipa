@@ -132,6 +132,18 @@ macro_rules! field_impl {
             }
         }
 
+        impl std::iter::Sum for $field {
+            fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+                iter.fold(Self::ZERO, |a, b| a + b)
+            }
+        }
+
+        impl<'a> std::iter::Sum<&'a $field> for $field {
+            fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+                iter.fold(Self::ZERO, |a, b| a + *b)
+            }
+        }
+
         impl TryFrom<u128> for $field {
             type Error = crate::error::Error;
 
@@ -208,6 +220,7 @@ macro_rules! field_impl {
             proptest! {
 
                 #[test]
+                #[allow(clippy::ignored_unit_patterns)]
                 fn serde(v in 0..$field::PRIME) {
                     let field_v = $field(v);
                     let mut buf = GenericArray::default();

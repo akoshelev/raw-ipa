@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use futures_util::TryStreamExt;
 
-use super::ipa::assert_stream_send;
 use crate::{
     error::Error,
     ff::{Gf2, Gf8Bit, PrimeField, Serializable},
@@ -19,7 +18,7 @@ use crate::{
     },
     secret_sharing::{
         replicated::{malicious::DowngradeMalicious, semi_honest::AdditiveShare as Replicated},
-        Linear as LinearSecretSharing,
+        Linear as LinearSecretSharing, LinearRefOps,
     },
     sync::Arc,
 };
@@ -53,6 +52,7 @@ where
         + Serializable
         + DowngradeMalicious<Target = Replicated<F>>
         + 'static,
+    for<'r> &'r S: LinearRefOps<'r, S, F>,
     C::UpgradedContext<Gf2>: UpgradedContext<Gf2, Share = SB>,
     SB: LinearSecretSharing<Gf2>
         + BasicProtocols<C::UpgradedContext<Gf2>, Gf2>
@@ -82,10 +82,9 @@ where
 
         let input = {
             //TODO: Replace `Gf8Bit` with an appropriate type specified by the config `contribution_bits`
-            let mut v = assert_stream_send(RecordsStream::<
-                SparseAggregateInputRow<Gf8Bit, BreakdownKey>,
-                _,
-            >::new(input_stream))
+            let mut v = RecordsStream::<SparseAggregateInputRow<Gf8Bit, BreakdownKey>, _>::new(
+                input_stream,
+            )
             .try_concat()
             .await?;
             v.truncate(sz);

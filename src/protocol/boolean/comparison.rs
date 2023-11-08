@@ -3,14 +3,14 @@ use ipa_macros::Step;
 use super::or::or;
 use crate::{
     error::Error,
-    ff::PrimeField,
+    ff::{Field, PrimeField},
     protocol::{
         boolean::random_bits_generator::RandomBitsGenerator,
         context::{Context, UpgradedContext},
         step::BitOpStep,
         BasicProtocols, RecordId,
     },
-    secret_sharing::Linear as LinearSecretSharing,
+    secret_sharing::{Linear as LinearSecretSharing, LinearRefOps},
 };
 
 // Compare an arithmetic-shared value `a` to a known value `c`.
@@ -73,6 +73,7 @@ where
     F: PrimeField,
     C: UpgradedContext<F, Share = S>,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
+    for<'a> &'a S: LinearRefOps<'a, S, F>,
 {
     use GreaterThanConstantStep as Step;
 
@@ -81,7 +82,7 @@ where
     let r = rbg.generate(record_id).await?;
 
     // Mask `a` with random `r` and reveal.
-    let b = (r.b_p.clone() + a)
+    let b = (r.b_p + a)
         .reveal(ctx.narrow(&Step::Reveal), record_id)
         .await?;
 
@@ -174,6 +175,7 @@ where
     F: PrimeField,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
+    for<'a> &'a S: LinearRefOps<'a, S, F>,
 {
     assert!(a.len() <= 128);
 
@@ -203,9 +205,10 @@ pub async fn bitwise_less_than_constant<F, C, S>(
     c: u128,
 ) -> Result<S, Error>
 where
-    F: PrimeField,
+    F: Field,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
+    for<'a> &'a S: LinearRefOps<'a, S, F>,
 {
     assert!(a.len() <= 128);
 
@@ -233,9 +236,10 @@ async fn first_differing_bit<F, C, S>(
     b: u128,
 ) -> Result<Vec<S>, Error>
 where
-    F: PrimeField,
+    F: Field,
     C: Context,
     S: LinearSecretSharing<F> + BasicProtocols<C, F>,
+    for<'a> &'a S: LinearRefOps<'a, S, F>,
 {
     let one = S::share_known_value(ctx, F::ONE);
 
@@ -248,7 +252,7 @@ where
             if ((b >> i) & 1) == 0 {
                 a_bit.clone()
             } else {
-                one.clone() - a_bit
+                &one - a_bit
             }
         })
         .collect::<Vec<_>>();
@@ -278,7 +282,7 @@ where
         // differing bit. Note that at the index where the transition from 0 to 1 happens,
         // `prefix_or[i + 1] > prefix_or[i]`. Do not change the order of the subtraction
         // unless we use Fp2, or the result will be `[p-1]`.
-        first_diff_bit.push(result.clone() - &previous_bit);
+        first_diff_bit.push(&result - &previous_bit);
 
         previous_bit = result;
     }
@@ -554,6 +558,7 @@ mod tests {
 
     proptest! {
         #[test]
+        #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
         fn gt_fp31_proptest(a in 0..Fp31::PRIME, c in 0..Fp31::PRIME) {
             type F = Fp31;
             let r = thread_rng().gen::<F>();
@@ -562,6 +567,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
         fn gt_fp_32bit_prime_proptest(a in 0..Fp32BitPrime::PRIME, c in 0..Fp32BitPrime::PRIME) {
             type F = Fp32BitPrime;
             let r = thread_rng().gen::<F>();

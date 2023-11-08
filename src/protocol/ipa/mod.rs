@@ -35,7 +35,7 @@ use crate::{
             semi_honest::AdditiveShare as Replicated,
             ReplicatedSecretSharing,
         },
-        BitDecomposed, Linear as LinearSecretSharing,
+        BitDecomposed, Linear as LinearSecretSharing, LinearRefOps,
     },
 };
 
@@ -104,7 +104,7 @@ where
                 >>::Output,
             >>::Output,
         >>::Output,
-    >>::Output: ArrayLength<u8>,
+    >>::Output: ArrayLength,
 {
     type Size = <<Replicated<F> as Serializable>::Size as Add<
         <<Replicated<MK> as Serializable>::Size as Add<
@@ -315,11 +315,13 @@ where
         + Serializable
         + DowngradeMalicious<Target = Replicated<F>>
         + 'static,
+    for<'r> &'r S: LinearRefOps<'r, S, F>,
     C::UpgradedContext<Gf2>: UpgradedContext<Gf2, Share = SB>,
     SB: LinearSecretSharing<Gf2>
         + BasicProtocols<C::UpgradedContext<Gf2>, Gf2>
         + DowngradeMalicious<Target = Replicated<Gf2>>
         + 'static,
+    for<'r> &'r SB: LinearRefOps<'r, SB, Gf2>,
     F: PrimeField + ExtendableField,
     MK: GaloisField,
     BK: GaloisField,
@@ -462,7 +464,7 @@ pub mod tests {
         test_executor::{run, run_with},
         test_fixture::{
             input::GenericReportTestInput,
-            ipa::{ipa_in_the_clear, test_ipa, IpaSecurityModel},
+            ipa::{ipa_in_the_clear, test_ipa, CappingOrder, IpaSecurityModel},
             logging, EventGenerator, EventGeneratorConfig, Reconstruct, Runner, TestWorld,
             TestWorldConfig,
         },
@@ -780,6 +782,7 @@ pub mod tests {
         const MAX_BREAKDOWN_KEY: u32 = 32;
         const MAX_TRIGGER_VALUE: u32 = 5;
         const NUM_USERS: u32 = 8;
+        const MIN_RECORDS_PER_USER: u32 = 1;
         const MAX_RECORDS_PER_USER: u32 = 8;
         const NUM_MULTI_BITS: u32 = 3;
         const ATTRIBUTION_WINDOW_SECONDS: Option<NonZeroU32> = NonZeroU32::new(86_400);
@@ -801,6 +804,7 @@ pub mod tests {
                 u64::from(NUM_USERS),
                 MAX_TRIGGER_VALUE,
                 MAX_BREAKDOWN_KEY,
+                MIN_RECORDS_PER_USER,
                 MAX_RECORDS_PER_USER,
             ),
         )
@@ -813,6 +817,7 @@ pub mod tests {
                 per_user_cap,
                 ATTRIBUTION_WINDOW_SECONDS,
                 MAX_BREAKDOWN_KEY,
+                &CappingOrder::CapOldestFirst,
             );
 
             let config = TestWorldConfig {
@@ -959,6 +964,7 @@ pub mod tests {
 
         proptest! {
             #[test]
+            #[allow(clippy::ignored_unit_patterns)] // https://github.com/proptest-rs/proptest/issues/371
             fn serde(timestamp in 0..u128::MAX, match_key in 0..u64::MAX, trigger_bit in 0..u128::MAX, breakdown_key in 0..u128::MAX, trigger_value in 0..u128::MAX, seed in 0..u128::MAX) {
                 serde_internal::<Fp31>(timestamp, match_key, trigger_bit, breakdown_key, trigger_value, seed);
                 serde_internal::<Fp32BitPrime>(timestamp, match_key, trigger_bit, breakdown_key, trigger_value, seed);

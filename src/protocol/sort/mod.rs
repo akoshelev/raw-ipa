@@ -3,7 +3,6 @@ pub mod bit_permutation;
 pub mod generate_permutation;
 pub mod generate_permutation_opt;
 
-mod apply;
 mod compose;
 mod multi_bit_permutation;
 mod secureapplyinv;
@@ -25,7 +24,7 @@ pub(crate) enum SortStep {
     Compose,
     ShuffleRevealPermutation,
     SortKeys,
-    #[dynamic]
+    #[dynamic(64)]
     MultiApplyInv(u32),
 }
 
