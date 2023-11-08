@@ -44,9 +44,9 @@ jobs:
 
   basic:
     name: Basic Checks
+    needs: free-disk-space
     env:
       CARGO_INCREMENTAL: 0
-
     runs-on: ubuntu-latest
 
     steps:
@@ -89,6 +89,7 @@ jobs:
 
   release:
     name: Release builds and tests
+    needs: free-disk-space
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -C target-cpu=native
@@ -120,6 +121,7 @@ jobs:
 
   extra:
     name: Additional Builds and Concurrency Tests
+    needs: free-disk-space
     env:
       RUSTFLAGS: -D warnings -C target-cpu=native
 
