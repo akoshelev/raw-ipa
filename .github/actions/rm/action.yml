@@ -1,0 +1,17 @@
+# https://github.com/marketplace/actions/free-disk-space-ubuntu
+name: 'Free disk space'
+description: 'Frees up disk space on Github Ubuntu runners'
+runs:
+  using: composite
+  steps:
+    uses: jlumbroso/free-disk-space@main
+    with:
+      # if we still don't have enough space, we can try setting this to true
+      tool-cache: false
+
+      android: true
+      dotnet: true
+      haskell: true
+      large-packages: true
+      docker-images: true
+      swap-storage: true

@@ -22,34 +22,14 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
-  # https://github.com/marketplace/actions/free-disk-space-ubuntu
-  free-disk-space:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: false
-
-          # all of these default to true, but feel free to set to
-          # "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
   basic:
     name: Basic Checks
-    needs: free-disk-space
     env:
       CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/rm@v1
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -94,6 +74,7 @@ jobs:
     env:
       RUSTFLAGS: -C target-cpu=native
     steps:
+      - uses: actions/rm@v1
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -128,6 +109,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/rm@v1
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
