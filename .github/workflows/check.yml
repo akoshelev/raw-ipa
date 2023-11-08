@@ -26,10 +26,10 @@ jobs:
     name: Basic Checks
     env:
       CARGO_INCREMENTAL: 0
-
     runs-on: ubuntu-latest
 
     steps:
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -73,6 +73,7 @@ jobs:
     env:
       RUSTFLAGS: -C target-cpu=native
     steps:
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
@@ -106,6 +107,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: ./.github/actions/rm
       - uses: actions/checkout@v3
 
       - uses: dtolnay/rust-toolchain@stable
