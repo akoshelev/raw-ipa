@@ -6,13 +6,12 @@ use std::{
     task::{Context, Poll},
 };
 use std::marker::PhantomData;
-use async_trait::async_trait;
-use clap::builder::TypedValueParser;
-
 use futures::{stream::{iter, Iter as StreamIter, TryCollect}, Future, Stream, StreamExt, TryStreamExt, TryFuture};
-use futures_util::future::TryJoinAll;
 use futures_util::stream::FuturesOrdered;
 use pin_project::pin_project;
+
+#[cfg(feature = "shuttle")]
+use shuttle::future as tokio;
 
 use crate::exact::ExactSizeStream;
 
@@ -37,7 +36,7 @@ impl <'a, T> Default for UnsafeSpawner<'a, T> {
 #[pin_project]
 struct UnsafeSpawnerHandle<T> {
     #[pin]
-    inner: tokio::task::JoinHandle<T>
+    inner: crate::task::JoinHandle<T>
 }
 
 impl <T: Send + 'static> Future for UnsafeSpawnerHandle<T> {
@@ -46,7 +45,7 @@ impl <T: Send + 'static> Future for UnsafeSpawnerHandle<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project().inner.poll(cx) {
             Poll::Ready(Ok(t)) => Poll::Ready(t),
-            Poll::Ready(Err(e)) => panic!("cancelled: {e}"),
+            Poll::Ready(Err(e)) => panic!("cancelled: {e:?}"),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -188,8 +187,7 @@ pub fn seq_try_join_all<'a, I, F, O, E>(
 }
 
 enum ActiveItem<F: IntoFuture> {
-    Pending(Pin<Box<F::IntoFuture>>),
-    // Pending(Pin<Box<UnsafeSpawnerHandle<F::Output>>>),
+    Pending(Pin<Box<UnsafeSpawnerHandle<F::Output>>>),
     Resolved(F::Output),
 }
 
@@ -252,7 +250,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
         // Draw more values from the input, up to the capacity.
         while this.active.len() < this.active.capacity() {
             if let Poll::Ready(Some(f)) = this.source.as_mut().poll_next(cx) {
-                this.active.push_back(ActiveItem::Pending(Box::pin(f.into_future())));
+                this.active.push_back(ActiveItem::Pending(Box::pin(this.spawner.spawn(f.into_future()))));
                 // this.active
                 //     .push_back(ActiveItem::Pending(Box::pin(f.into_future())));
             } else {
@@ -296,7 +294,7 @@ impl<'a, S, F, T> ExactSizeStream for SequentialFutures<'a, S, F>
 {
 }
 
-#[cfg(all(test, unit_test))]
+#[cfg(all(test, any(unit_test, feature = "shuttle")))]
 mod test {
     use std::{
         convert::Infallible,
@@ -314,6 +312,7 @@ mod test {
     };
 
     use crate::seq_join::{seq_join, seq_try_join_all};
+    use crate::test_executor::run;
 
     async fn immediate(count: u32) {
         let capacity = NonZeroUsize::new(3).unwrap();
@@ -334,24 +333,26 @@ mod test {
         immediate(10).await;
     }
 
-    #[tokio::test]
-    async fn out_of_order() {
-        let capacity = NonZeroUsize::new(3).unwrap();
-        let barrier = tokio::sync::Barrier::new(2);
-        let unresolved: BoxFuture<'_, u32> = Box::pin(async {
-            barrier.wait().await;
-            0
-        });
-        let it = once(unresolved)
-            .chain((1..4_u32).map(|i| -> BoxFuture<'_, u32> { Box::pin(async move { i }) }));
-        let mut seq_futures = seq_join(capacity, iter(it));
+    #[test]
+    fn out_of_order() {
+        run(|| async {
+            let capacity = NonZeroUsize::new(3).unwrap();
+            let barrier = tokio::sync::Barrier::new(2);
+            let unresolved: BoxFuture<'_, u32> = Box::pin(async {
+                barrier.wait().await;
+                0
+            });
+            let it = once(unresolved)
+                .chain((1..4_u32).map(|i| -> BoxFuture<'_, u32> { Box::pin(async move { i }) }));
+            let mut seq_futures = seq_join(capacity, iter(it));
 
-        assert_eq!(
-            Some(Poll::Pending),
-            poll_immediate(&mut seq_futures).next().await
-        );
-        barrier.wait().await;
-        assert_eq!(vec![0, 1, 2, 3], seq_futures.collect::<Vec<_>>().await);
+            assert_eq!(
+                Some(Poll::Pending),
+                poll_immediate(&mut seq_futures).next().await
+            );
+            barrier.wait().await;
+            assert_eq!(vec![0, 1, 2, 3], seq_futures.collect::<Vec<_>>().await);
+        })
     }
 
     #[tokio::test]
