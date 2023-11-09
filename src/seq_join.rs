@@ -137,30 +137,31 @@ pub trait SeqJoin {
     }
 
     /// Join multiple tasks in parallel.  Only do this if you can't use a sequential join.
-    fn parallel_join<I, F, O, E>(&self, iterable: I) -> Pin<Box<dyn Future<Output = Result<Vec<O>, E>> + Send>>
+    fn parallel_join<I, F, O, E>(&self, iterable: I) -> TryJoinAll<F>
         where
             I: IntoIterator<Item = F> + Send,
             F: Future<Output = Result<O, E>> + Send,
             O: Send + 'static,
             E: Send + 'static
     {
+
         // let iterable = iterable.into_iter().map(|f| {
         //     spawner.spawn(f)
         // });
         // let spawner = UnsafeSpawner::default();
-        let mut futures = FuturesOrdered::default();
-        let spawner = UnsafeSpawner::default();
-        for f in iterable.into_iter() {
-            futures.push_back(spawner.spawn(f));
-        }
-
-        Box::pin(async move { futures.try_collect().await })
+        // let mut futures = FuturesOrdered::default();
+        // let spawner = UnsafeSpawner::default();
+        // for f in iterable.into_iter() {
+        //     futures.push_back(spawner.spawn(f));
+        // }
+        //
+        // Box::pin(async move { futures.try_collect().await })
         // ParallelFutures2 {
         //     spawner,
         //     inner: futures::future::try_join_all(iterable.into_iter().map(|f| spawner.spawn(f))),
         // }
         // #[allow(clippy::disallowed_methods)] // Just in this one place.
-        // futures::future::try_join_all(iterable.into_iter()
+        futures::future::try_join_all(iterable)
         // .map(|f| tokio::spawn()))
     }
 
