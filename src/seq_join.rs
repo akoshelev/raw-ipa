@@ -151,7 +151,7 @@ pub trait SeqJoin {
         let mut futures = FuturesOrdered::default();
         let spawner = UnsafeSpawner::default();
         for f in iterable.into_iter() {
-            futures.push_back(spawner.spawn(f.into_future()));
+            futures.push_back(spawner.spawn(f));
         }
 
         Box::pin(async move { futures.try_collect().await })
