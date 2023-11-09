@@ -189,7 +189,8 @@ pub fn seq_try_join_all<'a, I, F, O, E>(
 }
 
 enum ActiveItem<F: IntoFuture> {
-    Pending(Pin<Box<UnsafeSpawnerHandle<F::Output>>>),
+    Pending(Pin<Box<F::IntoFuture>>),
+    // Pending(Pin<Box<UnsafeSpawnerHandle<F::Output>>>),
     Resolved(F::Output),
 }
 
@@ -252,7 +253,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
         // Draw more values from the input, up to the capacity.
         while this.active.len() < this.active.capacity() {
             if let Poll::Ready(Some(f)) = this.source.as_mut().poll_next(cx) {
-                this.active.push_back(ActiveItem::Pending(Box::pin(this.spawner.spawn(f.into_future()))));
+                this.active.push_back(ActiveItem::Pending(Box::pin(f.into_future())));
                 // this.active
                 //     .push_back(ActiveItem::Pending(Box::pin(f.into_future())));
             } else {
