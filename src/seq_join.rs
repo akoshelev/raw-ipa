@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 use std::marker::PhantomData;
-use futures::{stream::{iter, Iter as StreamIter, TryCollect}, Future, Stream, StreamExt, TryStreamExt, TryFuture};
+use futures::{stream::{iter, Iter as StreamIter, TryCollect}, Future, Stream, StreamExt, TryStreamExt};
 use futures_util::stream::FuturesOrdered;
 use pin_project::pin_project;
 

@@ -99,6 +99,7 @@ impl State {
             self.written = 0;
 
             Self::wake(&mut self.write_ready);
+            tracing::trace!("Sending next {} bytes", v.len());
             Poll::Ready(v)
         } else {
             Self::save_waker(&mut self.stream_ready, cx);
