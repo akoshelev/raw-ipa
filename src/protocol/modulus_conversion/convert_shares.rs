@@ -359,6 +359,7 @@ where
     let stream = unfold(
         (ctx, locally_converted, first_record),
         |(ctx, mut locally_converted, record_id)| async move {
+            tracing::trace!("convert bits for {}/{record_id}", ctx.gate().as_ref());
             let Some((triple, residual)) = locally_converted.next().await else {
                 return None;
             };

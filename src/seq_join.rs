@@ -5,6 +5,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use futures::{stream::{iter, Iter as StreamIter, TryCollect}, Future, Stream, StreamExt, TryStreamExt};
 use futures_util::stream::FuturesOrdered;
@@ -98,6 +99,21 @@ pub fn seq_join<'a, S, F, O>(active: NonZeroUsize, source: S) -> SequentialFutur
         spawner: UnsafeSpawner::default(),
         source: source.fuse(),
         active: VecDeque::with_capacity(active.get()),
+        span: None
+    }
+}
+
+pub fn seq_join_with_ctx<'a, S, F, O>(span: Cow<'static, str>, active: NonZeroUsize, source: S) -> SequentialFutures<'a, S, F>
+    where
+        S: Stream<Item = F> + Send,
+        F: Future<Output = O> + Send + 'a,
+        O: Send + 'static
+{
+    SequentialFutures {
+        spawner: UnsafeSpawner::default(),
+        source: source.fuse(),
+        active: VecDeque::with_capacity(active.get()),
+        span: Some(span)
     }
 }
 
@@ -224,6 +240,7 @@ impl<F: IntoFuture<Output = T>, T: Send + 'static> ActiveItem<F> {
 }
 
 #[pin_project]
+#[must_use = "seq_join result must be used."]
 pub struct SequentialFutures<'a, S, F>
     where
         S: Stream<Item = F> + Send,
@@ -233,6 +250,7 @@ pub struct SequentialFutures<'a, S, F>
     #[pin]
     source: futures::stream::Fuse<S>,
     active: VecDeque<ActiveItem<F>>,
+    span: Option<Cow<'static, str>>,
 }
 
 impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
@@ -246,6 +264,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
+        let active_before = this.active.len();
 
         // Draw more values from the input, up to the capacity.
         while this.active.len() < this.active.capacity() {
@@ -258,7 +277,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
             }
         }
 
-        if let Some(item) = this.active.front_mut() {
+        let r = if let Some(item) = this.active.front_mut() {
             if item.check_ready(cx) {
                 let v = this.active.pop_front().map(ActiveItem::take);
                 Poll::Ready(v)
@@ -272,7 +291,13 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
             Poll::Ready(None)
         } else {
             Poll::Pending
-        }
+        };
+
+        let _ = this.span.as_ref().map(|r| {
+            tracing::trace!("{r} seq_join polled. active before = {active_before}, active after = {}", this.active.len());
+        });
+
+        r
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

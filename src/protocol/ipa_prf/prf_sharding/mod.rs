@@ -33,6 +33,7 @@ use crate::{
     },
     seq_join::{seq_join, SeqJoin},
 };
+use crate::seq_join::seq_join_with_ctx;
 
 pub mod bucket;
 #[cfg(feature = "descriptive-gate")]
@@ -466,7 +467,7 @@ where
     }));
 
     // Execute all of the async futures (sequentially), and flatten the result
-    let flattenned_stream = seq_join(sh_ctx.active_work(), stream_of_per_user_circuits)
+    let flattenned_stream = seq_join_with_ctx("bk_tv".into(), sh_ctx.active_work(), stream_of_per_user_circuits)
         .flat_map(|x| stream_iter(x.unwrap()));
 
     // modulus convert breakdown keys and trigger values
