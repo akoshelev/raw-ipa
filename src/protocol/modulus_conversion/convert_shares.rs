@@ -46,8 +46,8 @@ use crate::{
         replicated::{semi_honest::AdditiveShare as Replicated, ReplicatedSecretSharing},
         BitDecomposed, Linear as LinearSecretSharing,
     },
-    seq_join::seq_join,
 };
+use crate::seq_join::seq_join_with_ctx;
 
 #[derive(Step)]
 pub(crate) enum ConvertSharesStep {
@@ -354,12 +354,12 @@ where
     );
 
     let active = ctx.active_work();
+    let sz = binary_shares.size_hint().1.unwrap_or(0);
     let locally_converted = LocalBitConverter::new(ctx.role(), binary_shares, bit_range);
-
     let stream = unfold(
         (ctx, locally_converted, first_record),
-        |(ctx, mut locally_converted, record_id)| async move {
-            tracing::trace!("convert bits for {}/{record_id}", ctx.gate().as_ref());
+        move |(ctx, mut locally_converted, record_id)| async move {
+            tracing::trace!("convert bits for {}/{record_id} out of {sz}", ctx.gate().as_ref());
             let Some((triple, residual)) = locally_converted.next().await else {
                 return None;
             };
@@ -381,7 +381,7 @@ where
     .map(|(row, residual)| async move {
         row.await.map(|bits| (BitDecomposed::new(bits), residual))
     });
-    seq_join(active, stream)
+    seq_join_with_ctx("convert_bits".into(), active, stream)
 }
 
 #[cfg(all(test, unit_test))]

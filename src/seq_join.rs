@@ -99,6 +99,7 @@ pub fn seq_join<'a, S, F, O>(active: NonZeroUsize, source: S) -> SequentialFutur
         spawner: UnsafeSpawner::default(),
         source: source.fuse(),
         active: VecDeque::with_capacity(active.get()),
+        drawn: 0,
         span: None
     }
 }
@@ -113,6 +114,7 @@ pub fn seq_join_with_ctx<'a, S, F, O>(span: Cow<'static, str>, active: NonZeroUs
         spawner: UnsafeSpawner::default(),
         source: source.fuse(),
         active: VecDeque::with_capacity(active.get()),
+        drawn: 0,
         span: Some(span)
     }
 }
@@ -250,6 +252,7 @@ pub struct SequentialFutures<'a, S, F>
     #[pin]
     source: futures::stream::Fuse<S>,
     active: VecDeque<ActiveItem<F>>,
+    drawn: usize,
     span: Option<Cow<'static, str>>,
 }
 
@@ -270,6 +273,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
         while this.active.len() < this.active.capacity() {
             if let Poll::Ready(Some(f)) = this.source.as_mut().poll_next(cx) {
                 this.active.push_back(ActiveItem::Pending(Box::pin(this.spawner.spawn(f.into_future()))));
+                *this.drawn += 1;
                 // this.active
                 //     .push_back(ActiveItem::Pending(Box::pin(f.into_future())));
             } else {
@@ -279,11 +283,20 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
 
         let r = if let Some(item) = this.active.front_mut() {
             if item.check_ready(cx) {
+                let _ = this.span.as_ref().map(|r| {
+                    tracing::trace!("{r} seq_join polled. {} future is ready and returned", *this.drawn - this.active.len());
+                });
                 let v = this.active.pop_front().map(ActiveItem::take);
                 Poll::Ready(v)
             } else {
-                for f in this.active.iter_mut().skip(1) {
-                    f.check_ready(cx);
+                let active = this.active.len();
+                for (i, f) in this.active.iter_mut().enumerate().skip(1) {
+                    if f.check_ready(cx) {
+                        let drawn = *this.drawn;
+                        let _ = this.span.as_ref().map(|r| {
+                            tracing::trace!("{r} seq_join polled. {} future is ready but not returned yet", drawn - active + i);
+                        });
+                    }
                 }
                 Poll::Pending
             }
@@ -294,7 +307,7 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
         };
 
         let _ = this.span.as_ref().map(|r| {
-            tracing::trace!("{r} seq_join polled. active before = {active_before}, active after = {}", this.active.len());
+            tracing::trace!("{r} seq_join polled. active before = {active_before}, active after = {}. Result = {r:?}", this.active.len());
         });
 
         r
