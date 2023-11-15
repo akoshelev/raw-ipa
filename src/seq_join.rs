@@ -306,8 +306,12 @@ impl <'a, S, F, T> Stream for SequentialFutures<'a, S, F>
             Poll::Pending
         };
 
-        let _ = this.span.as_ref().map(|r| {
-            tracing::trace!("{r} seq_join polled. active before = {active_before}, active after = {}. Result = {r:?}", this.active.len());
+        let _ = this.span.as_ref().map(|step| {
+            let rp = match &r {
+                Poll::Ready(_) => "ready",
+                Poll::Pending => "pending"
+            };
+            tracing::trace!("{step} seq_join polled. active before = {active_before}, active after = {}. Result = {rp}", this.active.len());
         });
 
         r
