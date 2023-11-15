@@ -443,6 +443,7 @@ where
 
     let mut collected = rows_chunked_by_user.collect::<Vec<_>>().await;
     collected.sort_by(|a, b| std::cmp::Ord::cmp(&b.len(), &a.len()));
+    tracing::info!("Processing {} user circuits (expected {num_outputs})", collected.len());
 
     // Convert to a stream of async futures that represent the result of executing the per-user circuit
     let stream_of_per_user_circuits = pin!(stream_iter(collected).then(|rows_for_user| {

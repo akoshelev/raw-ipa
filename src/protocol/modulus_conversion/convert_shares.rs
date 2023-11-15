@@ -354,12 +354,11 @@ where
     );
 
     let active = ctx.active_work();
-    let sz = binary_shares.size_hint().1.unwrap_or(0);
     let locally_converted = LocalBitConverter::new(ctx.role(), binary_shares, bit_range);
     let stream = unfold(
         (ctx, locally_converted, first_record),
         move |(ctx, mut locally_converted, record_id)| async move {
-            tracing::trace!("convert bits for {}/{record_id} out of {sz}", ctx.gate().as_ref());
+            tracing::trace!("convert bits for {}/{record_id} out of {}", ctx.gate().as_ref(), ctx.total_records());
             let Some((triple, residual)) = locally_converted.next().await else {
                 return None;
             };
