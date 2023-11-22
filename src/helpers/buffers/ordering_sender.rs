@@ -78,8 +78,12 @@ impl State {
             M::Size::USIZE,
             self.spare.get()
         );
+
+
+        let sz = self.buf.len();
         let b = &mut self.buf[self.written..];
-        if M::Size::USIZE <= b.len() {
+        // block the writes if we are waiting for stream to be taken out
+        if M::Size::USIZE <= b.len() && self.written + self.spare.get() < sz {
             self.written += M::Size::USIZE;
             m.serialize(GenericArray::from_mut_slice(&mut b[..M::Size::USIZE]));
 
