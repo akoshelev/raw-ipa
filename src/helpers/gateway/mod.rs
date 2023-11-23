@@ -57,6 +57,9 @@ pub struct GatewayConfig {
     /// This is used to determine the size of sending and receiving buffers.
     active: NonZeroUsize,
 
+    /// Must be smaller than active
+    buffer_size: NonZeroUsize,
+
     /// Time to wait before checking gateway progress. If no progress has been made between
     /// checks, the gateway is considered to be stalled and will create a report with outstanding
     /// send/receive requests
@@ -106,7 +109,7 @@ impl Gateway {
     ) -> send::SendingEnd<M> {
         let (tx, maybe_stream) = self.inner.senders.get_or_create::<M>(
             channel_id,
-            self.config.active_work(),
+            self.config.buffer_size(),
             total_records,
         );
         if let Some(stream) = maybe_stream {
@@ -156,6 +159,7 @@ impl GatewayConfig {
         // bugs, so keeping it large enough to avoid false positives.
         Self {
             active: NonZeroUsize::new(active).unwrap(),
+            buffer_size: NonZeroUsize::new(active).unwrap(),
             #[cfg(feature = "stall-detection")]
             progress_check_interval: std::time::Duration::from_secs(if cfg!(test) {
                 5
@@ -165,10 +169,20 @@ impl GatewayConfig {
         }
     }
 
+    pub fn with_buffer_size(mut self, buffer_size: usize) -> Self {
+        assert!(buffer_size <= self.active.get());
+        self.buffer_size = NonZeroUsize::new(buffer_size).unwrap();
+        self
+    }
+
     /// The configured amount of active work.
     #[must_use]
     pub fn active_work(&self) -> NonZeroUsize {
         self.active
+    }
+
+    pub fn buffer_size(&self) -> NonZeroUsize {
+        self.buffer_size
     }
 }
 

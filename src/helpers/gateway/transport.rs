@@ -54,7 +54,7 @@ impl RoleResolvingTransport {
                 self.inner
                     .receive(peer, (self.query_id, channel_id.gate.clone())),
             ),
-            self.config.active_work(),
+            self.config.buffer_size(),
         )
     }
 

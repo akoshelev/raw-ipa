@@ -137,7 +137,8 @@ impl RouteParams<RouteId, NoQueryId, NoStep> for &QueryConfig {
 impl From<&QueryConfig> for GatewayConfig {
     fn from(_value: &QueryConfig) -> Self {
         // TODO: pick the correct value for active and test it
-        Self::default()
+        // Self::default()
+        Self::new(1 << 15).with_buffer_size(1024)
     }
 }
 
