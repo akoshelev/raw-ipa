@@ -138,7 +138,7 @@ impl From<&QueryConfig> for GatewayConfig {
     fn from(_value: &QueryConfig) -> Self {
         // TODO: pick the correct value for active and test it
         // Self::default()
-        Self::new(1 << 15).with_buffer_size(1024)
+        Self::new(1 << 16).with_buffer_size(1024)
     }
 }
 
