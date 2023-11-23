@@ -208,6 +208,22 @@ where
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.
             #[cfg(feature = "stall-detection")]
+            {
+                use std::collections::HashMap;
+
+                let vec = take(&mut self.overflow_wakers);
+                let sz = vec.len();
+                let mut idx_stats = HashMap::new();
+                for (w, i) in vec {
+                    idx_stats.entry(i).and_modify(|v| *v += 1).or_insert(1);
+                    w.wake();
+                }
+
+                let mut idx_stats = idx_stats.into_iter().collect::<Vec<_>>();
+                idx_stats.sort_unstable_by_key(|(_, v)| std::cmp::Reverse(*v));
+                let worst = idx_stats.first().map(|(idx, st)| format!("{idx}={st}")).unwrap_or("<>".to_string());
+                tracing::info!("overflow waker stats: {} total size, {} total indices, {} max wakers per index", sz, idx_stats.len(), worst);
+            }
             for (w, _) in take(&mut self.overflow_wakers) {
                 w.wake();
             }
