@@ -385,7 +385,7 @@ impl OrderingSender {
 
         if let Poll::Ready(v) = b.take(cx) {
             self.waiting.wake(self.next.load(Acquire));
-            tracing::trace!("Sending next {} bytes", v.len());
+            tracing::info!("Sending next {} bytes", v.len());
             Poll::Ready(Some(v))
         } else if b.closed {
             Poll::Ready(None)
