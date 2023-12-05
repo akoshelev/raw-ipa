@@ -78,6 +78,7 @@ impl State {
             M::Size::USIZE,
             self.spare.get()
         );
+        assert!(!self.closed, "Writing into a closed stream");
         let open = self.accept_writes();
         let b = &mut self.buf[self.written..];
         if open && M::Size::USIZE <= b.len() {
@@ -96,6 +97,9 @@ impl State {
 
     fn take(&mut self, cx: &Context<'_>) -> Poll<Vec<u8>> {
         if self.written > 0 && (self.written + self.spare.get() >= self.buf.len() || self.closed) {
+            if self.closed {
+                tracing::info!("stream is closed");
+            }
             let v = self.buf[..self.written].to_vec();
             self.written = 0;
 
