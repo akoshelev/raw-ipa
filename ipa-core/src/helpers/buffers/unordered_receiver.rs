@@ -233,6 +233,7 @@ where
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(b)) => {
+                    tracing::trace!("Received next {} bytes", b.as_ref().len());
                     if let Some(m) = self.spare.extend(b.as_ref()) {
                         self.wake_next();
                         return Poll::Ready(Ok(m));

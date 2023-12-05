@@ -180,6 +180,9 @@ impl Stream for GatewaySendStream {
     type Item = Vec<u8>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let channel_id = &self.inner.channel_id;
+        let span = tracing::trace_span!("send", to = ?channel_id.role, gate = ?channel_id.gate);
+        let _enter = span.enter();
         Pin::get_mut(self).inner.ordering_tx.take_next(cx)
     }
 }
