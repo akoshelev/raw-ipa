@@ -6,6 +6,7 @@ use tracing::{info, metadata::LevelFilter, Level};
 use tracing_subscriber::{
     fmt, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
+use tracing_subscriber::fmt::format;
 
 use crate::{
     cli::{install_collector, metric_collector::CollectorHandle},
@@ -35,6 +36,7 @@ impl Verbosity {
         let fmt_layer = fmt::layer()
             .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
             .with_ansi(std::io::stderr().is_terminal())
+            .event_format(format().compact())
             .with_writer(stderr);
 
         tracing_subscriber::registry()
