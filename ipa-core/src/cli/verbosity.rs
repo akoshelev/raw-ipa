@@ -6,8 +6,6 @@ use tracing::{info, metadata::LevelFilter, Level};
 use tracing_subscriber::{
     fmt, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
-use tracing_subscriber::filter::filter_fn;
-use tracing_subscriber::fmt::format;
 
 use crate::{
     cli::{install_collector, metric_collector::CollectorHandle},
@@ -34,21 +32,9 @@ impl Verbosity {
     #[must_use]
     pub fn setup_logging(&self) -> LoggingHandle {
         let filter_layer = self.log_filter();
-
-        let filter_fn = filter_fn(|span| {
-            for field in span.fields() {
-                field.callsite()
-                field.name().contains("computed_capped_attributed_trigger_value_just_saturated_case") ||
-                    field.name().contains()
-
-            }
-        })
-
         let fmt_layer = fmt::layer()
             .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
             .with_ansi(std::io::stderr().is_terminal())
-            .event_format(format().compact())
-            .with()
             .with_writer(stderr);
 
         tracing_subscriber::registry()
