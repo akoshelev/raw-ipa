@@ -523,6 +523,7 @@ where
         .await
 }
 
+#[tracing::instrument(name = "per_user_attribution", fields(rows = rows_for_user.len()))]
 async fn evaluate_per_user_attribution_circuit<C, BK, TV, TS, SS>(
     ctx_for_row_number: Vec<C>,
     record_id_for_each_depth: Vec<u32>,
