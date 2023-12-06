@@ -97,9 +97,6 @@ impl State {
 
     fn take(&mut self, cx: &Context<'_>) -> Poll<Vec<u8>> {
         if self.written > 0 && (self.written + self.spare.get() >= self.buf.len() || self.closed) {
-            if self.closed {
-                tracing::info!("stream is closed");
-            }
             let v = self.buf[..self.written].to_vec();
             self.written = 0;
 
@@ -389,7 +386,7 @@ impl OrderingSender {
 
         if let Poll::Ready(v) = b.take(cx) {
             self.waiting.wake(self.next.load(Acquire));
-            tracing::info!("Sending next {} bytes", v.len());
+            tracing::trace!("Sending next {} bytes. stream closed = {}", v.len(), b.closed);
             Poll::Ready(Some(v))
         } else if b.closed {
             Poll::Ready(None)
