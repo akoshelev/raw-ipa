@@ -204,6 +204,8 @@ where
         let index = self.next % self.wakers.len();
         if let Some(w) = self.wakers[index].take() {
             w.wake();
+        } else {
+            tracing::trace!("No waker for {}", self.next)
         }
         if self.next % (self.wakers.len() / 2) == 0 {
             // Wake all the overflowed wakers.  See comments on `overflow_wakers`.
