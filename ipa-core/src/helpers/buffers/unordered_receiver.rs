@@ -229,7 +229,9 @@ where
     fn poll_next<M: Message>(&mut self, cx: &mut Context<'_>) -> Poll<Result<M, Error>> {
         self.max_polled_idx = std::cmp::max(self.max_polled_idx, self.next);
         if let Some(m) = self.spare.read() {
+            let this_recv = self.next;
             self.wake_next();
+            tracing::trace!("Resolved receiver at {this_recv}, next one is {}", self.next);
             return Poll::Ready(Ok(m));
         }
 
