@@ -198,7 +198,7 @@ where
                 // to be woken when we invoke the waker we get.
                 assert!(waker.will_wake(old));
             }
-            tracing::trace!("Save waker for i = {i}: {:?} ", waker);
+            tracing::trace!("Save waker for i={i}: {:?} ", waker);
             self.wakers[index] = Some(waker);
         }
     }
@@ -209,7 +209,7 @@ where
         tracing::trace!("Waking up next in line: {} ", self.next);
         let index = self.next % self.wakers.len();
         if let Some(w) = self.wakers[index].take() {
-            tracing::trace!("Wake waker for i = {}: {:?} ", self.next, w);
+            tracing::trace!("Wake waker for i={}: {:?} ", self.next, w);
             w.wake();
         } else {
             tracing::trace!("No waker for {}", self.next)
