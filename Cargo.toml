@@ -6,6 +6,10 @@ members = ["ipa-core", "ipa-macros"]
 incremental = true
 lto = "thin"
 
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+
 [profile.bench]
 debug-assertions = true
 
