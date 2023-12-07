@@ -458,20 +458,17 @@ where
         for count in &mut record_id_for_row_depth[..num_user_rows] {
             *count += 1;
         }
-        #[allow(clippy::async_yields_async)]
-        // this is ok, because seq join wants a stream of futures
-        async move {
-            evaluate_per_user_attribution_circuit::<_, BK, TV, TS, SS>(
-                contexts,
-                record_ids,
-                rows_for_user,
-                attribution_window_seconds,
-            )
-        }
+
+        evaluate_per_user_attribution_circuit::<_, BK, TV, TS, SS>(
+            contexts,
+            record_ids,
+            rows_for_user,
+            attribution_window_seconds,
+        )
     }));
 
     // Execute all of the async futures (sequentially), and flatten the result
-    let flattenned_stream = seq_join(sh_ctx.active_work(), stream_of_per_user_circuits)
+    let flattenned_stream = stream_of_per_user_circuits
         .flat_map(|x| stream_iter(x.unwrap()));
 
     // modulus convert breakdown keys and trigger values
