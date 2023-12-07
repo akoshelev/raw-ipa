@@ -35,6 +35,7 @@ impl Verbosity {
         let fmt_layer = fmt::layer()
             .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
             .with_ansi(std::io::stderr().is_terminal())
+            .with_thread_ids(true)
             .with_writer(stderr);
 
         tracing_subscriber::registry()
