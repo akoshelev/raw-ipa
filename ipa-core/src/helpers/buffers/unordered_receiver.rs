@@ -38,6 +38,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.as_ref();
+        tracing::trace!(i = this.i, "Receiver::poll");
         let mut recv = this.receiver.lock().unwrap();
         if recv.is_next(this.i) {
             recv.poll_next(cx)
