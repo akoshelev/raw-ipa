@@ -5,6 +5,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use std::borrow::Cow;
 
 use futures::{
     stream::{iter, Iter as StreamIter, TryCollect},
@@ -47,6 +48,7 @@ where
     SequentialFutures {
         source: source.fuse(),
         active: VecDeque::with_capacity(active.get()),
+        hack: Cow::Borrowed("<ignore>"),
     }
 }
 
@@ -158,6 +160,7 @@ where
     #[pin]
     source: futures::stream::Fuse<S>,
     active: VecDeque<ActiveItem<F>>,
+    pub hack: Cow<'static, str>,
 }
 
 impl<S, F> Stream for SequentialFutures<S, F>
@@ -168,9 +171,11 @@ where
     type Item = F::Output;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let trace = &self.hack == "prf_sharding::corr";
         let mut this = self.project();
 
         // Draw more values from the input, up to the capacity.
+        let b_active = this.active.len();
         while this.active.len() < this.active.capacity() {
             if let Poll::Ready(Some(f)) = this.source.as_mut().poll_next(cx) {
                 this.active
@@ -180,7 +185,7 @@ where
             }
         }
 
-        if let Some(item) = this.active.front_mut() {
+        let r = if let Some(item) = this.active.front_mut() {
             if item.check_ready(cx) {
                 let v = this.active.pop_front().map(ActiveItem::take);
                 Poll::Ready(v)
@@ -194,7 +199,13 @@ where
             Poll::Ready(None)
         } else {
             Poll::Pending
+        };
+
+        if trace {
+            tracing::trace!("seq_join polled. Response ready? = {}, before active = {}", r.is_ready(), b_active)
         }
+
+        r
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

@@ -1,4 +1,5 @@
 use std::{num::NonZeroU32, ops::Not};
+use std::borrow::Cow;
 
 use futures::{stream::iter as stream_iter, TryStreamExt};
 use futures_util::{
@@ -468,7 +469,9 @@ where
     });
 
     // Execute all of the async futures (sequentially), and flatten the result
-    let flattenned_stream = seq_join(binary_m_ctx.active_work(), stream_iter(stream_of_per_user_circuits))
+    let mut sf = seq_join(binary_m_ctx.active_work(), stream_iter(stream_of_per_user_circuits));
+    sf.hack = Cow::Borrowed("prf_sharding::corr");
+    let flattenned_stream = sf
         .flat_map(|x| stream_iter(x.unwrap()));
 
     // modulus convert breakdown keys and trigger values

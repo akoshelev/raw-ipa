@@ -198,7 +198,6 @@ where
                 // to be woken when we invoke the waker we get.
                 assert!(waker.will_wake(old));
             }
-            tracing::trace!("Save waker for i={i}: {:?} ", waker);
             self.wakers[index] = Some(waker);
         }
     }
@@ -206,7 +205,6 @@ where
     /// Wake the waker from the next future, if the next receiver has been polled.
     fn wake_next(&mut self) {
         self.next += 1;
-        tracing::trace!("Waking up next in line: {} ", self.next);
         let index = self.next % self.wakers.len();
         if let Some(w) = self.wakers[index].take() {
             tracing::trace!("Wake waker for i={}: {:?} ", self.next, w);
