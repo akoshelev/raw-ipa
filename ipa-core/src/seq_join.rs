@@ -171,7 +171,8 @@ where
     type Item = F::Output;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let trace = &self.hack == "prf_sharding::corr";
+        let trace = &self.hack == "user_circuits" || &self.hack == "bk_tv";
+        let mut added = false;
         let mut this = self.project();
 
         // Draw more values from the input, up to the capacity.
@@ -180,6 +181,7 @@ where
             if let Poll::Ready(Some(f)) = this.source.as_mut().poll_next(cx) {
                 this.active
                     .push_back(ActiveItem::Pending(Box::pin(f.into_future())));
+                added = true;
             } else {
                 break;
             }
@@ -188,9 +190,6 @@ where
         let r = if let Some(item) = this.active.front_mut() {
             if item.check_ready(cx) {
                 let v = this.active.pop_front().map(ActiveItem::take);
-                for f in this.active.iter_mut() {
-                    f.check_ready(cx);
-                }
                 Poll::Ready(v)
             } else {
                 for f in this.active.iter_mut().skip(1) {
@@ -205,7 +204,7 @@ where
         };
 
         if trace {
-            tracing::trace!("seq_join polled. Response ready? = {}, before active = {}", r.is_ready(), b_active)
+            tracing::trace!("{}, seq_join polled. Response ready? = {}, added = {added}, before active = {b_active}", &this.hack, r.is_ready());
         }
 
         r

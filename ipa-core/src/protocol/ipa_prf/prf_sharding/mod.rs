@@ -470,7 +470,7 @@ where
 
     // Execute all of the async futures (sequentially), and flatten the result
     let mut sf = seq_join(binary_m_ctx.active_work(), stream_iter(stream_of_per_user_circuits));
-    sf.hack = Cow::Borrowed("prf_sharding::corr");
+    sf.hack = Cow::Borrowed("user_circuits");
     let flattenned_stream = sf
         .flat_map(|x| stream_iter(x.unwrap()));
 
@@ -509,7 +509,8 @@ where
         });
 
     // aggregate all row level contributions
-    let row_contributions = seq_join(prime_field_ctx.active_work(), row_contributions_stream);
+    let mut row_contributions = seq_join(prime_field_ctx.active_work(), row_contributions_stream);
+    row_contributions.hack = Cow::Borrowed("bk_tv");
     row_contributions
         .try_fold(
             vec![S::ZERO; 1 << <BK as SharedValue>::BITS],
