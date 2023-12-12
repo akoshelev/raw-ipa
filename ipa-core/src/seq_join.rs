@@ -188,6 +188,9 @@ where
         let r = if let Some(item) = this.active.front_mut() {
             if item.check_ready(cx) {
                 let v = this.active.pop_front().map(ActiveItem::take);
+                for f in this.active.iter_mut() {
+                    f.check_ready(cx);
+                }
                 Poll::Ready(v)
             } else {
                 for f in this.active.iter_mut().skip(1) {
