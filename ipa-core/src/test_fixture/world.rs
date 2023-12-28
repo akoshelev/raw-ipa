@@ -1,6 +1,5 @@
 use std::{fmt::Debug, io::stdout, iter::zip};
 
-use async_trait::async_trait;
 use futures::{future::join_all, Future};
 use rand::{distributions::Standard, prelude::Distribution, rngs::StdRng};
 use rand_core::{RngCore, SeedableRng};
@@ -188,7 +187,7 @@ impl TestWorld {
         I: IntoShares<A> + Send + 'static,
         A: Send,
         O: Send + Debug,
-        H: Fn(C, A) -> R + Send + Sync,
+        H: Fn(C, A) -> R + Send,
         R: Future<Output = O> + Send,
     {
         let input_shares = input.share_with(&mut thread_rng());
@@ -212,42 +211,49 @@ impl Drop for TestWorld {
     }
 }
 
-#[async_trait]
 pub trait Runner {
     /// Run with a context that can be upgraded, but is only good for semi-honest.
-    async fn semi_honest<'a, I, A, O, H, R>(&'a self, input: I, helper_fn: H) -> [O; 3]
-    where
-        I: IntoShares<A> + Send + 'static,
-        A: Send,
-        O: Send + Debug,
-        H: Fn(SemiHonestContext<'a>, A) -> R + Send + Sync,
-        R: Future<Output = O> + Send;
-
-    /// Run with a context that can be upgraded to malicious.
-    async fn malicious<'a, I, A, O, H, R>(&'a self, input: I, helper_fn: H) -> [O; 3]
-    where
-        I: IntoShares<A> + Send + 'static,
-        A: Send,
-        O: Send + Debug,
-        H: Fn(MaliciousContext<'a>, A) -> R + Send + Sync,
-        R: Future<Output = O> + Send;
-
-    /// Run with a context that has already been upgraded to malicious.
-    async fn upgraded_malicious<'a, F, I, A, M, O, H, R, P>(
+    fn semi_honest<'a: 'fut, 'fut, I, A, O, H, R>(
         &'a self,
         input: I,
         helper_fn: H,
-    ) -> [O; 3]
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
+    where
+        I: IntoShares<A> + Send + 'static,
+        A: Send + 'fut,
+        O: Send + Debug + 'fut,
+        H: Fn(SemiHonestContext<'a>, A) -> R + Send + 'fut,
+        R: Future<Output = O> + Send + 'fut;
+
+    /// Run with a context that can be upgraded to malicious.
+    fn malicious<'a: 'fut, 'fut, I, A, O, H, R>(
+        &'a self,
+        input: I,
+        helper_fn: H,
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
+    where
+        I: IntoShares<A> + Send + 'static,
+        A: Send + 'fut,
+        O: Send + Debug + 'fut,
+        H: Fn(MaliciousContext<'a>, A) -> R + Send + 'fut,
+        R: Future<Output = O> + Send + 'fut;
+
+    /// Run with a context that has already been upgraded to malicious.
+    fn upgraded_malicious<'a: 'fut, 'fut, F, I, A, M, O, H, R, P>(
+        &'a self,
+        input: I,
+        helper_fn: H,
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
     where
         F: ExtendableField,
         I: IntoShares<A> + Send + 'static,
         A: Send + 'static,
         for<'u> UpgradeContext<'u, UpgradedMaliciousContext<'a, F>, F>:
             UpgradeToMalicious<'u, A, M>,
-        O: Send + Debug,
+        O: Send + Debug + 'fut,
         M: Send + 'static,
-        H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync,
-        R: Future<Output = P> + Send,
+        H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync + 'fut,
+        R: Future<Output = P> + Send + 'fut,
         P: DowngradeMalicious<Target = O> + Clone + Send + Debug,
         [P; 3]: ValidateMalicious<F>,
         Standard: Distribution<F>;
@@ -260,15 +266,18 @@ fn split_array_of_tuples<T, U, V>(v: [(T, U, V); 3]) -> ([T; 3], [U; 3], [V; 3])
     ([v0.0, v1.0, v2.0], [v0.1, v1.1, v2.1], [v0.2, v1.2, v2.2])
 }
 
-#[async_trait]
 impl Runner for TestWorld {
-    async fn semi_honest<'a, I, A, O, H, R>(&'a self, input: I, helper_fn: H) -> [O; 3]
+    fn semi_honest<'a: 'fut, 'fut, I, A, O, H, R>(
+        &'a self,
+        input: I,
+        helper_fn: H,
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
     where
         I: IntoShares<A> + Send + 'static,
-        A: Send,
-        O: Send + Debug,
-        H: Fn(SemiHonestContext<'a>, A) -> R + Send + Sync,
-        R: Future<Output = O> + Send,
+        A: Send + 'fut,
+        O: Send + Debug + 'fut,
+        H: Fn(SemiHonestContext<'a>, A) -> R + Send + 'fut,
+        R: Future<Output = O> + Send + 'fut,
     {
         Self::run_either(
             self.contexts(),
@@ -276,16 +285,19 @@ impl Runner for TestWorld {
             input,
             helper_fn,
         )
-        .await
     }
 
-    async fn malicious<'a, I, A, O, H, R>(&'a self, input: I, helper_fn: H) -> [O; 3]
+    fn malicious<'a: 'fut, 'fut, I, A, O, H, R>(
+        &'a self,
+        input: I,
+        helper_fn: H,
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
     where
         I: IntoShares<A> + Send + 'static,
-        A: Send,
-        O: Send + Debug,
-        H: Fn(MaliciousContext<'a>, A) -> R + Send + Sync,
-        R: Future<Output = O> + Send,
+        A: Send + 'fut,
+        O: Send + Debug + 'fut,
+        H: Fn(MaliciousContext<'a>, A) -> R + Send + 'fut,
+        R: Future<Output = O> + Send + 'fut,
     {
         Self::run_either(
             self.malicious_contexts(),
@@ -293,47 +305,48 @@ impl Runner for TestWorld {
             input,
             helper_fn,
         )
-        .await
     }
 
-    async fn upgraded_malicious<'a, F, I, A, M, O, H, R, P>(
+    fn upgraded_malicious<'a: 'fut, 'fut, F, I, A, M, O, H, R, P>(
         &'a self,
         input: I,
         helper_fn: H,
-    ) -> [O; 3]
+    ) -> impl Future<Output = [O; 3]> + Send + 'fut
     where
         F: ExtendableField,
         I: IntoShares<A> + Send + 'static,
         A: Send + 'static,
         for<'u> UpgradeContext<'u, UpgradedMaliciousContext<'a, F>, F>:
             UpgradeToMalicious<'u, A, M>,
-        O: Send + Debug,
+        O: Send + Debug + 'fut,
         M: Send + 'static,
-        H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync,
-        R: Future<Output = P> + Send,
+        H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync + 'fut,
+        R: Future<Output = P> + Send + 'fut,
         P: DowngradeMalicious<Target = O> + Clone + Send + Debug,
         [P; 3]: ValidateMalicious<F>,
         Standard: Distribution<F>,
     {
-        let (m_results, r_shares, output) = split_array_of_tuples(
-            self.malicious(input, |ctx, share| async {
-                let v = ctx.validator();
-                let m_ctx = v.context();
-                let m_share = m_ctx.upgrade(share).await.unwrap();
-                let m_result = helper_fn(m_ctx, m_share).await;
-                let m_result_clone = m_result.clone();
-                let r_share = v.r_share().clone();
-                let output = v.validate(m_result_clone).await.unwrap();
-                (m_result, r_share, output)
-            })
-            .await,
-        );
+        async move {
+            let (m_results, r_shares, output) = split_array_of_tuples(
+                self.malicious(input, |ctx, share| async {
+                    let v = ctx.validator();
+                    let m_ctx = v.context();
+                    let m_share = m_ctx.upgrade(share).await.unwrap();
+                    let m_result = helper_fn(m_ctx, m_share).await;
+                    let m_result_clone = m_result.clone();
+                    let r_share = v.r_share().clone();
+                    let output = v.validate(m_result_clone).await.unwrap();
+                    (m_result, r_share, output)
+                })
+                .await,
+            );
 
-        // Sanity check that rx = r * x at the output (it should not be possible
-        // for this to fail if the distributed validation protocol passed).
-        let r = r_shares.reconstruct();
-        m_results.validate(r);
+            // Sanity check that rx = r * x at the output (it should not be possible
+            // for this to fail if the distributed validation protocol passed).
+            let r = r_shares.reconstruct();
+            m_results.validate(r);
 
-        output
+            output
+        }
     }
 }

@@ -1075,26 +1075,33 @@ pub mod tests {
             let test_config = TestWorldConfig::default().enable_metrics().with_seed(0);
             let world = TestWorld::new_with(test_config);
             let _: Vec<_> = match mode {
-                Malicious => world.malicious(generate_input(), |ctx, input_rows| async move {
-                    ipa::<_, _, _, Fp32BitPrime, MatchKey, BreakdownKey>(
-                        ctx,
-                        &input_rows,
-                        query_config,
-                    )
-                    .await
-                    .unwrap()
-                }),
-                SemiHonest => world.semi_honest(generate_input(), |ctx, input_rows| async move {
-                    ipa::<_, _, _, Fp32BitPrime, MatchKey, BreakdownKey>(
-                        ctx,
-                        &input_rows,
-                        query_config,
-                    )
-                    .await
-                    .unwrap()
-                }),
+                Malicious => {
+                    world
+                        .malicious(generate_input(), |ctx, input_rows| async move {
+                            ipa::<_, _, _, Fp32BitPrime, MatchKey, BreakdownKey>(
+                                ctx,
+                                &input_rows,
+                                query_config,
+                            )
+                            .await
+                            .unwrap()
+                        })
+                        .await
+                }
+                SemiHonest => {
+                    world
+                        .semi_honest(generate_input(), |ctx, input_rows| async move {
+                            ipa::<_, _, _, Fp32BitPrime, MatchKey, BreakdownKey>(
+                                ctx,
+                                &input_rows,
+                                query_config,
+                            )
+                            .await
+                            .unwrap()
+                        })
+                        .await
+                }
             }
-            .await
             .reconstruct();
 
             let actual = PerfMetrics::from_snapshot(&world.metrics_snapshot());
