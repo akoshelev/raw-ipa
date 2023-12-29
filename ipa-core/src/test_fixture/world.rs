@@ -254,7 +254,7 @@ pub trait Runner {
         M: Send + 'static,
         H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync + 'fut,
         R: Future<Output = P> + Send + 'fut,
-        P: DowngradeMalicious<Target = O> + Clone + Send + Debug,
+        P: DowngradeMalicious<Target = O> + Clone + Send + Debug + 'fut,
         [P; 3]: ValidateMalicious<F>,
         Standard: Distribution<F>;
 }
@@ -307,11 +307,11 @@ impl Runner for TestWorld {
         )
     }
 
-    fn upgraded_malicious<'a: 'fut, 'fut, F, I, A, M, O, H, R, P>(
+    async fn upgraded_malicious<'a: 'fut, 'fut, F, I, A, M, O, H, R, P>(
         &'a self,
         input: I,
         helper_fn: H,
-    ) -> impl Future<Output = [O; 3]> + Send + 'fut
+    ) -> [O; 3]
     where
         F: ExtendableField,
         I: IntoShares<A> + Send + 'static,
@@ -322,31 +322,29 @@ impl Runner for TestWorld {
         M: Send + 'static,
         H: Fn(UpgradedMaliciousContext<'a, F>, M) -> R + Send + Sync + 'fut,
         R: Future<Output = P> + Send + 'fut,
-        P: DowngradeMalicious<Target = O> + Clone + Send + Debug,
+        P: DowngradeMalicious<Target = O> + Clone + Send + Debug + 'fut,
         [P; 3]: ValidateMalicious<F>,
         Standard: Distribution<F>,
     {
-        async move {
-            let (m_results, r_shares, output) = split_array_of_tuples(
-                self.malicious(input, |ctx, share| async {
-                    let v = ctx.validator();
-                    let m_ctx = v.context();
-                    let m_share = m_ctx.upgrade(share).await.unwrap();
-                    let m_result = helper_fn(m_ctx, m_share).await;
-                    let m_result_clone = m_result.clone();
-                    let r_share = v.r_share().clone();
-                    let output = v.validate(m_result_clone).await.unwrap();
-                    (m_result, r_share, output)
-                })
-                .await,
-            );
+        let (m_results, r_shares, output) = split_array_of_tuples(
+            self.malicious(input, |ctx, share| async {
+                let v = ctx.validator();
+                let m_ctx = v.context();
+                let m_share = m_ctx.upgrade(share).await.unwrap();
+                let m_result = helper_fn(m_ctx, m_share).await;
+                let m_result_clone = m_result.clone();
+                let r_share = v.r_share().clone();
+                let output = v.validate(m_result_clone).await.unwrap();
+                (m_result, r_share, output)
+            })
+            .await,
+        );
 
-            // Sanity check that rx = r * x at the output (it should not be possible
-            // for this to fail if the distributed validation protocol passed).
-            let r = r_shares.reconstruct();
-            m_results.validate(r);
+        // Sanity check that rx = r * x at the output (it should not be possible
+        // for this to fail if the distributed validation protocol passed).
+        let r = r_shares.reconstruct();
+        m_results.validate(r);
 
-            output
-        }
+        output
     }
 }
