@@ -1,6 +1,7 @@
+use std::future::Future;
 use std::iter::{repeat, zip};
+use std::pin::Pin;
 
-use async_trait::async_trait;
 use embed_doc_image::embed_doc_image;
 use futures::future::try_join;
 
@@ -23,15 +24,20 @@ use crate::{
 };
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
-#[async_trait]
+/// TODO: This trait methods return boxed futures because of [`https://github.com/rust-lang/rust/issues/100013`]
+/// Once this issue is fixed, we should remove dynamic dispatch from it.
 pub trait Reveal<C: Context, B: RecordBinding>: Sized {
     type Output;
     /// reveal the secret to all helpers in MPC circuit. Note that after method is called,
     /// it must be assumed that the secret value has been revealed to at least one of the helpers.
     /// Even in case when method never terminates, returns an error, etc.
-    async fn reveal<'fut>(&self, ctx: C, record_binding: B) -> Result<Self::Output, Error>
-    where
-        C: 'fut;
+    fn reveal<'fut>(
+        &'fut self,
+        ctx: C,
+        record_binding: B,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output, Error>> + Send + 'fut>>
+        where
+            C: 'fut;
 }
 
 /// This implements a semi-honest reveal algorithm for replicated secret sharing.
@@ -45,28 +51,33 @@ pub trait Reveal<C: Context, B: RecordBinding>: Sized {
 /// ![Reveal steps][reveal]
 /// Each helper sends their left share to the right helper. The helper then reconstructs their secret by adding the three shares
 /// i.e. their own shares and received share.
-#[async_trait]
 #[embed_doc_image("reveal", "images/reveal.png")]
 impl<C: Context, V: SharedValue> Reveal<C, RecordId> for Replicated<V> {
     type Output = V;
 
-    async fn reveal<'fut>(&self, ctx: C, record_id: RecordId) -> Result<V, Error>
-    where
-        C: 'fut,
+    fn reveal<'fut>(
+        &'fut self,
+        ctx: C,
+        record_id: RecordId,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output, Error>> + Send + 'fut>>
+        where
+            C: 'fut,
     {
-        let (left, right) = self.as_tuple();
+        Box::pin(async move {
+            let (left, right) = self.as_tuple();
 
-        ctx.send_channel(ctx.role().peer(Direction::Right))
-            .send(record_id, left)
-            .await?;
+            ctx.send_channel(ctx.role().peer(Direction::Right))
+                .send(record_id, left)
+                .await?;
 
-        // Sleep until `helper's left` sends their share
-        let share = ctx
-            .recv_channel(ctx.role().peer(Direction::Left))
-            .receive(record_id)
-            .await?;
+            // Sleep until `helper's left` sends their share
+            let share = ctx
+                .recv_channel(ctx.role().peer(Direction::Left))
+                .receive(record_id)
+                .await?;
 
-        Ok(left + right + share)
+            Ok(left + right + share)
+        })
     }
 }
 
@@ -74,50 +85,51 @@ impl<C: Context, V: SharedValue> Reveal<C, RecordId> for Replicated<V> {
 /// It works similarly to semi-honest reveal, the key difference is that each helper sends its share
 /// to both helpers (right and left) and upon receiving 2 shares from peers it validates that they
 /// indeed match.
-#[async_trait]
 impl<'a, F: ExtendableField> Reveal<UpgradedMaliciousContext<'a, F>, RecordId>
     for MaliciousReplicated<F>
 {
     type Output = F;
 
-    async fn reveal<'fut>(
-        &self,
+    fn reveal<'fut>(
+        &'fut self,
         ctx: UpgradedMaliciousContext<'a, F>,
         record_id: RecordId,
-    ) -> Result<F, Error>
-    where
-        UpgradedMaliciousContext<'a, F>: 'fut,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output, Error>> + Send + 'fut>>
+        where
+            UpgradedMaliciousContext<'a, F>: 'fut,
     {
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
 
-        let (left, right) = self.x().access_without_downgrade().as_tuple();
-        let left_sender = ctx.send_channel(ctx.role().peer(Direction::Left));
-        let left_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Left));
-        let right_sender = ctx.send_channel(ctx.role().peer(Direction::Right));
-        let right_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Right));
+        Box::pin(async move {
+            let (left, right) = self.x().access_without_downgrade().as_tuple();
+            let left_sender = ctx.send_channel(ctx.role().peer(Direction::Left));
+            let left_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Left));
+            let right_sender = ctx.send_channel(ctx.role().peer(Direction::Right));
+            let right_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Right));
 
-        // Send share to helpers to the right and left
-        try_join(
-            left_sender.send(record_id, right),
-            right_sender.send(record_id, left),
-        )
-        .await?;
+            // Send share to helpers to the right and left
+            try_join(
+                left_sender.send(record_id, right),
+                right_sender.send(record_id, left),
+            )
+                .await?;
 
-        let (share_from_left, share_from_right) = try_join(
-            left_receiver.receive(record_id),
-            right_receiver.receive(record_id),
-        )
-        .await?;
+            let (share_from_left, share_from_right) = try_join(
+                left_receiver.receive(record_id),
+                right_receiver.receive(record_id),
+            )
+                .await?;
 
-        if share_from_left == share_from_right {
-            Ok(left + right + share_from_left)
-        } else {
-            Err(Error::MaliciousRevealFailed)
-        }
+            if share_from_left == share_from_right {
+                Ok(left + right + share_from_left)
+            } else {
+                Err(Error::MaliciousRevealFailed)
+            }
+        })
+
     }
 }
 
-#[async_trait]
 impl<F, S, C> Reveal<C, NoRecord> for ShuffledPermutationWrapper<S, C>
 where
     F: Field,
@@ -133,22 +145,31 @@ where
     /// If we cant convert F to u128
     /// # Panics
     /// If we cant convert F to u128
-    async fn reveal<'fut>(&self, ctx: C, _: NoRecord) -> Result<Vec<u32>, Error> {
-        let ctx_ref = &ctx;
-        let ctx = ctx.set_total_records(self.perm.len());
-        let revealed_permutation = ctx_ref
-            .try_join(zip(repeat(ctx), self.perm.iter()).enumerate().map(
-                |(index, (ctx, value))| async move {
-                    let reveal_value = value.reveal(ctx, RecordId::from(index)).await;
+    fn reveal<'fut>(
+        &'fut self,
+        ctx: C,
+        _: NoRecord,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output, Error>> + Send + 'fut>>
+        where
+            C: 'fut
+    {
+        Box::pin(async move {
+            let ctx_ref = &ctx;
+            let ctx = ctx.set_total_records(self.perm.len());
+            let revealed_permutation = ctx_ref
+                .try_join(zip(repeat(ctx), self.perm.iter()).enumerate().map(
+                    |(index, (ctx, value))| async move {
+                        let reveal_value = value.reveal(ctx, RecordId::from(index)).await;
 
-                    // safety: we wouldn't use fields larger than 64 bits and there are checks that enforce it
-                    // in the field module
-                    reveal_value.map(|val| val.as_u128().try_into().unwrap())
-                },
-            ))
-            .await?;
+                        // safety: we wouldn't use fields larger than 64 bits and there are checks that enforce it
+                        // in the field module
+                        reveal_value.map(|val| val.as_u128().try_into().unwrap())
+                    },
+                ))
+                .await?;
 
-        Ok(revealed_permutation)
+            Ok(revealed_permutation)
+        })
     }
 }
 
