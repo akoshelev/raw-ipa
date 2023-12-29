@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use futures::stream::Stream;
 
 use crate::{
@@ -137,7 +136,6 @@ where
     .await
 }
 
-#[async_trait]
 impl<'a, F: ExtendableField> DowngradeMalicious
     for ShuffledPermutationWrapper<MaliciousReplicated<F>, UpgradedMaliciousContext<'a, F>>
 {
@@ -155,7 +153,6 @@ impl<'a, F: ExtendableField> DowngradeMalicious
     }
 }
 
-#[async_trait]
 impl<'a, F: ExtendableField> DowngradeMalicious
     for ShuffledPermutationWrapper<Replicated<F>, UpgradedSemiHonestContext<'a, F>>
 {

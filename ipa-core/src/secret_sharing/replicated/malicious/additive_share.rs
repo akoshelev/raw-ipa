@@ -1,10 +1,10 @@
 use std::{
     fmt::{Debug, Formatter},
+    future::Future,
     num::NonZeroUsize,
     ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
 };
 
-use async_trait::async_trait;
 use futures::{
     future::{join, join_all},
     stream::{iter as stream_iter, StreamExt},
@@ -75,10 +75,11 @@ impl<V: SharedValue + ExtendableField> LinearSecretSharing<V> for AdditiveShare<
 /// A trait that is implemented for various collections of `replicated::malicious::AdditiveShare`.
 /// This allows a protocol to downgrade to ordinary `replicated::semi_honest::AdditiveShare`
 /// when the protocol is done.  This should not be used directly.
-#[async_trait]
 pub trait Downgrade: Send {
     type Target: Send;
-    async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target>;
+    fn downgrade(
+        self,
+    ) -> impl Future<Output = UnauthorizedDowngradeWrapper<Self::Target>> + std::marker::Send;
 }
 
 #[must_use = "You should not be downgrading `replicated::malicious::AdditiveShare` values without calling `MaliciousValidator::validate()`"]
@@ -321,7 +322,6 @@ where
     }
 }
 
-#[async_trait]
 impl<F: ExtendableField> Downgrade for AdditiveShare<F> {
     type Target = SemiHonestAdditiveShare<F>;
     async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target> {
@@ -329,7 +329,6 @@ impl<F: ExtendableField> Downgrade for AdditiveShare<F> {
     }
 }
 
-#[async_trait]
 impl<F: ExtendableField> Downgrade for SemiHonestAdditiveShare<F> {
     type Target = SemiHonestAdditiveShare<F>;
     async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target> {
@@ -337,7 +336,6 @@ impl<F: ExtendableField> Downgrade for SemiHonestAdditiveShare<F> {
     }
 }
 
-#[async_trait]
 impl<T, U> Downgrade for (T, U)
 where
     T: Downgrade,
@@ -353,7 +351,6 @@ where
     }
 }
 
-#[async_trait]
 impl<T> Downgrade for BitDecomposed<T>
 where
     T: Downgrade,
@@ -369,7 +366,6 @@ where
     }
 }
 
-#[async_trait]
 impl<T> Downgrade for Vec<T>
 where
     T: Downgrade,

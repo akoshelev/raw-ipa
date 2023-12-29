@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use async_trait::async_trait;
 use ipa_macros::Step;
 
 use crate::{
@@ -33,7 +32,6 @@ where
     _marker: PhantomData<F>,
 }
 
-#[async_trait]
 impl<F> DowngradeMalicious for RandomBitsShare<F, MaliciousReplicated<F>>
 where
     F: ExtendableField,
