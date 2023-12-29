@@ -13,7 +13,6 @@ use ::tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
 };
-use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use serde::de::DeserializeOwned;
 #[cfg(all(feature = "shuttle", test))]
@@ -150,7 +149,6 @@ impl InMemoryTransport {
     }
 }
 
-#[async_trait]
 impl Transport for Weak<InMemoryTransport> {
     type RecordsStream = ReceiveRecords<InMemoryStream>;
     type Error = Error;

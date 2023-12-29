@@ -1,6 +1,5 @@
 use std::borrow::Borrow;
 
-use async_trait::async_trait;
 use futures::Stream;
 
 use crate::{
@@ -124,7 +123,6 @@ impl RouteParams<RouteId, QueryId, Gate> for (RouteId, QueryId, Gate) {
 }
 
 /// Transport that supports per-query,per-step channels
-#[async_trait]
 pub trait Transport: Clone + Send + Sync + 'static {
     type RecordsStream: Stream<Item = Vec<u8>> + Send + Unpin;
     type Error: std::fmt::Debug;

@@ -5,7 +5,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, TryFutureExt};
 
@@ -122,7 +121,6 @@ impl HttpTransport {
     }
 }
 
-#[async_trait]
 impl Transport for Arc<HttpTransport> {
     type RecordsStream = ReceiveRecords<LogHttpErrors>;
     type Error = Error;
