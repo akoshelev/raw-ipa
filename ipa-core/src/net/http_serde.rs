@@ -6,7 +6,6 @@
 pub mod echo {
     use std::collections::HashMap;
 
-    use async_trait::async_trait;
     use axum::extract::{FromRequest, Query, RequestParts};
     use hyper::http::uri;
 
@@ -55,23 +54,31 @@ pub mod echo {
     }
 
     #[cfg(feature = "enable-serde")]
-    #[async_trait]
     impl<B: Send> FromRequest<B> for Request {
         type Rejection = Error;
 
-        async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-            let Query::<HashMap<String, String>>(query_params) = req.extract().await?;
-            let headers = req
-                .headers()
-                .iter()
-                .filter_map(|(name, value)| match value.to_str() {
-                    Ok(header_value) => Some((name.to_string(), header_value.to_string())),
-                    Err(_) => None,
+        fn from_request<'req: 'fut, 'fut>(
+            req: &'req mut RequestParts<B>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+        >
+        where
+            Self: 'fut,
+        {
+            Box::pin(async move {
+                let Query::<HashMap<String, String>>(query_params) = req.extract().await?;
+                let headers = req
+                    .headers()
+                    .iter()
+                    .filter_map(|(name, value)| match value.to_str() {
+                        Ok(header_value) => Some((name.to_string(), header_value.to_string())),
+                        Err(_) => None,
+                    })
+                    .collect();
+                Ok(Request {
+                    query_params,
+                    headers,
                 })
-                .collect();
-            Ok(Request {
-                query_params,
-                headers,
             })
         }
     }
@@ -82,7 +89,6 @@ pub mod echo {
 pub mod query {
     use std::fmt::{Display, Formatter};
 
-    use async_trait::async_trait;
     use axum::extract::{FromRequest, Query, RequestParts};
 
     use crate::{
@@ -103,53 +109,62 @@ pub mod query {
         }
     }
 
-    #[async_trait]
     impl<B: Send> FromRequest<B> for QueryConfigQueryParams {
         type Rejection = Error;
 
-        async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        fn from_request<'req: 'fut, 'fut>(
+            req: &'req mut RequestParts<B>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+        >
+        where
+            Self: 'fut,
+        {
             #[derive(serde::Deserialize)]
             struct QueryTypeParam {
                 size: QuerySize,
                 field_type: FieldType,
                 query_type: String,
             }
-            let Query(QueryTypeParam {
-                size,
-                field_type,
-                query_type,
-            }) = req.extract().await?;
 
-            let query_type = match query_type.as_str() {
-                #[cfg(any(test, feature = "cli", feature = "test-fixture"))]
-                QueryType::TEST_MULTIPLY_STR => Ok(QueryType::TestMultiply),
-                QueryType::SEMIHONEST_IPA_STR => {
-                    let Query(q) = req.extract().await?;
-                    Ok(QueryType::SemiHonestIpa(q))
-                }
-                QueryType::MALICIOUS_IPA_STR => {
-                    let Query(q) = req.extract().await?;
-                    Ok(QueryType::MaliciousIpa(q))
-                }
-                QueryType::SEMIHONEST_AGGREGATE_STR => {
-                    let Query(q) = req.extract().await?;
-                    Ok(QueryType::SemiHonestSparseAggregate(q))
-                }
-                QueryType::MALICIOUS_AGGREGATE_STR => {
-                    let Query(q) = req.extract().await?;
-                    Ok(QueryType::MaliciousSparseAggregate(q))
-                }
-                QueryType::OPRF_IPA_STR => {
-                    let Query(q) = req.extract().await?;
-                    Ok(QueryType::OprfIpa(q))
-                }
-                other => Err(Error::bad_query_value("query_type", other)),
-            }?;
-            Ok(QueryConfigQueryParams(QueryConfig {
-                size,
-                field_type,
-                query_type,
-            }))
+            Box::pin(async move {
+                let Query(QueryTypeParam {
+                    size,
+                    field_type,
+                    query_type,
+                }) = req.extract().await?;
+
+                let query_type = match query_type.as_str() {
+                    #[cfg(any(test, feature = "cli", feature = "test-fixture"))]
+                    QueryType::TEST_MULTIPLY_STR => Ok(QueryType::TestMultiply),
+                    QueryType::SEMIHONEST_IPA_STR => {
+                        let Query(q) = req.extract().await?;
+                        Ok(QueryType::SemiHonestIpa(q))
+                    }
+                    QueryType::MALICIOUS_IPA_STR => {
+                        let Query(q) = req.extract().await?;
+                        Ok(QueryType::MaliciousIpa(q))
+                    }
+                    QueryType::SEMIHONEST_AGGREGATE_STR => {
+                        let Query(q) = req.extract().await?;
+                        Ok(QueryType::SemiHonestSparseAggregate(q))
+                    }
+                    QueryType::MALICIOUS_AGGREGATE_STR => {
+                        let Query(q) = req.extract().await?;
+                        Ok(QueryType::MaliciousSparseAggregate(q))
+                    }
+                    QueryType::OPRF_IPA_STR => {
+                        let Query(q) = req.extract().await?;
+                        Ok(QueryType::OprfIpa(q))
+                    }
+                    other => Err(Error::bad_query_value("query_type", other)),
+                }?;
+                Ok(QueryConfigQueryParams(QueryConfig {
+                    size,
+                    field_type,
+                    query_type,
+                }))
+            })
         }
     }
 
@@ -201,7 +216,6 @@ pub mod query {
     pub const BASE_AXUM_PATH: &str = "/query";
 
     pub mod create {
-        use async_trait::async_trait;
         use axum::extract::{FromRequest, RequestParts};
         use hyper::http::uri;
 
@@ -242,13 +256,21 @@ pub mod query {
             }
         }
 
-        #[async_trait]
         impl<B: Send> FromRequest<B> for Request {
             type Rejection = Error;
 
-            async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-                let QueryConfigQueryParams(query_config) = req.extract().await?;
-                Ok(Self { query_config })
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<B>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let QueryConfigQueryParams(query_config) = req.extract().await?;
+                    Ok(Self { query_config })
+                })
             }
         }
 
@@ -261,7 +283,6 @@ pub mod query {
     }
 
     pub mod prepare {
-        use async_trait::async_trait;
         use axum::{
             extract::{FromRequest, Path, RequestParts},
             http::uri,
@@ -311,22 +332,28 @@ pub mod query {
             }
         }
 
-        #[async_trait]
         impl FromRequest<hyper::Body> for Request {
             type Rejection = Error;
 
-            async fn from_request(
-                req: &mut RequestParts<hyper::Body>,
-            ) -> Result<Self, Self::Rejection> {
-                let Path(query_id) = req.extract().await?;
-                let QueryConfigQueryParams(config) = req.extract().await?;
-                let Json(RequestBody { roles }) = req.extract().await?;
-                Ok(Request {
-                    data: PrepareQuery {
-                        query_id,
-                        config,
-                        roles,
-                    },
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<hyper::Body>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let Path(query_id) = req.extract().await?;
+                    let QueryConfigQueryParams(config) = req.extract().await?;
+                    let Json(RequestBody { roles }) = req.extract().await?;
+                    Ok(Request {
+                        data: PrepareQuery {
+                            query_id,
+                            config,
+                            roles,
+                        },
+                    })
                 })
             }
         }
@@ -340,7 +367,6 @@ pub mod query {
     }
 
     pub mod input {
-        use async_trait::async_trait;
         use axum::{
             extract::{FromRequest, Path, RequestParts},
             http::uri,
@@ -384,19 +410,27 @@ pub mod query {
             }
         }
 
-        #[async_trait]
         impl FromRequest<Body> for Request {
             type Rejection = Error;
 
-            async fn from_request(req: &mut RequestParts<Body>) -> Result<Self, Self::Rejection> {
-                let Path(query_id) = req.extract().await?;
-                let input_stream = req.extract().await?;
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<Body>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let Path(query_id) = req.extract().await?;
+                    let input_stream = req.extract().await?;
 
-                Ok(Request {
-                    query_input: QueryInput {
-                        query_id,
-                        input_stream,
-                    },
+                    Ok(Request {
+                        query_input: QueryInput {
+                            query_id,
+                            input_stream,
+                        },
+                    })
                 })
             }
         }
@@ -405,7 +439,6 @@ pub mod query {
     }
 
     pub mod step {
-        use async_trait::async_trait;
         use axum::{
             extract::{FromRequest, Path, RequestParts},
             http::uri,
@@ -458,7 +491,6 @@ pub mod query {
         }
 
         /// Convert from axum request. Used on server side.
-        #[async_trait]
         impl<B> FromRequest<B> for Request<BodyStream>
         where
             B: Send,
@@ -471,13 +503,22 @@ pub mod query {
             // from the LHS of the assignment kind of works, but it requires additional guidance (in
             // the form of trait bounds on the impl) to see that PathRejection can be converted to
             // Error. Writing `Path` twice somehow avoids that.
-            async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-                let Path((query_id, gate)) = req.extract::<Path<_>>().await?;
-                let body = req.extract().await?;
-                Ok(Self {
-                    query_id,
-                    gate,
-                    body,
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<B>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let Path((query_id, gate)) = req.extract::<Path<_>>().await?;
+                    let body = req.extract().await?;
+                    Ok(Self {
+                        query_id,
+                        gate,
+                        body,
+                    })
                 })
             }
         }
@@ -486,7 +527,6 @@ pub mod query {
     }
 
     pub mod status {
-        use async_trait::async_trait;
         use axum::extract::{FromRequest, Path, RequestParts};
         use serde::{Deserialize, Serialize};
 
@@ -522,13 +562,21 @@ pub mod query {
             }
         }
 
-        #[async_trait]
         impl<B: Send> FromRequest<B> for Request {
             type Rejection = Error;
 
-            async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-                let Path(query_id) = req.extract().await?;
-                Ok(Request { query_id })
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<B>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let Path(query_id) = req.extract().await?;
+                    Ok(Request { query_id })
+                })
             }
         }
 
@@ -541,7 +589,6 @@ pub mod query {
     }
 
     pub mod results {
-        use async_trait::async_trait;
         use axum::extract::{FromRequest, Path, RequestParts};
 
         use crate::{net::Error, protocol::QueryId};
@@ -576,13 +623,21 @@ pub mod query {
             }
         }
 
-        #[async_trait]
         impl<B: Send> FromRequest<B> for Request {
             type Rejection = Error;
 
-            async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-                let Path(query_id) = req.extract().await?;
-                Ok(Request { query_id })
+            fn from_request<'req: 'fut, 'fut>(
+                req: &'req mut RequestParts<B>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>,
+            >
+            where
+                Self: 'fut,
+            {
+                Box::pin(async move {
+                    let Path(query_id) = req.extract().await?;
+                    Ok(Request { query_id })
+                })
             }
         }
 

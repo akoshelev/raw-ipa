@@ -67,13 +67,17 @@ impl WrappedAxumBodyStream {
 }
 
 #[cfg(feature = "real-world-infra")]
-#[async_trait::async_trait]
 impl<B: hyper::body::HttpBody<Data = bytes::Bytes, Error = hyper::Error> + Send + 'static>
     FromRequest<B> for WrappedAxumBodyStream
 {
     type Rejection = <BodyStream as FromRequest<B>>::Rejection;
 
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        Ok(Self::new_internal(req.extract::<BodyStream>().await?))
+    fn from_request<'req: 'fut, 'fut>(
+        req: &'req mut RequestParts<B>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>>
+    where
+        Self: 'fut,
+    {
+        Box::pin(async move { Ok(Self::new_internal(req.extract::<BodyStream>().await?)) })
     }
 }

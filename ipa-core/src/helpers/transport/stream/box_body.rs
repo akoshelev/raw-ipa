@@ -37,15 +37,17 @@ impl<Buf: Into<bytes::Bytes>> From<Buf> for WrappedBoxBodyStream {
 }
 
 #[cfg(all(feature = "in-memory-infra", feature = "web-app"))]
-#[async_trait::async_trait]
 impl<B: hyper::body::HttpBody<Data = bytes::Bytes, Error = hyper::Error> + Send + 'static>
     axum::extract::FromRequest<B> for WrappedBoxBodyStream
 {
     type Rejection = <axum::extract::BodyStream as axum::extract::FromRequest<B>>::Rejection;
 
-    async fn from_request(
-        req: &mut axum::extract::RequestParts<B>,
-    ) -> Result<Self, Self::Rejection> {
-        Ok(Self::new(req.extract().await?))
+    fn from_request<'req: 'fut, 'fut>(
+        req: &'req mut axum::extract::RequestParts<B>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'fut>>
+    where
+        Self: 'fut,
+    {
+        Box::pin(async move { Ok(Self::new(req.extract().await?)) })
     }
 }
