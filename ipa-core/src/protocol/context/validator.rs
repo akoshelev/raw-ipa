@@ -4,7 +4,6 @@ use std::{
     marker::PhantomData,
 };
 
-use async_trait::async_trait;
 use futures::future::try_join;
 use ipa_macros::Step;
 
@@ -29,7 +28,6 @@ use crate::{
     sync::{Arc, Mutex, Weak},
 };
 
-#[async_trait]
 pub trait Validator<B: UpgradableContext, F: ExtendableField> {
     fn context(&self) -> B::UpgradedContext<F>;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
@@ -49,7 +47,6 @@ impl<'a, F: ExtendableField> SemiHonest<'a, F> {
     }
 }
 
-#[async_trait]
 impl<'a, F: ExtendableField> Validator<SemiHonestContext<'a>, F> for SemiHonest<'a, F> {
     fn context(&self) -> UpgradedSemiHonestContext<'a, F> {
         self.context.clone()
@@ -201,7 +198,6 @@ pub struct Malicious<'a, F: ExtendableField> {
     validate_ctx: Base<'a>,
 }
 
-#[async_trait]
 impl<'a, F: ExtendableField> Validator<MaliciousContext<'a>, F> for Malicious<'a, F> {
     /// Get a copy of the context that can be used for malicious protocol execution.
     fn context<'b>(&'b self) -> UpgradedMaliciousContext<'a, F> {
