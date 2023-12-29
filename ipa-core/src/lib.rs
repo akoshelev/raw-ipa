@@ -6,6 +6,8 @@
 // In unit tests, it is ok to use methods discouraged to use in prod code. Most of the time it is
 // because of performance implications which shouldn't be a concern for unit testing.
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
+// IPA is not a library, we can change our API easily.
+#![allow(async_fn_in_trait)]
 
 pub mod chunkscan;
 #[cfg(any(feature = "cli", feature = "web-app"))]
