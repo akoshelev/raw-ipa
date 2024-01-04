@@ -1,3 +1,4 @@
+use std::future::Future;
 use async_trait::async_trait;
 
 use crate::{
@@ -20,15 +21,24 @@ pub(in crate::protocol) mod sparse;
 pub use sparse::{MultiplyZeroPositions, ZeroPositions};
 
 /// Trait to multiply secret shares. That requires communication and `multiply` function is async.
-#[async_trait]
 pub trait SecureMul<C: Context>: Send + Sync + Sized {
     /// Multiply and return the result of `a` * `b`.
-    async fn multiply<'fut>(&self, rhs: &Self, ctx: C, record_id: RecordId) -> Result<Self, Error>
-    where
-        C: 'fut,
+    fn multiply<'fut, 'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        rhs: &'life1 Self,
+        ctx: C,
+        record_id: RecordId,
+    ) -> impl ::core::future::Future<Output = Result<Self, Error>>
+            + ::core::marker::Send
+            + 'async_trait
+        where
+            C: 'fut,
+            'fut: 'async_trait,
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait,
     {
         self.multiply_sparse(rhs, ctx, record_id, ZeroPositions::NONE)
-            .await
     }
 
     /// Multiply and return the result of `a` * `b`.
@@ -36,50 +46,61 @@ pub trait SecureMul<C: Context>: Send + Sync + Sized {
     /// in the form (self, left, right).
     /// This is the implementation you should invoke if you want to
     /// save work when you have sparse values.
-    async fn multiply_sparse<'fut>(
-        &self,
-        rhs: &Self,
+    fn multiply_sparse<'fut, 'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        rhs: &'life1 Self,
         ctx: C,
         record_id: RecordId,
         zeros_at: MultiplyZeroPositions,
-    ) -> Result<Self, Error>
-    where
-        C: 'fut;
+    ) -> impl ::core::future::Future<Output = Result<Self, Error>>
+            + ::core::marker::Send
+            + 'async_trait
+        where
+            C: 'fut,
+            'fut: 'async_trait,
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait;
 }
 
-/// looks like clippy disagrees with itself on whether this attribute is useless or not.
 use {malicious::multiply as malicious_mul, semi_honest::multiply as semi_honest_mul};
 
 /// Implement secure multiplication for semi-honest contexts with replicated secret sharing.
-#[async_trait]
 impl<C: Context, F: Field> SecureMul<C> for Replicated<F> {
-    async fn multiply_sparse<'fut>(
-        &self,
-        rhs: &Self,
+    fn multiply_sparse<'fut, 'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        rhs: &'life1 Self,
         ctx: C,
         record_id: RecordId,
         zeros_at: MultiplyZeroPositions,
-    ) -> Result<Self, Error>
-    where
-        C: 'fut,
-    {
-        semi_honest_mul(ctx, record_id, self, rhs, zeros_at).await
+    ) -> impl ::core::future::Future<Output = Result<Self, Error>>
+    + ::core::marker::Send
+    + 'async_trait
+        where
+            C: 'fut,
+            'fut: 'async_trait,
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait {
+        semi_honest_mul(ctx, record_id, self, rhs, zeros_at)
     }
 }
 
 /// Implement secure multiplication for malicious contexts with replicated secret sharing.
-#[async_trait]
 impl<'a, F: ExtendableField> SecureMul<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F> {
-    async fn multiply_sparse<'fut>(
-        &self,
-        rhs: &Self,
+    fn multiply_sparse<'fut, 'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        rhs: &'life1 Self,
         ctx: UpgradedMaliciousContext<'a, F>,
         record_id: RecordId,
         zeros_at: MultiplyZeroPositions,
-    ) -> Result<Self, Error>
-    where
-        UpgradedMaliciousContext<'a, F>: 'fut,
-    {
-        malicious_mul(ctx, record_id, self, rhs, zeros_at).await
+    ) -> impl ::core::future::Future<Output = Result<Self, Error>> + ::core::marker::Send + 'async_trait
+        where
+            UpgradedMaliciousContext<'a, F>: 'fut,
+            'fut: 'async_trait,
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait {
+        malicious_mul(ctx, record_id, self, rhs, zeros_at)
     }
 }
