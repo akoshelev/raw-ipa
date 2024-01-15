@@ -384,7 +384,9 @@ impl OrderingSender {
         let mut b = self.state.lock().unwrap();
 
         if let Poll::Ready(v) = b.take(cx) {
-            self.waiting.wake(self.next.load(Acquire));
+            let next = self.next.load(Acquire);
+            self.waiting.wake(next);
+            tracing::trace!("Sending next {} bytes. next = {}. stream closed = {}", v.len(), next, b.closed);
             Poll::Ready(Some(v))
         } else if b.closed {
             Poll::Ready(None)

@@ -235,25 +235,30 @@ where
             return Poll::Ready(m.map_error_to_receive(self.next));
         }
 
-        loop {
+        let r = loop {
             match self.stream.as_mut().poll_next(cx) {
                 Poll::Pending => {
-                    return Poll::Pending;
+                    break Poll::Pending
                 }
                 Poll::Ready(Some(b)) => {
+                    tracing::trace!("Received next {} bytes", b.as_ref().len());
                     if let Some(m) = self.spare.extend(b.as_ref()) {
                         self.wake_next();
-                        return Poll::Ready(m.map_error_to_receive(self.next));
+                        break Poll::Ready(m.map_error_to_receive(self.next))
                     }
                 }
                 Poll::Ready(None) => {
-                    return Poll::Ready(Err(Error::EndOfStream {
+                    break Poll::Ready(Err(Error::EndOfStream {
                         record_id: RecordId::from(self.next),
                     }
-                    .into()));
+                    .into()))
                 }
             }
-        }
+        };
+
+        tracing::trace!("{}: poll result: {r:?}", self.next);
+
+        r
     }
 
     #[cfg(feature = "stall-detection")]
