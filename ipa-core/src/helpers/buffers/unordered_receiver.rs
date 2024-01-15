@@ -256,7 +256,7 @@ where
             }
         };
 
-        tracing::trace!("{}: poll result: {r:?}", self.next);
+        tracing::trace!("poll result: {r:?}");
 
         r
     }
