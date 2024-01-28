@@ -10,10 +10,10 @@ use typenum::{U1, U32};
 
 use crate::{
     ff::{Field, Fp32BitPrime, Serializable},
-    helpers::Message,
     protocol::prss::{FromRandom, FromRandomU128},
     secret_sharing::{FieldArray, SharedValue, SharedValueArray},
 };
+use crate::secret_sharing::Sendable;
 
 /// Wrapper around `[V; N]`.
 ///
@@ -24,6 +24,14 @@ use crate::{
 ///    should never be necessary in properly vectorized code.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StdArray<V: SharedValue, const N: usize>([V; N]);
+
+impl <V: SharedValue> Sendable for StdArray<V, 1> {}
+impl <V: SharedValue> Sendable for StdArray<V, 32>
+    where
+        V: SharedValue,
+        <V as Serializable>::Size: Mul<U32>,
+        <<V as Serializable>::Size as Mul<U32>>::Output: ArrayLength,
+{}
 
 impl<V, T, const N: usize> PartialEq<T> for StdArray<V, N>
 where
@@ -59,7 +67,7 @@ impl<V: SharedValue, const N: usize> StdArray<V, N> {
 
 impl<V: SharedValue, const N: usize> SharedValueArray<V> for StdArray<V, N>
 where
-    Self: Serializable,
+    Self: Sendable + Serializable,
 {
     const ZERO: Self = Self([V::ZERO; N]);
 
@@ -68,7 +76,7 @@ where
     }
 }
 
-impl<F: Field, const N: usize> FieldArray<F> for StdArray<F, N> where Self: FromRandom + Serializable
+impl<F: Field, const N: usize> FieldArray<F> for StdArray<F, N> where Self: FromRandom + Sendable + Serializable
 {}
 
 impl<V: SharedValue, const N: usize> TryFrom<Vec<V>> for StdArray<V, N> {
@@ -81,7 +89,7 @@ impl<V: SharedValue, const N: usize> TryFrom<Vec<V>> for StdArray<V, N> {
 // Panics if the iterator terminates before producing N items.
 impl<V: SharedValue, const N: usize> FromIterator<V> for StdArray<V, N>
 where
-    Self: Serializable, // required for `<Self as SharedValueArray>::ZERO`
+    Self: Sendable + Serializable, // required for `<Self as SharedValueArray>::ZERO`
 {
     fn from_iter<T: IntoIterator<Item = V>>(iter: T) -> Self {
         let mut res = Self::ZERO;
@@ -319,7 +327,7 @@ where
     }
 }
 
-impl<V: SharedValue, const N: usize> Message for StdArray<V, N> where Self: Serializable {}
+// impl<V: SharedValue, const N: usize> Message for StdArray<V, N> where Self: Serializable {}
 
 #[cfg(all(test, unit_test))]
 mod test {

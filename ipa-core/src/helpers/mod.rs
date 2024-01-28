@@ -65,8 +65,8 @@ use crate::{
         Role::{H1, H2, H3},
     },
     protocol::{step::Gate, RecordId},
-    secret_sharing::SharedValue,
 };
+use crate::secret_sharing::{Sendable};
 
 // TODO work with ArrayLength only
 pub type MessagePayloadArrayLen = U8;
@@ -429,7 +429,7 @@ impl Debug for ChannelId {
 pub trait Message: Debug + Send + Serializable + 'static + Sized {}
 
 /// Any shared value can be send as a message
-impl<V: SharedValue> Message for V {}
+impl<V: Sendable> Message for V {}
 
 impl Serializable for PublicKey {
     type Size = typenum::U32;
