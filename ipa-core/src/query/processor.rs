@@ -20,6 +20,7 @@ use crate::{
     },
     sync::Arc,
 };
+use crate::helpers::HelperIdentity;
 
 /// `Processor` accepts and tracks requests to initiate new queries on this helper party
 /// network. It makes sure queries are coordinated and each party starts processing it when
@@ -57,7 +58,7 @@ pub enum NewQueryError {
     #[error(transparent)]
     State(#[from] StateError),
     #[error(transparent)]
-    Transport(#[from] TransportError),
+    Transport(#[from] TransportError<HelperIdentity>),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -132,7 +133,7 @@ impl Processor {
     #[allow(clippy::missing_panics_doc)]
     pub async fn new_query(
         &self,
-        transport: TransportImpl,
+        transport: TransportImpl<HelperIdentity>,
         req: QueryConfig,
     ) -> Result<PrepareQuery, NewQueryError> {
         let query_id = QueryId;
@@ -176,7 +177,7 @@ impl Processor {
     /// if query is already running or this helper cannot be a follower in it
     pub fn prepare(
         &self,
-        transport: &TransportImpl,
+        transport: &TransportImpl<HelperIdentity>,
         req: PrepareQuery,
     ) -> Result<(), PrepareQueryError> {
         let my_role = req.roles.role(transport.identity());
@@ -207,7 +208,7 @@ impl Processor {
     /// If failed to obtain an exclusive access to the query collection.
     pub fn receive_inputs(
         &self,
-        transport: TransportImpl,
+        transport: TransportImpl<HelperIdentity>,
         input: QueryInput,
     ) -> Result<(), QueryInputError> {
         let mut queries = self.queries.inner.lock().unwrap();
@@ -219,21 +220,23 @@ impl Processor {
                         input.query_id, query_id,
                         "received inputs for a different query"
                     );
-                    let gateway = Gateway::new(
-                        query_id,
-                        GatewayConfig::from(&config),
-                        role_assignment,
-                        transport,
-                    );
-                    queries.insert(
-                        input.query_id,
-                        QueryState::Running(executor::execute(
-                            config,
-                            Arc::clone(&self.key_registry),
-                            gateway,
-                            input.input_stream,
-                        )),
-                    );
+
+                    panic!("Gateway interface is updated, but query processor still lacks the support");
+                    // let gateway = Gateway::new(
+                    //     query_id,
+                    //     GatewayConfig::from(&config),
+                    //     role_assignment,
+                    //     transport,
+                    // );
+                    // queries.insert(
+                    //     input.query_id,
+                    //     QueryState::Running(executor::execute(
+                    //         config,
+                    //         Arc::clone(&self.key_registry),
+                    //         gateway,
+                    //         input.input_stream,
+                    //     )),
+                    // );
                     Ok(())
                 } else {
                     let error = StateError::InvalidState {

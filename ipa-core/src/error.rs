@@ -7,6 +7,8 @@ use std::{
 use thiserror::Error;
 
 use crate::{report::InvalidReportError, task::JoinError};
+use crate::helpers::Role;
+use crate::sharding::ShardId;
 
 /// An error raised by the IPA protocol.
 ///
@@ -53,7 +55,9 @@ pub enum Error {
     #[cfg(feature = "enable-serde")]
     Serde(#[from] serde_json::Error),
     #[error("Infrastructure error: {0}")]
-    InfraError(#[from] crate::helpers::Error),
+    InfraError(#[from] crate::helpers::Error<Role>),
+    #[error("Shard error: {0}")]
+    ShardError(#[from] crate::helpers::Error<ShardId>),
     #[error("Value truncation error: {0}")]
     FieldValueTruncation(String),
     #[error("Invalid query parameter: {0}")]

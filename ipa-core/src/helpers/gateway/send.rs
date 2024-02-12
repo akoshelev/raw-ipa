@@ -19,33 +19,45 @@ use crate::{
         metrics::{BYTES_SENT, RECORDS_SENT},
     },
 };
+use crate::ff::Serializable;
+use crate::helpers::transport::TransportIdentity;
+
+pub use crate::helpers::gateway::receive::RoleIndexedReceiver;
 
 /// Sending end of the gateway channel.
-pub struct SendingEnd<M: Message> {
-    sender_role: Role,
-    channel_id: ChannelId,
-    inner: Arc<GatewaySender>,
+pub struct SendingEnd<O: TransportIdentity, M> {
+    sender_role: O,
+    channel_id: ChannelId<O>,
+    inner: Arc<GatewaySender<O>>,
     _phantom: PhantomData<M>,
 }
 
+
 /// Sending channels, indexed by (role, step).
-#[derive(Default)]
-pub(super) struct GatewaySenders {
-    pub(super) inner: DashMap<ChannelId, Arc<GatewaySender>>,
+pub(super) struct GatewaySenders<O: TransportIdentity> {
+    pub(super) inner: DashMap<ChannelId<O>, Arc<GatewaySender<O>>>,
 }
 
-pub(super) struct GatewaySender {
-    channel_id: ChannelId,
+impl <O: TransportIdentity> Default for GatewaySenders<O> {
+    fn default() -> Self {
+        Self {
+            inner: DashMap::default()
+        }
+    }
+}
+
+pub(super) struct GatewaySender<O: TransportIdentity> {
+    channel_id: ChannelId<O>,
     ordering_tx: OrderingSender,
     total_records: TotalRecords,
 }
 
-pub(super) struct GatewaySendStream {
-    inner: Arc<GatewaySender>,
+pub(super) struct GatewaySendStream<O: TransportIdentity> {
+    inner: Arc<GatewaySender<O>>,
 }
 
-impl GatewaySender {
-    fn new(channel_id: ChannelId, tx: OrderingSender, total_records: TotalRecords) -> Self {
+impl <O: TransportIdentity> GatewaySender<O> {
+    fn new(channel_id: ChannelId<O>, tx: OrderingSender, total_records: TotalRecords) -> Self {
         Self {
             channel_id,
             ordering_tx: tx,
@@ -53,11 +65,11 @@ impl GatewaySender {
         }
     }
 
-    pub async fn send<M: Message, B: Borrow<M>>(
+    pub async fn send<M: Send + Serializable + 'static, B: Borrow<M>>(
         &self,
         record_id: RecordId,
         msg: B,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error<O>> {
         debug_assert!(
             self.total_records.is_specified(),
             "total_records cannot be unspecified when sending"
@@ -83,6 +95,14 @@ impl GatewaySender {
         Ok(())
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.ordering_tx.is_closed()
+    }
+
+    pub async fn close(&self, at: RecordId) {
+        self.ordering_tx.close(at.into()).await
+    }
+
     #[cfg(feature = "stall-detection")]
     pub fn waiting(&self) -> Vec<usize> {
         self.ordering_tx.waiting()
@@ -92,15 +112,22 @@ impl GatewaySender {
     pub fn total_records(&self) -> TotalRecords {
         self.total_records
     }
+
 }
 
-impl<M: Message> SendingEnd<M> {
-    pub(super) fn new(sender: Arc<GatewaySender>, role: Role, channel_id: &ChannelId) -> Self {
+impl<O: TransportIdentity, M: Send + Serializable + 'static> SendingEnd<O, M> {
+    pub(super) fn new(sender: Arc<GatewaySender<O>>, id: O, channel_id: &ChannelId<O>) -> Self {
         Self {
-            sender_role: role,
+            sender_role: id,
             channel_id: channel_id.clone(),
             inner: sender,
             _phantom: PhantomData,
+        }
+    }
+
+    pub async fn try_close(&self, at: RecordId) {
+        if !self.inner.is_closed() {
+            self.inner.close(at).await
         }
     }
 
@@ -113,8 +140,8 @@ impl<M: Message> SendingEnd<M> {
     /// call.
     ///
     /// [`set_total_records`]: crate::protocol::context::Context::set_total_records
-    #[tracing::instrument(level = "trace", "send", skip_all, fields(i = %record_id, total = %self.inner.total_records, to = ?self.channel_id.role, gate = ?self.channel_id.gate.as_ref()))]
-    pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error> {
+    #[tracing::instrument(level = "trace", "send", skip_all, fields(i = %record_id, total = %self.inner.total_records, to = ?self.channel_id.id, gate = ?self.channel_id.gate.as_ref()))]
+    pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error<O>> {
         let r = self.inner.send(record_id, msg).await;
         metrics::increment_counter!(RECORDS_SENT,
             STEP => self.channel_id.gate.as_ref().to_string(),
@@ -129,16 +156,16 @@ impl<M: Message> SendingEnd<M> {
     }
 }
 
-impl GatewaySenders {
+impl <O: TransportIdentity> GatewaySenders<O> {
     /// Returns or creates a new communication channel. In case if channel is newly created,
     /// returns the receiving end of it as well. It must be send over to the receiver in order for
     /// messages to get through.
-    pub(crate) fn get_or_create<M: Message>(
+    pub(crate) fn get_or_create<M: Send + Serializable + 'static>(
         &self,
-        channel_id: &ChannelId,
+        channel_id: &ChannelId<O>,
         capacity: NonZeroUsize,
         total_records: TotalRecords, // TODO track children for indeterminate senders
-    ) -> (Arc<GatewaySender>, Option<GatewaySendStream>) {
+    ) -> (Arc<GatewaySender<O>>, Option<GatewaySendStream<O>>) {
         assert!(
             total_records.is_specified(),
             "unspecified total records for {channel_id:?}"
@@ -183,7 +210,7 @@ impl GatewaySenders {
     }
 }
 
-impl Stream for GatewaySendStream {
+impl <O: TransportIdentity> Stream for GatewaySendStream<O> {
     type Item = Vec<u8>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

@@ -7,6 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use std::hash::Hash;
 
 use ::tokio::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -30,14 +31,17 @@ use crate::{
     protocol::{step::Gate, QueryId},
     sync::{Arc, Weak},
 };
+use crate::helpers::transport::TransportIdentity;
+use crate::sharding::ShardId;
 
-type Packet = (Addr, InMemoryStream, oneshot::Sender<Result<(), Error>>);
-type ConnectionTx = Sender<Packet>;
-type ConnectionRx = Receiver<Packet>;
+
+pub(super) type Packet<O> = (Addr<O>, InMemoryStream, oneshot::Sender<Result<(), Error<O>>>);
+pub(super) type ConnectionTx<O> = Sender<Packet<O>>;
+pub(super) type ConnectionRx<O> = Receiver<Packet<O>>;
 type StreamItem = Vec<u8>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum Error<O> {
     #[error(transparent)]
     Io {
         #[from]
@@ -45,7 +49,7 @@ pub enum Error {
     },
     #[error("Request rejected by remote {dest:?}: {inner:?}")]
     Rejected {
-        dest: HelperIdentity,
+        dest: O,
         #[source]
         inner: BoxError,
     },
@@ -54,15 +58,15 @@ pub enum Error {
 /// In-memory implementation of [`Transport`] backed by Tokio mpsc channels.
 /// Use [`Setup`] to initialize it and call [`Setup::start`] to make it actively listen for
 /// incoming messages.
-pub struct InMemoryTransport {
-    identity: HelperIdentity,
-    connections: HashMap<HelperIdentity, ConnectionTx>,
-    record_streams: StreamCollection<InMemoryStream>,
+pub struct InMemoryTransport<O> {
+    identity: O,
+    connections: HashMap<O, ConnectionTx<O>>,
+    record_streams: StreamCollection<O, InMemoryStream>,
 }
 
-impl InMemoryTransport {
+impl <O: TransportIdentity> InMemoryTransport<O> {
     #[must_use]
-    fn new(identity: HelperIdentity, connections: HashMap<HelperIdentity, ConnectionTx>) -> Self {
+    fn new(identity: O, connections: HashMap<O, ConnectionTx<O>>) -> Self {
         Self {
             identity,
             connections,
@@ -71,7 +75,7 @@ impl InMemoryTransport {
     }
 
     #[must_use]
-    pub fn identity(&self) -> HelperIdentity {
+    pub fn identity(&self) -> O {
         self.identity
     }
 
@@ -79,12 +83,12 @@ impl InMemoryTransport {
     /// out and processes it, the same way as query processor does. That will allow all tasks to be
     /// created in one place (driver). It does not affect the [`Transport`] interface,
     /// so I'll leave it as is for now.
-    fn listen(self: &Arc<Self>, callbacks: TransportCallbacks<Weak<Self>>, mut rx: ConnectionRx) {
+    fn listen(self: &Arc<Self>, callbacks: TransportCallbacks<Weak<Self>>, mut rx: ConnectionRx<O>) {
         tokio::spawn(
             {
                 let streams = self.record_streams.clone();
                 let this = Arc::downgrade(self);
-                let dest = this.identity();
+                let dest = Self::identity(&self);
                 async move {
                     let mut active_queries = HashSet::new();
                     while let Some((addr, stream, ack)) = rx.recv().await {
@@ -93,7 +97,7 @@ impl InMemoryTransport {
                         let result = match addr.route {
                             RouteId::ReceiveQuery => {
                                 let qc = addr.into::<QueryConfig>();
-                                (callbacks.receive_query)(Transport::clone_ref(&this), qc)
+                                (callbacks.receive_query)(Clone::clone(&this), qc)
                                     .await
                                     .map(|query_id| {
                                         assert!(
@@ -115,7 +119,7 @@ impl InMemoryTransport {
                             }
                             RouteId::PrepareQuery => {
                                 let input = addr.into::<PrepareQuery>();
-                                (callbacks.prepare_query)(Transport::clone_ref(&this), input)
+                                (callbacks.prepare_query)(Clone::clone(&this), input)
                                     .await
                                     .map_err(|e| Error::Rejected {
                                         dest,
@@ -132,7 +136,11 @@ impl InMemoryTransport {
         );
     }
 
-    fn get_channel(&self, dest: HelperIdentity) -> ConnectionTx {
+    pub fn get_channel(&self, dest: O) -> ConnectionTx<O> {
+        if dest == self.identity() {
+            panic!("Can't open a channel to myself: {dest:?}");
+        }
+
         self.connections
             .get(&dest)
             .unwrap_or_else(|| {
@@ -151,11 +159,11 @@ impl InMemoryTransport {
 }
 
 #[async_trait]
-impl Transport for Weak<InMemoryTransport> {
-    type RecordsStream = ReceiveRecords<InMemoryStream>;
-    type Error = Error;
+impl <O: TransportIdentity> Transport<O> for Weak<InMemoryTransport<O>> {
+    type RecordsStream = ReceiveRecords<O, InMemoryStream>;
+    type Error = Error<O>;
 
-    fn identity(&self) -> HelperIdentity {
+    fn identity(&self) -> O {
         self.upgrade().unwrap().identity
     }
 
@@ -166,10 +174,10 @@ impl Transport for Weak<InMemoryTransport> {
         R: RouteParams<RouteId, Q, S>,
     >(
         &self,
-        dest: HelperIdentity,
+        dest: O,
         route: R,
         data: D,
-    ) -> Result<(), Error>
+    ) -> Result<(), Error<O>>
     where
         Option<QueryId>: From<Q>,
         Option<Gate>: From<S>,
@@ -197,7 +205,7 @@ impl Transport for Weak<InMemoryTransport> {
 
     fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(
         &self,
-        from: HelperIdentity,
+        from: O,
         route: R,
     ) -> Self::RecordsStream {
         ReceiveRecords::new(
@@ -261,18 +269,18 @@ impl Debug for InMemoryStream {
     }
 }
 
-struct Addr {
+pub(super) struct Addr<O> {
     route: RouteId,
-    origin: Option<HelperIdentity>,
+    origin: Option<O>,
     query_id: Option<QueryId>,
     gate: Option<Gate>,
     params: String,
 }
 
-impl Addr {
+impl <O> Addr<O> {
     #[allow(clippy::needless_pass_by_value)] // to avoid using double-reference at callsites
-    fn from_route<Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>>(
-        origin: HelperIdentity,
+    pub(super) fn from_route<Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>>(
+        origin: O,
         route: R,
     ) -> Self
     where
@@ -293,7 +301,7 @@ impl Addr {
     }
 
     #[cfg(all(test, unit_test))]
-    fn records(from: HelperIdentity, query_id: QueryId, gate: Gate) -> Self {
+    fn records(from: O, query_id: QueryId, gate: Gate) -> Self {
         Self {
             route: RouteId::Records,
             origin: Some(from),
@@ -304,7 +312,7 @@ impl Addr {
     }
 }
 
-impl Debug for Addr {
+impl <O> Debug for Addr<O> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -314,16 +322,16 @@ impl Debug for Addr {
     }
 }
 
-pub struct Setup {
-    identity: HelperIdentity,
-    tx: ConnectionTx,
-    rx: ConnectionRx,
-    connections: HashMap<HelperIdentity, ConnectionTx>,
+pub struct Setup<O: TransportIdentity> {
+    identity: O,
+    tx: ConnectionTx<O>,
+    rx: ConnectionRx<O>,
+    connections: HashMap<O, ConnectionTx<O>>,
 }
 
-impl Setup {
+impl <O: TransportIdentity> Setup<O> {
     #[must_use]
-    pub fn new(identity: HelperIdentity) -> Self {
+    pub fn new(identity: O) -> Self {
         let (tx, rx) = channel(16);
         Self {
             identity,
@@ -350,8 +358,8 @@ impl Setup {
 
     fn into_active_conn(
         self,
-        callbacks: TransportCallbacks<Weak<InMemoryTransport>>,
-    ) -> (ConnectionTx, Arc<InMemoryTransport>) {
+        callbacks: TransportCallbacks<Weak<InMemoryTransport<O>>>,
+    ) -> (ConnectionTx<O>, Arc<InMemoryTransport<O>>) {
         let transport = Arc::new(InMemoryTransport::new(self.identity, self.connections));
         transport.listen(callbacks, self.rx);
 
@@ -361,8 +369,8 @@ impl Setup {
     #[must_use]
     pub fn start(
         self,
-        callbacks: TransportCallbacks<Weak<InMemoryTransport>>,
-    ) -> Arc<InMemoryTransport> {
+        callbacks: TransportCallbacks<Weak<InMemoryTransport<O>>>,
+    ) -> Arc<InMemoryTransport<O>> {
         self.into_active_conn(callbacks).1
     }
 }
@@ -395,10 +403,11 @@ mod tests {
         protocol::{step::Gate, QueryId},
         sync::Arc,
     };
+    use crate::helpers::transport::TransportIdentity;
 
     const STEP: &str = "in-memory-transport";
 
-    async fn send_and_ack(sender: &ConnectionTx, addr: Addr, data: InMemoryStream) {
+    async fn send_and_ack<O: TransportIdentity>(sender: &ConnectionTx<O>, addr: Addr<O>, data: InMemoryStream) {
         let (tx, rx) = oneshot::channel();
         sender.send((addr, data, tx)).await.unwrap();
         rx.await
@@ -491,7 +500,7 @@ mod tests {
         async fn send_and_verify(
             from: HelperIdentity,
             to: HelperIdentity,
-            transports: &HashMap<HelperIdentity, Weak<InMemoryTransport>>,
+            transports: &HashMap<HelperIdentity, Weak<InMemoryTransport<HelperIdentity>>>,
         ) {
             let (stream_tx, stream_rx) = channel(1);
             let stream = InMemoryStream::from(stream_rx);

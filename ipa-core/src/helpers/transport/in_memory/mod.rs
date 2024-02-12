@@ -1,18 +1,23 @@
 mod transport;
-
 pub use transport::Setup;
 
 use crate::{
     helpers::{HelperIdentity, TransportCallbacks},
     sync::{Arc, Weak},
 };
+// pub use crate::helpers::transport::in_memory::shard::InMemoryShardNetwork;
+// pub use crate::helpers::transport::in_memory::shard::InMemoryGateBoundConnector;
+pub use crate::helpers::transport::TransportIdentity;
+use crate::sharding::ShardId;
 
-pub type InMemoryTransport = Weak<transport::InMemoryTransport>;
+pub type InMemoryTransport<O> = Weak<transport::InMemoryTransport<O>>;
+/// FIXME: create a container similar to InMemoryNetwork that will initialize shards
+pub type OwnedInMemoryTransport<O> = Arc<transport::InMemoryTransport<O>>;
 
 /// Container for all active transports
 #[derive(Clone)]
 pub struct InMemoryNetwork {
-    pub transports: [Arc<transport::InMemoryTransport>; 3],
+    pub transports: [Arc<transport::InMemoryTransport<HelperIdentity>>; 3],
 }
 
 impl Default for InMemoryNetwork {
@@ -28,7 +33,7 @@ impl Default for InMemoryNetwork {
 #[allow(dead_code)]
 impl InMemoryNetwork {
     #[must_use]
-    pub fn new(callbacks: [TransportCallbacks<InMemoryTransport>; 3]) -> Self {
+    pub fn new(callbacks: [TransportCallbacks<InMemoryTransport<HelperIdentity>>; 3]) -> Self {
         let [mut first, mut second, mut third]: [_; 3] =
             HelperIdentity::make_three().map(Setup::new);
 
@@ -59,7 +64,7 @@ impl InMemoryNetwork {
     /// ## Panics
     /// If [`HelperIdentity`] is somehow points to a non-existent helper, which shouldn't happen.
     #[must_use]
-    pub fn transport(&self, id: HelperIdentity) -> InMemoryTransport {
+    pub fn transport(&self, id: HelperIdentity) -> InMemoryTransport<HelperIdentity> {
         self.transports
             .iter()
             .find(|t| t.identity() == id)
@@ -68,8 +73,8 @@ impl InMemoryNetwork {
 
     #[allow(clippy::missing_panics_doc)]
     #[must_use]
-    pub fn transports(&self) -> [InMemoryTransport; 3] {
-        let transports: [InMemoryTransport; 3] = self
+    pub fn transports(&self) -> [InMemoryTransport<HelperIdentity>; 3] {
+        let transports: [InMemoryTransport<_>; 3] = self
             .transports
             .iter()
             .map(Arc::downgrade)

@@ -11,6 +11,7 @@ use crate::{
     error::BoxError,
     helpers::transport::stream::{StreamCollection, StreamKey},
 };
+use crate::helpers::transport::in_memory::TransportIdentity;
 
 /// Adapt a stream of `Result<T: Into<Vec<u8>>, Error>` to a stream of `Vec<u8>`.
 ///
@@ -66,19 +67,19 @@ where
 /// If stream is not received yet, each poll generates a waker that is used internally to wake up
 /// the task when stream is received.
 /// Once stream is received, it is moved to this struct and it acts as a proxy to it.
-pub struct ReceiveRecords<S> {
-    inner: ReceiveRecordsInner<S>,
+pub struct ReceiveRecords<O, S> {
+    inner: ReceiveRecordsInner<O, S>,
 }
 
-impl<S> ReceiveRecords<S> {
-    pub(crate) fn new(key: StreamKey, coll: StreamCollection<S>) -> Self {
+impl<O, S> ReceiveRecords<O, S> {
+    pub(crate) fn new(key: StreamKey<O>, coll: StreamCollection<O, S>) -> Self {
         Self {
             inner: ReceiveRecordsInner::Pending(key, coll),
         }
     }
 }
 
-impl<S: Stream + Unpin> Stream for ReceiveRecords<S> {
+impl<O: TransportIdentity, S: Stream + Send + Unpin> Stream for ReceiveRecords<O, S> {
     type Item = S::Item;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -87,12 +88,12 @@ impl<S: Stream + Unpin> Stream for ReceiveRecords<S> {
 }
 
 /// Inner state for [`ReceiveRecords`] struct
-enum ReceiveRecordsInner<S> {
-    Pending(StreamKey, StreamCollection<S>),
+enum ReceiveRecordsInner<O, S> {
+    Pending(StreamKey<O>, StreamCollection<O, S>),
     Ready(S),
 }
 
-impl<S: Stream + Unpin> Stream for ReceiveRecordsInner<S> {
+impl<O: TransportIdentity, S: Stream + Unpin> Stream for ReceiveRecordsInner<O, S> {
     type Item = S::Item;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

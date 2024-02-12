@@ -118,14 +118,15 @@ impl TestWorld {
         for i in 0..3 {
             let transport = &network.transports[i];
             let role_assignment = role_assignment.clone();
-            let gateway = Gateway::new(
-                QueryId,
-                config.gateway_config,
-                role_assignment,
-                Arc::downgrade(transport),
-            );
-            let role = gateway.role();
-            gateways[role] = Some(gateway);
+            panic!("test world is broken baby");
+            // let gateway = Gateway::new(
+            //     QueryId,
+            //     config.gateway_config,
+            //     role_assignment,
+            //     Arc::downgrade(transport),
+            // );
+            // let role = gateway.role();
+            // gateways[role] = Some(gateway);
         }
         let gateways = gateways.map(Option::unwrap);
 

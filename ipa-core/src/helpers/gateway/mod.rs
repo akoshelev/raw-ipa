@@ -4,8 +4,14 @@ mod send;
 pub(super) mod stall_detection;
 mod transport;
 
+use std::future::Future;
+use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::pin::Pin;
+use futures::Stream;
+use futures_util::StreamExt;
 
+pub use receive::RoleIndexedReceiver;
 pub(super) use receive::ReceivingEnd;
 pub(super) use send::SendingEnd;
 #[cfg(all(test, feature = "shuttle"))]
@@ -22,33 +28,60 @@ use crate::{
     },
     protocol::QueryId,
 };
+use crate::error::Error;
+use crate::ff::Serializable;
+use crate::helpers::{HelperIdentity, RouteId};
+use crate::helpers::buffers::UnorderedReceiver;
+pub use crate::helpers::gateway::receive::ShardRecvStream;
+use crate::helpers::transport::BufDeque;
+use crate::protocol::context::{ShardConnection, ShardConnector, ShardMessage};
+use crate::protocol::step::Gate;
+use crate::sharding::ShardId;
 
 /// Alias for the currently configured transport.
 ///
 /// To avoid proliferation of type parameters, most code references this concrete type alias, rather
 /// than a type parameter `T: Transport`.
 #[cfg(feature = "in-memory-infra")]
-pub type TransportImpl = super::transport::InMemoryTransport;
+pub type TransportImpl<O> = super::transport::InMemoryTransport<O>;
+
+// #[cfg(feature = "in-memory-infra")]
+// pub type ShardTransport = super::transport::InMemoryTransport<ShardId>;
 
 #[cfg(feature = "real-world-infra")]
 pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 
-pub type TransportError = <TransportImpl as Transport>::Error;
+pub type TransportError<O> = <TransportImpl<O> as Transport<O>>::Error;
 
 /// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
 pub struct Gateway {
     config: GatewayConfig,
     transport: RoleResolvingTransport,
+    shard_transport: TransportImpl<ShardId>,
     #[cfg(feature = "stall-detection")]
     inner: crate::sync::Arc<State>,
     #[cfg(not(feature = "stall-detection"))]
     inner: State,
+    pub query_id: QueryId,
 }
+
+struct Foo;
+
+impl <V: ShardMessage> ShardConnection<V> for Foo {
+    fn send(&self, payload: &V) -> impl Future<Output=Result<(), Error>> + Send {
+        async move { Ok(()) }
+    }
+}
+
+use crate::sync::{Arc, Mutex};
 
 #[derive(Default)]
 pub struct State {
-    senders: GatewaySenders,
-    receivers: GatewayReceivers,
+    senders: GatewaySenders<Role>,
+    // FIXME: the plan is - we don't need unordered receivers for shard transports
+    receivers: GatewayReceivers<Role, RoleIndexedReceiver>,
+    shard_senders: GatewaySenders<ShardId>,
+    shard_receivers: GatewayReceivers<ShardId, ShardRecvStream>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,24 +103,30 @@ impl Gateway {
         query_id: QueryId,
         config: GatewayConfig,
         roles: RoleAssignment,
-        transport: TransportImpl,
+        transport: TransportImpl<HelperIdentity>,
+        shard_transport: TransportImpl<ShardId>,
     ) -> Self {
         #[allow(clippy::useless_conversion)] // not useless in stall-detection build
         Self {
             config,
+            query_id,
             transport: RoleResolvingTransport {
-                query_id,
                 roles,
                 inner: transport,
-                config,
             },
             inner: State::default().into(),
+            shard_transport,
         }
     }
 
     #[must_use]
     pub fn role(&self) -> Role {
-        self.transport.role()
+        self.transport.identity()
+    }
+
+    pub fn shard(&self) -> ShardId {
+        // FIXME
+        self.shard_transport.upgrade().unwrap().identity()
     }
 
     #[must_use]
@@ -101,9 +140,12 @@ impl Gateway {
     #[must_use]
     pub fn get_sender<M: Message>(
         &self,
-        channel_id: &ChannelId,
+        channel_id: &ChannelId<Role>,
         total_records: TotalRecords,
-    ) -> send::SendingEnd<M> {
+    ) -> send::SendingEnd<Role, M> {
+        // todo tests
+        assert_ne!(self.role(), channel_id.id, "Can't send to myself");
+
         let (tx, maybe_stream) = self.inner.senders.get_or_create::<M>(
             channel_id,
             self.config.active_work(),
@@ -113,10 +155,11 @@ impl Gateway {
             tokio::spawn({
                 let channel_id = channel_id.clone();
                 let transport = self.transport.clone();
+                let query_id = self.query_id;
                 async move {
                     // TODO(651): In the HTTP case we probably need more robust error handling here.
                     transport
-                        .send(&channel_id, stream)
+                        .send(channel_id.id, (RouteId::Records, query_id, channel_id.gate), stream)
                         .await
                         .expect("{channel_id:?} receiving end should be accepted by transport");
                 }
@@ -127,14 +170,53 @@ impl Gateway {
     }
 
     #[must_use]
-    pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId) -> receive::ReceivingEnd<M> {
+    pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId<Role>) -> receive::ReceivingEnd<Role, RoleIndexedReceiver, M> {
+        assert_ne!(self.role(), channel_id.id, "Can't receive from myself");
         receive::ReceivingEnd::new(
             channel_id.clone(),
             self.inner
                 .receivers
-                .get_or_create(channel_id, || self.transport.receive(channel_id)),
+                .get_or_create(channel_id, || UnorderedReceiver::new(Box::pin(self.transport.receive(channel_id.id, (self.query_id, channel_id.gate.clone()))), self.config.active_work()))
         )
     }
+
+    pub fn get_shard_receiver<M: Send + Serializable + 'static>(&self, channel_id: &ChannelId<ShardId>) -> receive::ShardReceivingEnd<M> {
+        assert_ne!(self.shard(), channel_id.id, "Can't receive from myself");
+        receive::ShardReceivingEnd {
+            my_id: format!("{:?}/{:?}", self.role(), self.shard()),
+            channel_id: channel_id.clone(),
+            recv_stream: Mutex::new(self.shard_transport.receive(channel_id.id, (self.query_id, channel_id.gate.clone())).fuse()),
+            buf: BufDeque::new(),
+            received: 0,
+            _phantom: PhantomData
+        }
+    }
+
+    #[must_use]
+    pub fn get_shard_sender<M: Send + Serializable + 'static>(&self, channel: &ChannelId<ShardId>, total_records: TotalRecords) -> send::SendingEnd<ShardId, M> {
+        let (tx, maybe_stream) = self.inner.shard_senders.get_or_create::<M>(
+            channel,
+            self.config.active_work(),
+            total_records,
+        );
+        if let Some(stream) = maybe_stream {
+            tokio::spawn({
+                let channel_id = channel.clone();
+                let transport = self.shard_transport.clone();
+                let query_id = self.query_id;
+                async move {
+                    // TODO(651): In the HTTP case we probably need more robust error handling here.
+                    transport
+                        .send(channel_id.id, (RouteId::Records, query_id, channel_id.gate), stream)
+                        .await
+                        .expect("{channel_id:?} receiving end should be accepted by transport");
+                }
+            });
+        }
+
+        send::SendingEnd::new(tx, self.shard(), channel)
+    }
+
 }
 
 impl Default for GatewayConfig {
@@ -192,7 +274,7 @@ mod tests {
     /// Gateway must be able to deal with it.
     #[tokio::test]
     async fn can_handle_heterogeneous_channels() {
-        async fn send<V: Message + U128Conversions>(channel: &SendingEnd<V>, i: usize) {
+        async fn send<V: Message + U128Conversions>(channel: &SendingEnd<Role, V>, i: usize) {
             channel
                 .send(i.into(), V::truncate_from(u128::try_from(i).unwrap()))
                 .await

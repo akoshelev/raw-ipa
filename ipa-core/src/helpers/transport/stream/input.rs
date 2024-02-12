@@ -28,7 +28,7 @@ pub struct BufDeque {
 }
 
 impl BufDeque {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffered_size: 0,
             buffered: VecDeque::new(),
@@ -36,13 +36,16 @@ impl BufDeque {
     }
 
     /// Returns the total amount of buffered data
-    #[cfg(all(test, unit_test))]
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.buffered_size
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.buffered_size == 0
+    }
+
     /// Returns the amount of contiguous data available
-    fn contiguous_len(&self) -> usize {
+    pub fn contiguous_len(&self) -> usize {
         self.buffered.front().map_or(0, Bytes::len)
     }
 
@@ -50,7 +53,7 @@ impl BufDeque {
     ///
     /// Returns [`Bytes`] with length `len` from the buffered data. Returns [`None`] if
     /// there are less than `len` bytes in the buffer, or if `len` is zero.
-    fn read_bytes(&mut self, len: usize) -> Option<Bytes> {
+    pub fn read_bytes(&mut self, len: usize) -> Option<Bytes> {
         // not enough bytes buffered
         if len == 0 || self.buffered_size < len {
             None
@@ -116,8 +119,12 @@ impl BufDeque {
             .map(|bytes| T::deserialize_infallible(GenericArray::from_slice(&bytes)))
     }
 
+    pub fn try_read<T: Serializable>(&mut self) -> Option<Result<T, T::DeserializationError>> {
+        self.read_bytes(T::Size::USIZE).map(|bytes| T::deserialize(GenericArray::from_slice(&bytes)))
+    }
+
     /// Update the buffer with the result of polling a stream.
-    fn extend(&mut self, bytes: Option<Result<Bytes, BoxError>>) -> ExtendResult {
+    pub fn extend<I: Into<Bytes>>(&mut self, bytes: Option<Result<I, BoxError>>) -> ExtendResult {
         match bytes {
             // if body is expended, but we have some bytes leftover, error due to misaligned
             // output
@@ -137,6 +144,7 @@ impl BufDeque {
 
             // if body has more bytes, push it into the buffer
             Some(Ok(bytes)) => {
+                let bytes = bytes.into();
                 self.buffered_size += bytes.len();
                 self.buffered.push_back(bytes);
                 ExtendResult::Ok
@@ -145,7 +153,8 @@ impl BufDeque {
     }
 }
 
-enum ExtendResult {
+#[derive(Debug)]
+pub enum ExtendResult {
     /// Data from the stream was appended to the buffer.
     Ok,
     /// The stream finished cleanly.

@@ -11,6 +11,7 @@ use crate::{
     },
     sync::Arc,
 };
+use crate::helpers::HelperIdentity;
 
 pub struct Setup {
     query_processor: Arc<QueryProcessor>,
@@ -20,19 +21,19 @@ pub struct Setup {
 #[must_use]
 pub struct HelperApp {
     query_processor: Arc<QueryProcessor>,
-    transport: TransportImpl,
+    transport: TransportImpl<HelperIdentity>,
 }
 
 impl Setup {
     #[must_use]
-    pub fn new() -> (Self, TransportCallbacks<TransportImpl>) {
+    pub fn new() -> (Self, TransportCallbacks<TransportImpl<HelperIdentity>>) {
         Self::with_key_registry(KeyRegistry::empty())
     }
 
     #[must_use]
     pub fn with_key_registry(
         key_registry: KeyRegistry<KeyPair>,
-    ) -> (Self, TransportCallbacks<TransportImpl>) {
+    ) -> (Self, TransportCallbacks<TransportImpl<HelperIdentity>>) {
         let query_processor = Arc::new(QueryProcessor::new(key_registry));
         let this = Self {
             query_processor: Arc::clone(&query_processor),
@@ -43,12 +44,12 @@ impl Setup {
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
-    pub fn connect(self, transport: TransportImpl) -> HelperApp {
+    pub fn connect(self, transport: TransportImpl<HelperIdentity>) -> HelperApp {
         HelperApp::new(transport, self.query_processor)
     }
 
     /// Create callbacks that tie up query processor and transport.
-    fn callbacks(query_processor: &Arc<QueryProcessor>) -> TransportCallbacks<TransportImpl> {
+    fn callbacks(query_processor: &Arc<QueryProcessor>) -> TransportCallbacks<TransportImpl<HelperIdentity>> {
         let rqp = Arc::clone(query_processor);
         let pqp = Arc::clone(query_processor);
         let iqp = Arc::clone(query_processor);
@@ -56,7 +57,7 @@ impl Setup {
         let cqp = Arc::clone(query_processor);
 
         TransportCallbacks {
-            receive_query: Box::new(move |transport: TransportImpl, receive_query| {
+            receive_query: Box::new(move |transport: TransportImpl<HelperIdentity>, receive_query| {
                 let processor = Arc::clone(&rqp);
                 Box::pin(async move {
                     let r = processor.new_query(transport, receive_query).await?;
@@ -64,19 +65,19 @@ impl Setup {
                     Ok(r.query_id)
                 })
             }),
-            prepare_query: Box::new(move |transport: TransportImpl, prepare_query| {
+            prepare_query: Box::new(move |transport: TransportImpl<HelperIdentity>, prepare_query| {
                 let processor = Arc::clone(&pqp);
                 Box::pin(async move { processor.prepare(&transport, prepare_query) })
             }),
-            query_input: Box::new(move |transport: TransportImpl, query_input| {
+            query_input: Box::new(move |transport: TransportImpl<HelperIdentity>, query_input| {
                 let processor = Arc::clone(&iqp);
                 Box::pin(async move { processor.receive_inputs(transport, query_input) })
             }),
-            query_status: Box::new(move |_transport: TransportImpl, query_id| {
+            query_status: Box::new(move |_transport: TransportImpl<HelperIdentity>, query_id| {
                 let processor = Arc::clone(&sqp);
                 Box::pin(async move { processor.query_status(query_id) })
             }),
-            complete_query: Box::new(move |_transport: TransportImpl, query_id| {
+            complete_query: Box::new(move |_transport: TransportImpl<HelperIdentity>, query_id| {
                 let processor = Arc::clone(&cqp);
                 Box::pin(async move { processor.complete(query_id).await })
             }),
@@ -85,7 +86,7 @@ impl Setup {
 }
 
 impl HelperApp {
-    pub fn new(transport: TransportImpl, query_processor: Arc<QueryProcessor>) -> Self {
+    pub fn new(transport: TransportImpl<HelperIdentity>, query_processor: Arc<QueryProcessor>) -> Self {
         Self {
             query_processor,
             transport,
@@ -110,7 +111,7 @@ impl HelperApp {
     /// ## Errors
     /// Propagates errors from the helper.
     pub fn execute_query(&self, input: QueryInput) -> Result<(), Error> {
-        let transport = <TransportImpl as Clone>::clone(&self.transport);
+        let transport = Transport::clone_ref(&self.transport);
         self.query_processor.receive_inputs(transport, input)?;
         Ok(())
     }

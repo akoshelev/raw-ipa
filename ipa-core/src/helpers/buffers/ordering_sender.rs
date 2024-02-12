@@ -23,6 +23,7 @@ use crate::{
         Mutex, MutexGuard,
     },
 };
+use crate::ff::Serializable;
 
 /// The operating state for an `OrderingSender`.
 struct State {
@@ -81,7 +82,7 @@ impl State {
     // It is harder to prove through assertions and/or static analysis that every message ever
     // sent will be the same size, so we settle for a less strict check that should at least
     // prevent reaching a deadlock.
-    fn write<M: Message>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
+    fn write<M: Serializable + 'static>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
         debug_assert!(
             self.spare != 0 || self.buf.capacity() % M::Size::USIZE == 0,
             "invalid spare capacity for OrderingSender (see docs)",
@@ -330,7 +331,7 @@ impl OrderingSender {
     /// * the same index is provided more than once.
     ///
     /// [capacity]: OrderingSender#spare-capacity-configuration
-    pub fn send<M: Message, B: Borrow<M>>(&self, i: usize, m: B) -> Send<'_, M, B> {
+    pub fn send<M: Serializable + 'static, B: Borrow<M>>(&self, i: usize, m: B) -> Send<'_, M, B> {
         Send {
             i,
             m,
@@ -347,6 +348,10 @@ impl OrderingSender {
     /// been sent with an equal or higher index.
     pub fn close(&self, i: usize) -> Close<'_> {
         Close { i, sender: self }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.state.lock().unwrap().closed
     }
 
     /// Perform the next `send` or `close` operation.
@@ -438,14 +443,14 @@ impl OrderingSender {
 }
 
 /// A future for writing item `i` into an `OrderingSender`.
-pub struct Send<'a, M: Message, B: Borrow<M> + 'a> {
+pub struct Send<'a, M: Serializable + 'static, B: Borrow<M> + 'a> {
     i: usize,
     m: B,
     sender: &'a OrderingSender,
     phantom_data: PhantomData<M>,
 }
 
-impl<'a, M: Message, B: Borrow<M> + 'a> Future for Send<'a, M, B> {
+impl<'a, M: Serializable + 'static, B: Borrow<M> + 'a> Future for Send<'a, M, B> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

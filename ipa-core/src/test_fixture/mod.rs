@@ -14,6 +14,7 @@ mod event_gen;
 pub mod ipa;
 pub mod logging;
 pub mod metrics;
+mod sharded_world;
 
 use std::fmt::Debug;
 

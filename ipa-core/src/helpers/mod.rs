@@ -21,14 +21,14 @@ pub use error::{Error, Result};
 
 #[cfg(feature = "stall-detection")]
 mod gateway_exports {
-    use crate::helpers::{
-        gateway,
-        gateway::{stall_detection::Observed, InstrumentedGateway},
-    };
+    use crate::helpers::{gateway, gateway::{stall_detection::Observed, InstrumentedGateway}, Role};
+    use crate::helpers::gateway::RoleIndexedReceiver;
+    use crate::helpers::gateway::ShardRecvStream;
+    use crate::sharding::ShardId;
 
     pub type Gateway = Observed<InstrumentedGateway>;
-    pub type SendingEnd<M> = Observed<gateway::SendingEnd<M>>;
-    pub type ReceivingEnd<M> = Observed<gateway::ReceivingEnd<M>>;
+    pub type SendingEnd<O, M> = Observed<gateway::SendingEnd<O, M>>;
+    pub type ReceivingEnd<M> = Observed<gateway::ReceivingEnd<Role, RoleIndexedReceiver, M>>;
 }
 
 #[cfg(not(feature = "stall-detection"))]
@@ -49,12 +49,13 @@ pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
 pub use transport::{
+    TransportIdentity,
     callbacks::*, query, BodyStream, BytesStream, LengthDelimitedStream, LogErrors,
     NoResourceIdentifier, QueryIdBinding, ReceiveRecords, RecordsStream, RouteId, RouteParams,
     StepBinding, StreamCollection, StreamKey, Transport, WrappedBoxBodyStream,
 };
 #[cfg(feature = "in-memory-infra")]
-pub use transport::{InMemoryNetwork, InMemoryTransport};
+pub use transport::{InMemoryNetwork, InMemoryTransport, Setup as InMemoryNetworkSetup, OwnedInMemoryTransport};
 use typenum::{Unsigned, U8};
 use x25519_dalek::PublicKey;
 
@@ -371,6 +372,10 @@ impl RoleAssignment {
     pub fn identity(&self, role: Role) -> HelperIdentity {
         self.helper_roles[role]
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = HelperIdentity> + '_ {
+        self.helper_roles.iter().copied()
+    }
 }
 
 impl TryFrom<[(HelperIdentity, Role); 3]> for RoleAssignment {
@@ -405,23 +410,23 @@ impl TryFrom<[Role; 3]> for RoleAssignment {
 /// Combination of helper role and step that uniquely identifies a single channel of communication
 /// between two helpers.
 #[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ChannelId {
-    pub role: Role,
+pub struct ChannelId<O: TransportIdentity> {
+    pub id: O,
     // TODO: step could be either reference or owned value. references are convenient to use inside
     // gateway , owned values can be used inside lookup tables.
     pub gate: Gate,
 }
 
-impl ChannelId {
+impl <O: TransportIdentity> ChannelId<O> {
     #[must_use]
-    pub fn new(role: Role, gate: Gate) -> Self {
-        Self { role, gate }
+    pub fn new(id: O, gate: Gate) -> Self {
+        Self { id, gate }
     }
 }
 
-impl Debug for ChannelId {
+impl <O: TransportIdentity> Debug for ChannelId<O> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "channel[{:?},{:?}]", self.role, self.gate.as_ref())
+        write!(f, "channel[{:?},{:?}]", self.id, self.gate.as_ref())
     }
 }
 
@@ -447,7 +452,7 @@ impl Serializable for PublicKey {
     }
 }
 
-impl Message for PublicKey {}
+impl Sendable for PublicKey {}
 
 #[derive(Clone, Copy, Debug)]
 pub enum TotalRecords {

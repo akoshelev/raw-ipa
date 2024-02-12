@@ -6,9 +6,10 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::Stream;
 use ipa_macros::Step;
 
-use super::{Context as SuperContext, UpgradeContext, UpgradeToMalicious};
+use super::{Context as SuperContext, ShardConnector, ShardedContext, ShardMessage, UpgradeContext, UpgradeToMalicious};
 use crate::{
     error::Error,
     helpers::{Gateway, Message, ReceivingEnd, Role, SendingEnd, TotalRecords},
@@ -28,6 +29,8 @@ use crate::{
     },
     seq_join::SeqJoin,
 };
+use crate::helpers::HelperIdentity;
+use crate::sharding::{ShardConfiguration, ShardCount, ShardId};
 
 #[derive(Clone)]
 pub struct Context<'a> {
@@ -89,7 +92,7 @@ impl<'a> super::Context for Context<'a> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
@@ -104,6 +107,16 @@ impl<'a> UpgradableContext for Context<'a> {
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F> {
         Self::Validator::new(self.inner)
+    }
+}
+
+impl ShardConfiguration for Context<'_> {
+    fn my_shard(&self) -> ShardId {
+        self.inner.gateway().shard()
+    }
+
+    fn shard_count(&self) -> ShardCount {
+        todo!()
     }
 }
 
@@ -171,7 +184,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 

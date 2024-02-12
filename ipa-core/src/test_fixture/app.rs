@@ -68,7 +68,7 @@ impl Default for TestApp {
             .transports()
             .iter()
             .zip(setup)
-            .map(|(t, s)| s.connect(<InMemoryTransport as Clone>::clone(t)))
+            .map(|(t, s)| s.connect(<InMemoryTransport<_> as Clone>::clone(t)))
             .collect::<Vec<_>>()
             .try_into()
             .map_err(|_| "infallible")

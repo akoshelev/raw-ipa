@@ -15,6 +15,7 @@ use crate::{
     protocol::RecordId,
     sync::{Arc, Mutex},
 };
+use crate::helpers::Role;
 
 /// A future for receiving item `i` from an `UnorderedReceiver`.
 pub struct Receiver<S, C, M>
@@ -160,7 +161,7 @@ pub enum ReceiveError<M: Message> {
     #[error("Error deserializing {0:?} record: {1}")]
     DeserializationError(RecordId, #[source] M::DeserializationError),
     #[error(transparent)]
-    InfraError(#[from] Error),
+    InfraError(#[from] Error<Role>),
 }
 
 impl<S, C> OperatingState<S, C>

@@ -69,6 +69,7 @@ impl<T: ObserveState> Observed<T> {
 mod gateway {
 
     use delegate::delegate;
+    use futures::Stream;
 
     use super::{receive, send, AtomicUsize, Debug, Formatter, ObserveState, Observed, Weak};
     use crate::{
@@ -80,6 +81,12 @@ mod gateway {
         protocol::QueryId,
         sync::Arc,
     };
+    use crate::ff::Serializable;
+    use crate::helpers::gateway::{Foo};
+    use crate::helpers::gateway::transport::RoleResolvingTransport;
+    use crate::helpers::{HelperIdentity, Transport};
+    use crate::protocol::context::{ShardConnection, ShardMessage};
+    use crate::sharding::ShardId;
 
     pub struct InstrumentedGateway {
         gateway: Gateway,
@@ -87,7 +94,7 @@ mod gateway {
         // and external observers can see that they no longer need to watch it.
         _sn: Arc<AtomicUsize>,
     }
-
+    use crate::protocol::context::ShardConnector;
     impl Observed<InstrumentedGateway> {
         delegate! {
             to self.inner().gateway {
@@ -97,6 +104,10 @@ mod gateway {
 
                 #[inline]
                 pub fn config(&self) -> &GatewayConfig;
+
+                #[inline]
+                pub fn shard(&self) -> ShardId;
+
             }
         }
 
@@ -105,13 +116,14 @@ mod gateway {
             query_id: QueryId,
             config: GatewayConfig,
             roles: RoleAssignment,
-            transport: TransportImpl,
+            transport: TransportImpl<HelperIdentity>,
+            shard_transport: TransportImpl<ShardId>,
         ) -> Self {
             let version = Arc::new(AtomicUsize::default());
             let r = Self::wrap(
                 Arc::downgrade(&version),
                 InstrumentedGateway {
-                    gateway: Gateway::new(query_id, config, roles, transport),
+                    gateway: Gateway::new(query_id, config, roles, transport, shard_transport),
                     _sn: version,
                 },
             );
@@ -149,21 +161,46 @@ mod gateway {
         #[must_use]
         pub fn get_sender<M: Message>(
             &self,
-            channel_id: &ChannelId,
+            channel_id: &ChannelId<Role>,
             total_records: TotalRecords,
-        ) -> SendingEnd<M> {
+        ) -> SendingEnd<Role, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_sender(channel_id, total_records),
             )
         }
 
+        /// FIXME: use get_sender/get_receiver for shard/role
         #[must_use]
-        pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId) -> ReceivingEnd<M> {
+        pub fn get_receiver<M: Message>(&self, channel_id: &ChannelId<Role>) -> ReceivingEnd<M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_receiver(channel_id),
             )
+        }
+
+        /// FIXME: observability
+        #[must_use]
+        pub fn get_shard_sender<M: ShardMessage>(
+            &self,
+            channel_id: &ChannelId<ShardId>,
+            total_records: TotalRecords,
+        ) -> SendingEnd<ShardId, M> {
+            Observed::wrap(
+                Weak::clone(self.get_sn()),
+                self.inner().gateway.get_shard_sender(channel_id, total_records)
+            )
+        }
+        #[must_use]
+        pub fn get_shard_receiver<M: ShardMessage>(
+            &self,
+            channel_id: &ChannelId<ShardId>,
+        ) -> impl Stream<Item = Result<M, crate::helpers::Error<ShardId>>> + Send {
+            self.inner().gateway.get_shard_receiver(channel_id)
+            // Observed::wrap(
+            //     Weak::clone(self.get_sn()),
+            //     self.inner().gateway.get_shard_receiver(channel_id)
+            // )
         }
 
         pub fn to_observed(&self) -> Observed<Weak<State>> {
@@ -215,6 +252,7 @@ mod receive {
         collections::BTreeMap,
         fmt::{Debug, Formatter},
     };
+    use futures::Stream;
 
     use super::{ObserveState, Observed};
     use crate::{
@@ -225,17 +263,19 @@ mod receive {
         },
         protocol::RecordId,
     };
+    use crate::helpers::{HelperIdentity, Role};
+    use crate::helpers::gateway::RoleIndexedReceiver;
 
-    impl<M: Message> Observed<ReceivingEnd<M>> {
+    impl<M: Message> Observed<ReceivingEnd<Role, RoleIndexedReceiver, M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]
-                pub async fn receive(&self, record_id: RecordId) -> Result<M, Error>;
+                pub async fn receive(&self, record_id: RecordId) -> Result<M, Error<Role>>;
             }
         }
     }
 
-    pub struct WaitingTasks(BTreeMap<ChannelId, Vec<String>>);
+    pub struct WaitingTasks(BTreeMap<ChannelId<Role>, Vec<String>>);
 
     impl Debug for WaitingTasks {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -243,7 +283,7 @@ mod receive {
                 write!(
                     f,
                     "\n\"{:?}\", from={:?}. Waiting to receive records {:?}.",
-                    channel.gate, channel.role, records
+                    channel.gate, channel.id, records
                 )?;
             }
 
@@ -251,7 +291,7 @@ mod receive {
         }
     }
 
-    impl ObserveState for GatewayReceivers {
+    impl ObserveState for GatewayReceivers<Role, RoleIndexedReceiver> {
         type State = WaitingTasks;
 
         fn get_state(&self) -> Option<Self::State> {
@@ -284,17 +324,22 @@ mod send {
         },
         protocol::RecordId,
     };
+    use crate::ff::Serializable;
+    use crate::helpers::Role;
+    use crate::helpers::transport::TransportIdentity;
+    use crate::secret_sharing::Sendable;
 
-    impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<M>> {
+    impl<O: TransportIdentity, M: Send + Serializable + 'static> Observed<crate::helpers::gateway::send::SendingEnd<O, M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]
-                pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error>;
+                pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error<O>>;
+                pub async fn try_close(&self, at: RecordId);
             }
         }
     }
 
-    pub struct WaitingTasks(BTreeMap<ChannelId, (TotalRecords, Vec<String>)>);
+    pub struct WaitingTasks(BTreeMap<ChannelId<Role>, (TotalRecords, Vec<String>)>);
 
     impl Debug for WaitingTasks {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -302,7 +347,7 @@ mod send {
                 write!(
                     f,
                     "\n\"{:?}\", to={:?}. Waiting to send records {:?} out of {total:?}.",
-                    channel.gate, channel.role, records
+                    channel.gate, channel.id, records
                 )?;
             }
 
@@ -310,7 +355,7 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySenders {
+    impl ObserveState for GatewaySenders<Role> {
         type State = WaitingTasks;
 
         fn get_state(&self) -> Option<Self::State> {
@@ -327,7 +372,7 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySender {
+    impl ObserveState for GatewaySender<Role> {
         type State = Vec<String>;
 
         fn get_state(&self) -> Option<Self::State> {

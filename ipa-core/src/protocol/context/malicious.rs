@@ -5,9 +5,10 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::Stream;
 use ipa_macros::Step;
 
-use super::{UpgradeContext, UpgradeToMalicious};
+use super::{ShardMessage, UpgradeContext, UpgradeToMalicious};
 use crate::{
     error::Error,
     helpers::{ChannelId, Gateway, Message, ReceivingEnd, Role, SendingEnd, TotalRecords},
@@ -34,6 +35,8 @@ use crate::{
     seq_join::SeqJoin,
     sync::Arc,
 };
+use crate::helpers::HelperIdentity;
+use crate::sharding::ShardId;
 
 #[derive(Clone)]
 pub struct Context<'a> {
@@ -111,7 +114,7 @@ impl<'a> super::Context for Context<'a> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
@@ -324,7 +327,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
         )
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)

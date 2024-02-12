@@ -1,4 +1,6 @@
 use std::borrow::Borrow;
+use std::fmt::Debug;
+use std::hash::Hash;
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -16,29 +18,33 @@ mod receive;
 mod stream;
 
 #[cfg(feature = "in-memory-infra")]
-pub use in_memory::{InMemoryNetwork, InMemoryTransport};
+pub use in_memory::{InMemoryNetwork, InMemoryTransport, Setup, OwnedInMemoryTransport};
 pub use receive::{LogErrors, ReceiveRecords};
 #[cfg(feature = "web-app")]
 pub use stream::WrappedAxumBodyStream;
 pub use stream::{
     BodyStream, BytesStream, LengthDelimitedStream, RecordsStream, StreamCollection, StreamKey,
-    WrappedBoxBodyStream,
+    WrappedBoxBodyStream, BufDeque, ExtendResult
 };
+use crate::helpers::Role;
+use crate::sharding::ShardId;
 
 pub trait ResourceIdentifier: Sized {}
+
 pub trait QueryIdBinding: Sized
-where
-    Option<QueryId>: From<Self>,
-{
-}
+    where
+        Option<QueryId>: From<Self>,
+{}
+
 pub trait StepBinding: Sized
-where
-    Option<Gate>: From<Self>,
-{
-}
+    where
+        Option<Gate>: From<Self>,
+{}
 
 pub struct NoResourceIdentifier;
+
 pub struct NoQueryId;
+
 pub struct NoStep;
 
 #[derive(Debug, Copy, Clone)]
@@ -49,6 +55,7 @@ pub enum RouteId {
 }
 
 impl ResourceIdentifier for NoResourceIdentifier {}
+
 impl ResourceIdentifier for RouteId {}
 
 impl From<NoQueryId> for Option<QueryId> {
@@ -58,6 +65,7 @@ impl From<NoQueryId> for Option<QueryId> {
 }
 
 impl QueryIdBinding for NoQueryId {}
+
 impl QueryIdBinding for QueryId {}
 
 impl From<NoStep> for Option<Gate> {
@@ -67,12 +75,13 @@ impl From<NoStep> for Option<Gate> {
 }
 
 impl StepBinding for NoStep {}
+
 impl StepBinding for Gate {}
 
 pub trait RouteParams<R: ResourceIdentifier, Q: QueryIdBinding, S: StepBinding>: Send
-where
-    Option<QueryId>: From<Q>,
-    Option<Gate>: From<S>,
+    where
+        Option<QueryId>: From<Q>,
+        Option<Gate>: From<S>,
 {
     type Params: Borrow<str>;
 
@@ -123,36 +132,67 @@ impl RouteParams<RouteId, QueryId, Gate> for (RouteId, QueryId, Gate) {
     }
 }
 
+pub trait ShardTransport: Clone + Send + Sync + 'static {
+    type Error: std::fmt::Debug;
+    fn send<D, Q, S, R>(&self, dest: ShardId, route: R, data: D) -> Result<(), Self::Error> where
+        Option<QueryId>: From<Q>,
+        Option<Gate>: From<S>,
+        Q: QueryIdBinding,
+        S: StepBinding,
+        R: RouteParams<RouteId, Q, S>,
+        D: Stream<Item=Vec<u8>> + Send + 'static;
+}
+/// FIXME: don't use O as generic type parameter
+pub trait TransportIdentity: Hash + Eq + Debug + Copy + Clone + Unpin + Send + Sync + 'static {
+    fn as_static_str(&self) -> &'static str;
+}
+
+impl TransportIdentity for Role {
+    fn as_static_str(&self) -> &'static str {
+        Role::as_static_str(self)
+    }
+}
+impl TransportIdentity for HelperIdentity {
+    fn as_static_str(&self) -> &'static str {
+        todo!()
+    }
+}
+impl TransportIdentity for ShardId {
+    fn as_static_str(&self) -> &'static str {
+        todo!()
+    }
+}
+
 /// Transport that supports per-query,per-step channels
 #[async_trait]
-pub trait Transport: Clone + Send + Sync + 'static {
-    type RecordsStream: Stream<Item = Vec<u8>> + Send + Unpin;
+pub trait Transport<O: TransportIdentity>: Clone + Send + Sync + 'static {
+    type RecordsStream: Stream<Item=Vec<u8>> + Send + Unpin;
     type Error: std::fmt::Debug;
 
-    fn identity(&self) -> HelperIdentity;
+    fn identity(&self) -> O;
 
     /// Sends a new request to the given destination helper party.
     /// Depending on the specific request, it may or may not require acknowledgment by the remote
     /// party
     async fn send<D, Q, S, R>(
         &self,
-        dest: HelperIdentity,
+        dest: O,
         route: R,
         data: D,
     ) -> Result<(), Self::Error>
-    where
-        Option<QueryId>: From<Q>,
-        Option<Gate>: From<S>,
-        Q: QueryIdBinding,
-        S: StepBinding,
-        R: RouteParams<RouteId, Q, S>,
-        D: Stream<Item = Vec<u8>> + Send + 'static;
+        where
+            Option<QueryId>: From<Q>,
+            Option<Gate>: From<S>,
+            Q: QueryIdBinding,
+            S: StepBinding,
+            R: RouteParams<RouteId, Q, S>,
+            D: Stream<Item=Vec<u8>> + Send + 'static;
 
     /// Return the stream of records to be received from another helper for the specific query
     /// and step
     fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(
         &self,
-        from: HelperIdentity,
+        from: O,
         route: R,
     ) -> Self::RecordsStream;
 

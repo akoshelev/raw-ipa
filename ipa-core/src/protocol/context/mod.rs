@@ -9,9 +9,19 @@ pub mod upgrade;
 #[allow(dead_code)]
 pub mod validator;
 
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::future::Future;
+use std::iter::repeat;
 use std::num::NonZeroUsize;
+use std::pin::pin;
+use std::task::Poll;
 
 use async_trait::async_trait;
+use futures::Stream;
+use futures_util::future::OptionFuture;
+use futures_util::stream::{poll_immediate, select};
+use futures_util::StreamExt;
 #[cfg(feature = "descriptive-gate")]
 pub use malicious::{Context as MaliciousContext, Upgraded as UpgradedMaliciousContext};
 use prss::{InstrumentedIndexedSharedRandomness, InstrumentedSequentialSharedRandomness};
@@ -34,6 +44,11 @@ use crate::{
     },
     seq_join::SeqJoin,
 };
+use crate::ff::Serializable;
+use crate::helpers::{HelperIdentity, TransportIdentity};
+use crate::secret_sharing::{Linear, Sendable};
+use crate::seq_join::seq_join;
+use crate::sharding::{ShardConfiguration, ShardId};
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
 /// generator and communication channel.
@@ -49,8 +64,8 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
     /// Note that each invocation of this should use a unique value of `step`.
     #[must_use]
     fn narrow<S: Step + ?Sized>(&self, step: &S) -> Self
-    where
-        Gate: StepNarrow<S>;
+        where
+            Gate: StepNarrow<S>;
 
     /// Sets the context's total number of records field. Communication channels are
     /// closed based on sending the expected total number of records.
@@ -84,9 +99,102 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
         InstrumentedSequentialSharedRandomness,
     );
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M>;
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M>;
     fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M>;
 }
+
+
+pub trait ShardMessage: Unpin + Send + Serializable + 'static {}
+
+impl<V: Unpin + Send + Serializable + 'static> ShardMessage for V {}
+
+pub(crate) trait ShardConnection<V: ShardMessage>: Send {
+    // TODO: custom error
+    fn send(&self, payload: &V) -> impl Future<Output=Result<(), crate::error::Error>> + Send;
+}
+
+pub trait ShardConnector: Send {
+    fn recv_from_all<V: ShardMessage>(self) -> impl Stream<Item=(ShardId, V)> + Send + Unpin;
+}
+
+pub async fn reshard<'a, M: ShardMessage + Debug + Sync, L, K: Send + 'static, C: ShardedContext + 'a, S>(ctx: C, input: L, mut sender: S) -> Result<Vec<M>, crate::error::Error>
+    where
+        L: IntoIterator<Item=K>,
+        L::IntoIter: ExactSizeIterator + Send,
+        S: Fn(C, usize, K) -> (ShardId, M) + Send + Sync,
+{
+    let iter = input.into_iter();
+    let ctx = ctx.set_total_records(iter.len());
+    let my_shard = ctx.my_shard();
+    let my_id = format!("{:?}/{my_shard:?}", ctx.role());
+
+    let mut shard_ends: Vec<_> = ctx.shard_count().iter().map(|shard_id| {
+        if shard_id != my_shard {
+            Some((RecordId::FIRST, ctx.shard_send_channel::<M>(shard_id)))
+        } else {
+            None
+        }
+    }).collect();
+
+    let s = ctx.recv_from_shards::<M>().map(|(shard_id, v)| (shard_id, v.map(Option::Some).map_err(crate::error::Error::from)));
+    let mut rcv_stream = s.fuse();
+
+    // it is crucial that the following execution is completed sequentially, in order for record id
+    // tracking per shard to work correctly. If tasks complete out of order, this will cause share
+    // misplacement on the recipient side.
+    let mut s = futures::stream::unfold((iter.enumerate().zip(repeat(ctx.clone())), &mut shard_ends), |(mut iter, mut shard_ends)| async {
+        match iter.next() {
+            Some(((i, v), ctx)) => {
+                let (dest, v) = sender(ctx, i, v);
+                if dest == my_shard {
+                    println!("{:?}_reshard: send to myself: {v:?}", my_id);
+                    Some(((my_shard, Ok(Some(v))), (iter, shard_ends)))
+                } else {
+                    let (rid, se) = shard_ends[usize::from(dest)].as_mut().unwrap();
+                    println!("{:?}_reshard: send to {dest:?}: {v:?}/{rid:?}", my_id);
+                    let r = se
+                        .send(*rid, v).await
+                        .map_err(crate::error::Error::from)
+                        .map(|v| None);
+                    *rid += 1;
+                    Some(((my_shard, r), (iter, shard_ends)))
+                }
+            },
+            None => {
+                for (i, v) in shard_ends.into_iter().enumerate() {
+                    if let Some((rid, se)) = v {
+                        se.try_close(*rid).await;
+                    }
+                }
+                None
+            }
+        }
+    }).fuse();
+
+    // FIXME: explain
+    let mut r: Vec<Vec<_>> = ctx.shard_count().iter().map(|_| Vec::new()).collect();
+    let mut send_recv = pin!(futures::stream::select(rcv_stream, s));
+
+    while let Some((shard_id, v)) = send_recv.next().await {
+        if let Some(m) = v? {
+            if ctx.my_shard() == shard_id {
+                println!("{:?}_reshard: received from myself: {m:?}",my_id);
+            } else {
+                println!("{:?}_reshard: received from {shard_id:?}: {m:?}", my_id);
+            }
+            r[usize::from(shard_id)].push(m);
+        }
+    }
+
+    Ok(r.into_iter().flatten().collect())
+}
+
+pub trait ShardedContext: Context + ShardConfiguration {
+    fn shard_send_channel<M: ShardMessage>(&self, dest: ShardId) -> SendingEnd<ShardId, M>;
+    fn recv_from_shards<M: ShardMessage>(&self) -> impl Stream<Item=(ShardId, Result<M, crate::error::Error>)> + Send;
+}
+
+// impl <V> ShardedContext for V where V: Context + ShardConfiguration {}
 
 pub trait UpgradableContext: Context {
     type UpgradedContext<F: ExtendableField>: UpgradedContext<F>;
@@ -114,18 +222,18 @@ pub trait UpgradedContext<F: ExtendableField>: Context {
     /// When the multiplication fails. This does not include additive attacks
     /// by other helpers.  These are caught later.
     async fn upgrade<T, M>(&self, input: T) -> Result<M, Error>
-    where
-        T: Send,
-        for<'a> UpgradeContext<'a, Self, F>: UpgradeToMalicious<'a, T, M>;
+        where
+            T: Send,
+            for<'a> UpgradeContext<'a, Self, F>: UpgradeToMalicious<'a, T, M>;
 
     /// Upgrade an input for a specific bit index and record using this context.
     /// # Errors
     /// When the multiplication fails. This does not include additive attacks
     /// by other helpers.  These are caught later.
     async fn upgrade_for<T, M>(&self, record_id: RecordId, input: T) -> Result<M, Error>
-    where
-        T: Send,
-        for<'a> UpgradeContext<'a, Self, F, RecordId>: UpgradeToMalicious<'a, T, M>;
+        where
+            T: Send,
+            for<'a> UpgradeContext<'a, Self, F, RecordId>: UpgradeToMalicious<'a, T, M>;
 
     /// Upgrade a sparse input using this context.
     /// # Errors
@@ -164,7 +272,7 @@ pub struct Base<'a> {
 }
 
 impl<'a> Base<'a> {
-    fn new(participant: &'a PrssEndpoint, gateway: &'a Gateway) -> Self {
+    pub fn new(participant: &'a PrssEndpoint, gateway: &'a Gateway) -> Self {
         Self::new_complete(
             participant,
             gateway,
@@ -185,6 +293,10 @@ impl<'a> Base<'a> {
             total_records,
         }
     }
+
+    pub fn gateway(&self) -> &Gateway {
+        self.inner.gateway
+    }
 }
 
 impl<'a> Context for Base<'a> {
@@ -197,8 +309,8 @@ impl<'a> Context for Base<'a> {
     }
 
     fn narrow<S: Step + ?Sized>(&self, step: &S) -> Self
-    where
-        Gate: StepNarrow<S>,
+        where
+            Gate: StepNarrow<S>,
     {
         Self {
             inner: self.inner.clone(),
@@ -238,7 +350,7 @@ impl<'a> Context for Base<'a> {
         )
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
@@ -325,11 +437,11 @@ mod tests {
 
     /// Toy protocol to execute PRSS generation and send/receive logic
     async fn toy_protocol<F, S, C>(ctx: C, index: usize, share: &S) -> Replicated<F>
-    where
-        F: Field + U128Conversions,
-        Standard: Distribution<F>,
-        C: Context,
-        S: ReplicatedLeftValue<F>,
+        where
+            F: Field + U128Conversions,
+            Standard: Distribution<F>,
+            C: Context,
+            S: ReplicatedLeftValue<F>,
     {
         let ctx = ctx.narrow("metrics");
         let (left_peer, right_peer) = (
@@ -359,7 +471,7 @@ mod tests {
             send_channel.send(record_id, share.l() - l - seq_l),
             recv_channel.receive(record_id),
         )
-        .unwrap();
+            .unwrap();
 
         Replicated::new(share.l(), right_share + r + seq_r)
     }
@@ -380,7 +492,7 @@ mod tests {
                         .zip(repeat(ctx.set_total_records(input_len)))
                         .map(|((i, share), ctx)| toy_protocol(ctx, i, share)),
                 )
-                .await
+                    .await
             })
             .await
             .reconstruct();
@@ -441,7 +553,7 @@ mod tests {
                         .enumerate()
                         .map(|(i, share)| toy_protocol(ctx.clone(), i, share)),
                 )
-                .await;
+                    .await;
 
                 a
             })
