@@ -485,10 +485,10 @@ mod tests {
         where
             I: IntoIterator<Item=S> + Send,
             I::IntoIter: Send + ExactSizeIterator,
-            F: Field,
+            F: SharedValue,
             Standard: Distribution<F>,
             C: ShardedContext,
-            S: Linear<F> + ReplicatedSecretSharing<F> + Serializable + Unpin,
+            S: ReplicatedSecretSharing<F> + Serializable + Unpin,
     {
         let ctx = ctx.narrow("shuffle");
 
@@ -501,13 +501,16 @@ mod tests {
 
         Ok(r)
     }
-    use crate::ff::Fp31;
+    use crate::ff::{Fp31, U128Conversions};
+    use crate::ff::boolean_array::BA8;
+    use crate::secret_sharing::SharedValue;
+
     #[test]
     fn trivial() {
         run(|| async move {
             let world = ShardedWorld::with_shards(3.try_into().unwrap());
             let inputs = [1_u32, 2, 3]
-                .map(|x| Fp31::truncate_from(x))
+                .map(|x| BA8::truncate_from(x))
                 .to_vec();
             let mut result: Vec<_> = world
                 .shard_semi_honest(inputs.clone().into_iter(), |ctx, input| async move {
