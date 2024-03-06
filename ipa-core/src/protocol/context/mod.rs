@@ -124,10 +124,10 @@ pub async fn reshard<'a, M: ShardMessage + Debug + Sync, L, K: Send + 'static, C
         S: Fn(C, usize, K) -> (ShardId, M) + Send + Sync,
 {
     let iter = input.into_iter();
-    let ctx = ctx.set_total_records(iter.len());
+    // even if our input is empty, other shards may send data to us
+    let ctx = ctx.set_total_records(std::cmp::max(1, iter.len()));
     let my_shard = ctx.my_shard();
     let my_id = format!("{:?}/{my_shard:?}", ctx.role());
-
     let mut shard_ends: Vec<_> = ctx.shard_count().iter().map(|shard_id| {
         if shard_id != my_shard {
             Some((RecordId::FIRST, ctx.shard_send_channel::<M>(shard_id)))
@@ -147,11 +147,11 @@ pub async fn reshard<'a, M: ShardMessage + Debug + Sync, L, K: Send + 'static, C
             Some(((i, v), ctx)) => {
                 let (dest, v) = sender(ctx, i, v);
                 if dest == my_shard {
-                    println!("{:?}_reshard: send to myself: {v:?}", my_id);
+                    // println!("{:?}_reshard: send to myself: {v:?}", my_id);
                     Some(((my_shard, Ok(Some(v))), (iter, shard_ends)))
                 } else {
                     let (rid, se) = shard_ends[usize::from(dest)].as_mut().unwrap();
-                    println!("{:?}_reshard: send to {dest:?}: {v:?}/{rid:?}", my_id);
+                    // println!("{:?}_reshard: send to {dest:?}: {v:?}/{rid:?}", my_id);
                     let r = se
                         .send(*rid, v).await
                         .map_err(crate::error::Error::from)
@@ -177,11 +177,11 @@ pub async fn reshard<'a, M: ShardMessage + Debug + Sync, L, K: Send + 'static, C
 
     while let Some((shard_id, v)) = send_recv.next().await {
         if let Some(m) = v? {
-            if ctx.my_shard() == shard_id {
-                println!("{:?}_reshard: received from myself: {m:?}",my_id);
-            } else {
-                println!("{:?}_reshard: received from {shard_id:?}: {m:?}", my_id);
-            }
+            // if ctx.my_shard() == shard_id {
+            //     println!("{:?}_reshard: received from myself: {m:?}",my_id);
+            // } else {
+            //     println!("{:?}_reshard: received from {shard_id:?}: {m:?}", my_id);
+            // }
             r[usize::from(shard_id)].push(m);
         }
     }

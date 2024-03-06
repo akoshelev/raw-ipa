@@ -503,7 +503,7 @@ mod tests {
         where
             I: IntoIterator<Item=S> + Send,
             I::IntoIter: Send + ExactSizeIterator,
-            F: SharedValue + FromRandomU128 + Unpin,
+            F: SharedValue + FromRandomU128 + Unpin + U128Conversions,
             Standard: Distribution<F>,
             C: ShardedContext,
             S: ReplicatedSecretSharing<F> + Serializable + Unpin,
@@ -515,150 +515,215 @@ mod tests {
             Role::H1 => {
                 // first pass to generate X_1 = perm_12(left ⊕ right ⊕ z_12)
                 let mut x1 = Vec::with_capacity(len);
-                let mask_ctx = ctx.narrow("z");
+                let mask_ctx = ctx.narrow("z12");
                 for (i, share) in shares.enumerate() {
                     let (_, z12): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     x1.push(share.left() + share.right() + z12);
                 }
 
-                let last_record = len;
-
-                let r = assert_send(reshard(ctx.clone(), x1, |ctx, i, v| {
+                let r = assert_send(reshard(ctx.narrow("reshard_12"), x1, |ctx, i, v| {
                     (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
                 })).await?;
 
                 // second pass to generate X_2 = perm_31(x_1 ⊕ z_31)
+                let mask_ctx = ctx.narrow("z31");
                 let mut x2 = Vec::with_capacity(len);
                 for (i, val) in r.into_iter().enumerate() {
-                    let (z31, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i + last_record));
+                    let (z31, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     x2.push(val + z31)
                 }
 
-                let x2 = reshard(ctx.clone(), x2, |ctx, i, v| {
+                let x2 = reshard(ctx.narrow("reshard_31"), x2, |ctx, i, v| {
                     (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
                 }).await?;
 
+                // sharded shuffle quirk - need to advertise the length to other shards
+                // FIXME: random u128?
+                ctx.narrow("|x2|").set_total_records(1).send_channel(ctx.role().peer(Direction::Right)).send(RecordId::FIRST, F::from_random_u128(u128::try_from(x2.len()).unwrap())).await?;
+
                 // send all the values to the right
-                let send_channel = ctx.narrow("x2").send_channel(ctx.role().peer(Direction::Right));
-                for (i, val) in x2.iter().enumerate() {
-                    send_channel.send(RecordId::from(i), val).await?;
+                if !x2.is_empty() {
+                    let send_channel = ctx.narrow("x2")
+                        .set_total_records(x2.len())
+                        .send_channel(ctx.role().peer(Direction::Right));
+                    for (i, val) in x2.iter().enumerate() {
+                        send_channel.send(RecordId::from(i), *val).await?;
+                    }
                 }
 
-                // let mut a_hat = Vec::with_capacity(x2.len());
-                // let mut b_hat = Vec::with_capacity(x2.len());
-                //
+                // need to know the cardinality of C before H1 can set its shares
+                let sz: u32 = ctx.narrow("|c|").set_total_records(1).recv_channel::<F>(ctx.role().peer(Direction::Right))
+                    .receive(RecordId::FIRST).await?.as_u128().try_into().unwrap();
 
                 // set our shares
-                // FIXME: get the C cardinality from other helpers
-                x2.into_iter().enumerate().map(|(i, _)| {
-                    let (_, a_hat): (F, F) = ctx.narrow("ahat").prss().generate(ShardRecordId::new(&ctx, i));
-                    let (_, b_hat): (F, F) = ctx.narrow("bhat").prss().generate(ShardRecordId::new(&ctx, i));
+                (0..sz).map(|i| {
+                    let (a_tilde, _): (F, F) = ctx.narrow("atilde").prss().generate(RecordId::from(i));
+                    let (_, b_tilde): (F, F) = ctx.narrow("btilde").prss().generate(RecordId::from(i));
 
-                    S::new(a_hat, b_hat)
+                    S::new(a_tilde, b_tilde)
                 }).collect()
+
+
+                // FIXME: get the C cardinality from other helpers
+                // x2.into_iter().enumerate().map(|(i, _)| {
+                //     let (_, a_hat): (F, F) = ctx.narrow("ahat").prss().generate(ShardRecordId::new(&ctx, i));
+                //     let (_, b_hat): (F, F) = ctx.narrow("bhat").prss().generate(ShardRecordId::new(&ctx, i));
+                //
+                //     S::new(a_hat, b_hat)
+                // }).collect()
             }
             Role::H2 => {
                 // first pass to generate Y_1 = perm_12(right ⊕ z_12)
                 let mut y1 = Vec::with_capacity(len);
-                let mut b_hat = Vec::with_capacity(len);
-                let mut z_23 = Vec::with_capacity(len);
                 for (i, share) in shares.enumerate() {
-                    let mask_ctx = ctx.narrow("z");
-                    let (z12, z23): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    let mask_ctx = ctx.narrow("z12");
+                    let (z12, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     y1.push(share.right() + z12);
-                    b_hat.push(z12);
-                    z_23.push(z23);
                 }
 
-                let y1 = reshard(ctx.clone(), y1, |ctx, i, v| {
+                // FIXME error messages when stream has been used are clunky
+                let y1 = reshard(ctx.narrow("reshard_12"), y1, |ctx, i, v| {
                     (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
                 }).await?;
 
+                // sharded shuffle quirk - need to advertise the length to other shards
+                // FIXME: random u128?
+                ctx.narrow("|y1|").set_total_records(1).send_channel(ctx.role().peer(Direction::Right)).send(RecordId::FIRST, F::from_random_u128(u128::try_from(y1.len()).unwrap())).await?;
+
                 // share y1 to the right
-                let send_channel = ctx.narrow("y1").send_channel(ctx.role().peer(Direction::Right));
-                for (i, val) in y1.into_iter().enumerate() {
-                    send_channel.send(RecordId::from(i), val).await?;
+                if y1.len() > 0 {
+                    let send_channel = ctx.narrow("y1").set_total_records(y1.len()).send_channel(ctx.role().peer(Direction::Right));
+                    for (i, val) in y1.iter().enumerate() {
+                        send_channel.send(RecordId::from(i), *val).await?;
+                    }
                 }
 
-                // receive x1 from H1
-                let recv_channel = ctx.narrow("x2").recv_channel(ctx.role().peer(Direction::Left));
-                let mut x2: Vec<F> = Vec::with_capacity(len);
-                for i in 0..len {
-                    x2.push(recv_channel.receive(RecordId::from(i)).await?)
+                // need to know the cardinality of X1 before H2 can set its shares
+                let x2_sz: u32 = ctx.narrow("|x2|").recv_channel::<F>(ctx.role().peer(Direction::Left))
+                    .receive(RecordId::FIRST).await?.as_u128().try_into().unwrap();
+
+                let mut x2: Vec<F> = Vec::with_capacity(x2_sz as usize);
+                if x2_sz > 0 {
+                    // receive x2 from H1
+                    let recv_channel = ctx.narrow("x2").recv_channel(ctx.role().peer(Direction::Left));
+                    for i in 0..x2_sz {
+                        x2.push(recv_channel.receive(RecordId::from(i)).await?);
+                    }
                 }
 
                 // generate X_3 = perm_23(x_2 ⊕ z_23)
-                let mut x3 = Vec::with_capacity(len);
+                let mut x3 = Vec::with_capacity(x2.len());
+                let mask_ctx = ctx.narrow("z23");
                 for (i, val) in x2.into_iter().enumerate() {
-                    let z23 = z_23[i];
+                    let (_, z23): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     x3.push(val + z23);
                 }
 
-                // generate c_1 = x_3 ⊕ share.left()
-                let c1: Vec<F> = x3.into_iter().zip(b_hat.iter()).map(|(x3, b)| x3 + *b).collect();
+               let x3 = reshard(ctx.narrow("reshard_23"), x3, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
+                }).await?;
+
+                // generate c_1 = x_3 ⊕ b
+                let mask_ctx = ctx.narrow("btilde");
+                let b = (0..x3.len()).map(|i| {
+                    let (r, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    r
+                }).collect::<Vec<_>>();
+
+                let c1: Vec<F> = x3.into_iter().zip(b.iter()).map(|(x3, b)| x3 + *b).collect();
+                println!("H2: shard {:?} c1 len = {}", ctx.my_shard(), c1.len());
 
                 // share c_1 to the right and receive c_2
-                let send_channel = ctx.narrow("c1").send_channel(ctx.role().peer(Direction::Right));
-                let recv_channel = ctx.narrow("c2").recv_channel(ctx.role().peer(Direction::Right));
                 let mut c2: Vec<F> = Vec::with_capacity(len);
-                for (i, val) in c1.iter().enumerate() {
-                    let rid = RecordId::from(i);
-                    let ((), v) = try_join(send_channel.send(rid, *val), recv_channel.receive(rid)).await?;
-                    c2.push(v);
+                if !c1.is_empty() {
+                    let send_channel = ctx.narrow("c1").set_total_records(c1.len()).send_channel(ctx.role().peer(Direction::Right));
+                    let recv_channel = ctx.narrow("c2").recv_channel(ctx.role().peer(Direction::Right));
+                    for (i, val) in c1.iter().enumerate() {
+                        let rid = RecordId::from(i);
+                        // TODO: seq_join
+                        send_channel.send(rid, *val).await?;
+                    }
+                    for i in 0..c1.len() {
+                        let rid = RecordId::from(i);
+                        let v = recv_channel.receive(rid).await?;
+                        c2.push(v);
+                    }
                 }
 
+                assert_eq!(c1.len(), c2.len());
+                // FIXME: random u128?
+                ctx.narrow("|c|").set_total_records(1).send_channel(ctx.role().peer(Direction::Left)).send(RecordId::FIRST, F::from_random_u128(u128::try_from(c1.len()).unwrap())).await?;
+
                 // set out shares
-                b_hat.into_iter().zip(zip(c1.into_iter(), c2.into_iter())).map(|(b, (c1, c2))| S::new(b, c1 + c2)).collect()
+                b.into_iter().zip(zip(c1.into_iter(), c2.into_iter())).map(|(b, (c1, c2))| S::new(b, c1 + c2)).collect()
             }
             Role::H3 => {
                 // receive y1 from the left
-                let recv_channel = ctx.narrow("y1").recv_channel(ctx.role().peer(Direction::Left));
-                let mut y1: Vec<F> = Vec::with_capacity(len);
-                for i in 0..len {
-                    y1.push(recv_channel.receive(RecordId::from(i)).await?);
+                // need to know the cardinality of X1 before H2 can set its shares
+                let y1_sz: u32 = ctx.narrow("|y1|").recv_channel::<F>(ctx.role().peer(Direction::Left))
+                    .receive(RecordId::FIRST).await?.as_u128().try_into().unwrap();
+                let mut y1: Vec<F> = Vec::with_capacity(y1_sz as usize);
+
+                if y1_sz > 0 {
+                    let recv_channel = ctx.narrow("y1").recv_channel(ctx.role().peer(Direction::Left));
+                    for i in 0..y1_sz {
+                        y1.push(recv_channel.receive(RecordId::from(i)).await?);
+                    }
                 }
 
                 // generate y2 = perm_31(y_1 ⊕ z_31)
-                let mut y2 = Vec::with_capacity(len);
-                let mut a_hat = Vec::with_capacity(len);
-                let mut z_23 = Vec::with_capacity(len);
+                let mut y2 = Vec::with_capacity(y1_sz as usize);
+                let mask_ctx = ctx.narrow("z31");
                 for (i, val) in y1.into_iter().enumerate() {
-                    let mask_ctx = ctx.narrow("z");
-                    let (z23, z31): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
-                    a_hat.push(z31);
+                    let (_, z31): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     y2.push(val + z31);
-                    z_23.push(z23);
                 }
 
-                let y2 = reshard(ctx.clone(), y2, |ctx, i, v| {
+                let y2 = reshard(ctx.narrow("reshard_31"), y2, |ctx, i, v| {
                     (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
                 }).await?;
 
                 // generate y3 = perm_23(y_2 ⊕ z_23)
                 let mut y3 = Vec::with_capacity(len);
+                let mask_ctx = ctx.narrow("z23");
                 for (i, val) in y2.into_iter().enumerate() {
-                    let z23 = z_23[i];
+                    let (z23, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
                     y3.push(val + z23);
                 }
 
-                let y3 = reshard(ctx.clone(), y3, |ctx, i, v| {
+                let y3 = reshard(ctx.narrow("reshard_23"), y3, |ctx, i, v| {
                     (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
                 }).await?;
 
-                let c2: Vec<_> = y3.into_iter().zip(a_hat.iter()).map(|(y_3, a)| y_3 + *a).collect();
+                let mask_ctx = ctx.narrow("atilde");
+                let a = (0..y3.len()).map(|i| {
+                    let (_, r): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    r
+                }).collect::<Vec<_>>();
+                let c2: Vec<_> = y3.into_iter().zip(a.iter()).map(|(y_3, a)| y_3 + *a).collect();
 
                 // send c2 and receive c1
-                let send_channel = ctx.narrow("c2").send_channel(ctx.role().peer(Direction::Left));
-                let recv_channel = ctx.narrow("c1").recv_channel(ctx.role().peer(Direction::Left));
+                // fixme: capacity is wrong
                 let mut c1: Vec<F> = Vec::with_capacity(len);
-                for (i, val) in c2.iter().enumerate() {
-                    let rid = RecordId::from(i);
-                    let ((), v) = try_join(send_channel.send(rid, *val), recv_channel.receive(rid)).await?;
-                    c1.push(v);
+                if !c2.is_empty() {
+                    let send_channel = ctx.narrow("c2").set_total_records(c2.len()).send_channel(ctx.role().peer(Direction::Left));
+                    let recv_channel = ctx.narrow("c1").recv_channel(ctx.role().peer(Direction::Left));
+                    for (i, val) in c2.iter().enumerate() {
+                        let rid = RecordId::from(i);
+                        // TODO: seq_join
+                        send_channel.send(rid, *val).await?;
+                    }
+                    for i in 0..c2.len() {
+                        let rid = RecordId::from(i);
+                        let v = recv_channel.receive(rid).await?;
+                        c1.push(v);
+                    }
                 }
 
+                assert_eq!(c1.len(), c2.len());
+
                 // set our shares
-                zip(c1, c2).zip(a_hat).map(|((c1, c2), a)| S::new(c1 + c2, a)).collect()
+                zip(c1, c2).zip(a).map(|((c1, c2), a)| S::new(c1 + c2, a)).collect()
             }
         };
 
@@ -674,7 +739,7 @@ mod tests {
     fn trivial() {
         run(|| async move {
             let world = ShardedWorld::with_shards(3.try_into().unwrap());
-            let inputs = [1_u32, 2, 3]
+            let inputs = [1_u32, 2, 3, 4, 5, 6, 7, 8, 9]
                 .map(|x| BA8::truncate_from(x))
                 .to_vec();
             let mut result: Vec<_> = world
