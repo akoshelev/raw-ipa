@@ -7,7 +7,7 @@ mod tests {
 
     use async_trait::async_trait;
     use futures::{Stream, StreamExt};
-    use futures_util::future::join_all;
+    use futures_util::future::{join_all, try_join};
     use futures_util::stream::FuturesOrdered;
     use generic_array::GenericArray;
     use rand::{distributions::Standard, prelude::Distribution, rngs::StdRng};
@@ -481,28 +481,193 @@ mod tests {
     use crate::protocol::context::ShardConnection;
     use crate::secret_sharing::replicated::ReplicatedSecretSharing;
 
+    struct ShardRecordId(ShardId, RecordId);
+
+    impl ShardRecordId {
+        fn new<C: ShardedContext>(ctx: &C, record_id: usize) -> Self {
+            Self(ctx.my_shard(), RecordId::from(record_id))
+        }
+    }
+
+    // This conversion is badly broken
+    impl From<ShardRecordId> for PrssIndex {
+        fn from(value: ShardRecordId) -> Self {
+            let high_bits = u32::from(value.0) << 16;
+            let low_bits = u32::from(value.1) & u32::from(u16::MAX);
+
+            Self::from(high_bits | low_bits)
+        }
+    }
+
     async fn toy_protocol<I, F, S, C>(ctx: C, shares: I) -> Result<Vec<S>, crate::error::Error>
         where
             I: IntoIterator<Item=S> + Send,
             I::IntoIter: Send + ExactSizeIterator,
-            F: SharedValue,
+            F: SharedValue + FromRandomU128 + Unpin,
             Standard: Distribution<F>,
             C: ShardedContext,
             S: ReplicatedSecretSharing<F> + Serializable + Unpin,
     {
         let ctx = ctx.narrow("shuffle");
+        let shares = shares.into_iter();
+        let len = shares.len();
+        let r: Vec<S> = match ctx.role() {
+            Role::H1 => {
+                // first pass to generate X_1 = perm_12(left ⊕ right ⊕ z_12)
+                let mut x1 = Vec::with_capacity(len);
+                let mask_ctx = ctx.narrow("z");
+                for (i, share) in shares.enumerate() {
+                    let (_, z12): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    x1.push(share.left() + share.right() + z12);
+                }
 
-        let r = assert_send(reshard(ctx.clone(), shares, |ctx, i, v| {
-            // let dest_shard = ctx.pick_shard(RecordId::from(i), Direction::Left);
-            let dest_shard = ShardId::from(0);
-            (dest_shard, v)
-        })).await?;
+                let last_record = len;
+
+                let r = assert_send(reshard(ctx.clone(), x1, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
+                })).await?;
+
+                // second pass to generate X_2 = perm_31(x_1 ⊕ z_31)
+                let mut x2 = Vec::with_capacity(len);
+                for (i, val) in r.into_iter().enumerate() {
+                    let (z31, _): (F, F) = mask_ctx.prss().generate(RecordId::from(i + last_record));
+                    x2.push(val + z31)
+                }
+
+                let x2 = reshard(ctx.clone(), x2, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
+                }).await?;
+
+                // send all the values to the right
+                let send_channel = ctx.narrow("x2").send_channel(ctx.role().peer(Direction::Right));
+                for (i, val) in x2.iter().enumerate() {
+                    send_channel.send(RecordId::from(i), val).await?;
+                }
+
+                // let mut a_hat = Vec::with_capacity(x2.len());
+                // let mut b_hat = Vec::with_capacity(x2.len());
+                //
+
+                // set our shares
+                // FIXME: get the C cardinality from other helpers
+                x2.into_iter().enumerate().map(|(i, _)| {
+                    let (_, a_hat): (F, F) = ctx.narrow("ahat").prss().generate(ShardRecordId::new(&ctx, i));
+                    let (_, b_hat): (F, F) = ctx.narrow("bhat").prss().generate(ShardRecordId::new(&ctx, i));
+
+                    S::new(a_hat, b_hat)
+                }).collect()
+            }
+            Role::H2 => {
+                // first pass to generate Y_1 = perm_12(right ⊕ z_12)
+                let mut y1 = Vec::with_capacity(len);
+                let mut b_hat = Vec::with_capacity(len);
+                let mut z_23 = Vec::with_capacity(len);
+                for (i, share) in shares.enumerate() {
+                    let mask_ctx = ctx.narrow("z");
+                    let (z12, z23): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    y1.push(share.right() + z12);
+                    b_hat.push(z12);
+                    z_23.push(z23);
+                }
+
+                let y1 = reshard(ctx.clone(), y1, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
+                }).await?;
+
+                // share y1 to the right
+                let send_channel = ctx.narrow("y1").send_channel(ctx.role().peer(Direction::Right));
+                for (i, val) in y1.into_iter().enumerate() {
+                    send_channel.send(RecordId::from(i), val).await?;
+                }
+
+                // receive x1 from H1
+                let recv_channel = ctx.narrow("x2").recv_channel(ctx.role().peer(Direction::Left));
+                let mut x2: Vec<F> = Vec::with_capacity(len);
+                for i in 0..len {
+                    x2.push(recv_channel.receive(RecordId::from(i)).await?)
+                }
+
+                // generate X_3 = perm_23(x_2 ⊕ z_23)
+                let mut x3 = Vec::with_capacity(len);
+                for (i, val) in x2.into_iter().enumerate() {
+                    let z23 = z_23[i];
+                    x3.push(val + z23);
+                }
+
+                // generate c_1 = x_3 ⊕ share.left()
+                let c1: Vec<F> = x3.into_iter().zip(b_hat.iter()).map(|(x3, b)| x3 + *b).collect();
+
+                // share c_1 to the right and receive c_2
+                let send_channel = ctx.narrow("c1").send_channel(ctx.role().peer(Direction::Right));
+                let recv_channel = ctx.narrow("c2").recv_channel(ctx.role().peer(Direction::Right));
+                let mut c2: Vec<F> = Vec::with_capacity(len);
+                for (i, val) in c1.iter().enumerate() {
+                    let rid = RecordId::from(i);
+                    let ((), v) = try_join(send_channel.send(rid, *val), recv_channel.receive(rid)).await?;
+                    c2.push(v);
+                }
+
+                // set out shares
+                b_hat.into_iter().zip(zip(c1.into_iter(), c2.into_iter())).map(|(b, (c1, c2))| S::new(b, c1 + c2)).collect()
+            }
+            Role::H3 => {
+                // receive y1 from the left
+                let recv_channel = ctx.narrow("y1").recv_channel(ctx.role().peer(Direction::Left));
+                let mut y1: Vec<F> = Vec::with_capacity(len);
+                for i in 0..len {
+                    y1.push(recv_channel.receive(RecordId::from(i)).await?);
+                }
+
+                // generate y2 = perm_31(y_1 ⊕ z_31)
+                let mut y2 = Vec::with_capacity(len);
+                let mut a_hat = Vec::with_capacity(len);
+                let mut z_23 = Vec::with_capacity(len);
+                for (i, val) in y1.into_iter().enumerate() {
+                    let mask_ctx = ctx.narrow("z");
+                    let (z23, z31): (F, F) = mask_ctx.prss().generate(RecordId::from(i));
+                    a_hat.push(z31);
+                    y2.push(val + z31);
+                    z_23.push(z23);
+                }
+
+                let y2 = reshard(ctx.clone(), y2, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
+                }).await?;
+
+                // generate y3 = perm_23(y_2 ⊕ z_23)
+                let mut y3 = Vec::with_capacity(len);
+                for (i, val) in y2.into_iter().enumerate() {
+                    let z23 = z_23[i];
+                    y3.push(val + z23);
+                }
+
+                let y3 = reshard(ctx.clone(), y3, |ctx, i, v| {
+                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
+                }).await?;
+
+                let c2: Vec<_> = y3.into_iter().zip(a_hat.iter()).map(|(y_3, a)| y_3 + *a).collect();
+
+                // send c2 and receive c1
+                let send_channel = ctx.narrow("c2").send_channel(ctx.role().peer(Direction::Left));
+                let recv_channel = ctx.narrow("c1").recv_channel(ctx.role().peer(Direction::Left));
+                let mut c1: Vec<F> = Vec::with_capacity(len);
+                for (i, val) in c2.iter().enumerate() {
+                    let rid = RecordId::from(i);
+                    let ((), v) = try_join(send_channel.send(rid, *val), recv_channel.receive(rid)).await?;
+                    c1.push(v);
+                }
+
+                // set our shares
+                zip(c1, c2).zip(a_hat).map(|((c1, c2), a)| S::new(c1 + c2, a)).collect()
+            }
+        };
 
 
         Ok(r)
     }
     use crate::ff::{Fp31, U128Conversions};
     use crate::ff::boolean_array::BA8;
+    use crate::protocol::prss::FromRandomU128;
     use crate::secret_sharing::SharedValue;
 
     #[test]

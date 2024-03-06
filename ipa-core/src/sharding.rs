@@ -21,6 +21,12 @@ impl From<ShardId> for usize {
     }
 }
 
+impl From<ShardId> for u32 {
+    fn from(value: ShardId) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ShardCount(u32);
 
