@@ -11,6 +11,7 @@ mod tests {
     use futures_util::stream::FuturesOrdered;
     use generic_array::GenericArray;
     use rand::{distributions::Standard, prelude::Distribution, rngs::StdRng};
+    use rand::seq::SliceRandom;
     use rand_core::SeedableRng;
     use tracing::Instrument;
     use typenum::U1;
@@ -94,7 +95,7 @@ mod tests {
             #[allow(clippy::disallowed_methods)] // It's just 3 items.
                 let output = join_all(zip(self.contexts(), input_shares).map(|(ctx, shares)| {
                 let role = ctx.role();
-                helper_fn(ctx, shares).instrument(tracing::trace_span!("", role = ?role))
+                helper_fn(ctx, shares).instrument(tracing::trace_span!("", role = ?role, shard = ?self.shard))
             }))
                 // .instrument(span)
                 .await;
@@ -287,7 +288,6 @@ mod tests {
     }
 
     impl ShardConnector for ShardedSemiHonestContext<'_> {
-
         fn recv_from_all<V: ShardMessage>(self) -> impl Stream<Item=(ShardId, V)> + Send + Unpin {
             futures::stream::empty()
         }
@@ -313,7 +313,6 @@ mod tests {
     }
 
     impl ShardConnector for Foo {
-
         fn recv_from_all<V: crate::protocol::context::ShardMessage>(self) -> impl Stream<Item=(ShardId, V)> + Unpin {
             futures::stream::empty()
         }
@@ -499,6 +498,26 @@ mod tests {
         }
     }
 
+    async fn shuffle<I, F, C>(ctx: C, data: I, direction: Direction) -> Result<Vec<F>, crate::error::Error>
+        where
+            I: IntoIterator<Item=F> + Send,
+            I::IntoIter: Send + ExactSizeIterator,
+            F: SharedValue + FromRandomU128 + Unpin + U128Conversions,
+            Standard: Distribution<F>,
+            C: ShardedContext {
+        let mut r = assert_send(reshard(ctx.clone(), data, |ctx, i, v| {
+            (ctx.pick_shard(RecordId::from(i), direction), v)
+        })).await?;
+
+        let ctx = ctx.narrow("inter-shuffle");
+        match direction {
+            Direction::Left => r.shuffle(&mut ctx.prss_rng().0),
+            Direction::Right => r.shuffle(&mut ctx.prss_rng().1),
+        }
+
+        Ok(r)
+    }
+
     async fn toy_protocol<I, F, S, C>(ctx: C, shares: I) -> Result<Vec<S>, crate::error::Error>
         where
             I: IntoIterator<Item=S> + Send,
@@ -521,9 +540,7 @@ mod tests {
                     x1.push(share.left() + share.right() + z12);
                 }
 
-                let r = assert_send(reshard(ctx.narrow("reshard_12"), x1, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
-                })).await?;
+                let r = shuffle(ctx.narrow("reshard_12"), x1, Direction::Right).await?;
 
                 // second pass to generate X_2 = perm_31(x_1 ⊕ z_31)
                 let mask_ctx = ctx.narrow("z31");
@@ -533,9 +550,7 @@ mod tests {
                     x2.push(val + z31)
                 }
 
-                let x2 = reshard(ctx.narrow("reshard_31"), x2, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
-                }).await?;
+                let x2 = shuffle(ctx.narrow("reshard_31"), x2, Direction::Left).await?;
 
                 // sharded shuffle quirk - need to advertise the length to other shards
                 // FIXME: random u128?
@@ -582,9 +597,7 @@ mod tests {
                 }
 
                 // FIXME error messages when stream has been used are clunky
-                let y1 = reshard(ctx.narrow("reshard_12"), y1, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
-                }).await?;
+                let y1 = shuffle(ctx.narrow("reshard_12"), y1, Direction::Left).await?;
 
                 // sharded shuffle quirk - need to advertise the length to other shards
                 // FIXME: random u128?
@@ -619,9 +632,7 @@ mod tests {
                     x3.push(val + z23);
                 }
 
-               let x3 = reshard(ctx.narrow("reshard_23"), x3, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
-                }).await?;
+                let x3 = shuffle(ctx.narrow("reshard_23"), x3, Direction::Right).await?;
 
                 // generate c_1 = x_3 ⊕ b
                 let mask_ctx = ctx.narrow("btilde");
@@ -631,7 +642,6 @@ mod tests {
                 }).collect::<Vec<_>>();
 
                 let c1: Vec<F> = x3.into_iter().zip(b.iter()).map(|(x3, b)| x3 + *b).collect();
-                println!("H2: shard {:?} c1 len = {}", ctx.my_shard(), c1.len());
 
                 // share c_1 to the right and receive c_2
                 let mut c2: Vec<F> = Vec::with_capacity(len);
@@ -679,9 +689,7 @@ mod tests {
                     y2.push(val + z31);
                 }
 
-                let y2 = reshard(ctx.narrow("reshard_31"), y2, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Right), v)
-                }).await?;
+                let y2 = shuffle(ctx.narrow("reshard_31"), y2, Direction::Right).await?;
 
                 // generate y3 = perm_23(y_2 ⊕ z_23)
                 let mut y3 = Vec::with_capacity(len);
@@ -691,9 +699,7 @@ mod tests {
                     y3.push(val + z23);
                 }
 
-                let y3 = reshard(ctx.narrow("reshard_23"), y3, |ctx, i, v| {
-                    (ctx.pick_shard(RecordId::from(i), Direction::Left), v)
-                }).await?;
+                let y3 = shuffle(ctx.narrow("reshard_23"), y3, Direction::Left).await?;
 
                 let mask_ctx = ctx.narrow("atilde");
                 let a = (0..y3.len()).map(|i| {
@@ -730,6 +736,7 @@ mod tests {
 
         Ok(r)
     }
+
     use crate::ff::{Fp31, U128Conversions};
     use crate::ff::boolean_array::BA8;
     use crate::protocol::prss::FromRandomU128;
