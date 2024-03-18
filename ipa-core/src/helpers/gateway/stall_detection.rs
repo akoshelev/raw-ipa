@@ -74,8 +74,8 @@ mod gateway {
     use crate::{
         helpers::{
             gateway::{Gateway, State},
-            GatewayConfig, HelperChannelId, Message, ReceivingEnd, Role, RoleAssignment,
-            SendingEnd, TotalRecords, TransportImpl,
+            GatewayConfig, HelperChannelId, Message, MpcTransportImpl, ReceivingEnd, Role,
+            RoleAssignment, SendingEnd, TotalRecords,
         },
         protocol::QueryId,
         sync::Arc,
@@ -105,7 +105,7 @@ mod gateway {
             query_id: QueryId,
             config: GatewayConfig,
             roles: RoleAssignment,
-            transport: TransportImpl,
+            transport: MpcTransportImpl,
         ) -> Self {
             let version = Arc::new(AtomicUsize::default());
             let r = Self::wrap(

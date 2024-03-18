@@ -9,7 +9,7 @@ use crate::{
     error::Error as ProtocolError,
     helpers::{
         query::{PrepareQuery, QueryConfig, QueryInput},
-        Gateway, GatewayConfig, Role, RoleAssignment, Transport, TransportError, TransportImpl,
+        Gateway, GatewayConfig, MpcTransportImpl, Role, RoleAssignment, Transport, TransportError,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,
@@ -132,7 +132,7 @@ impl Processor {
     #[allow(clippy::missing_panics_doc)]
     pub async fn new_query(
         &self,
-        transport: TransportImpl,
+        transport: MpcTransportImpl,
         req: QueryConfig,
     ) -> Result<PrepareQuery, NewQueryError> {
         let query_id = QueryId;
@@ -176,7 +176,7 @@ impl Processor {
     /// if query is already running or this helper cannot be a follower in it
     pub fn prepare(
         &self,
-        transport: &TransportImpl,
+        transport: &MpcTransportImpl,
         req: PrepareQuery,
     ) -> Result<(), PrepareQueryError> {
         let my_role = req.roles.role(transport.identity());
@@ -204,10 +204,10 @@ impl Processor {
     /// if query is not registered on this helper.
     ///
     /// ## Panics
-    /// If failed to obtain an exclusive access to the query collection.
+    /// If failed to obtain exclusive access to the query collection.
     pub fn receive_inputs(
         &self,
-        transport: TransportImpl,
+        transport: MpcTransportImpl,
         input: QueryInput,
     ) -> Result<(), QueryInputError> {
         let mut queries = self.queries.inner.lock().unwrap();

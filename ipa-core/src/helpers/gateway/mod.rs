@@ -34,18 +34,26 @@ pub type TransportImpl = super::transport::InMemoryTransport<crate::helpers::Hel
 #[cfg(feature = "real-world-infra")]
 pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 
-pub type TransportError = <TransportImpl as Transport>::Error;
+pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
+
+pub type TransportError = <MpcTransportImpl as Transport>::Error;
 
 /// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
 pub struct Gateway {
     config: GatewayConfig,
     transport: RoleResolvingTransport,
+
     query_id: QueryId,
     #[cfg(feature = "stall-detection")]
     inner: crate::sync::Arc<State>,
     #[cfg(not(feature = "stall-detection"))]
     inner: State,
 }
+
+// struct Transports {
+//     mpc: RoleResolvingTransport,
+//     shard: Transport
+// }
 
 #[derive(Default)]
 pub struct State {
@@ -72,7 +80,7 @@ impl Gateway {
         query_id: QueryId,
         config: GatewayConfig,
         roles: RoleAssignment,
-        transport: TransportImpl,
+        transport: MpcTransportImpl,
     ) -> Self {
         #[allow(clippy::useless_conversion)] // not useless in stall-detection build
         Self {

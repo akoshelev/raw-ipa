@@ -20,7 +20,7 @@ pub struct SendToRoleError(Role, <TransportImpl as Transport>::Error);
 #[derive(Clone)]
 pub struct RoleResolvingTransport {
     pub(super) roles: RoleAssignment,
-    pub(super) inner: TransportImpl,
+    pub(super) inner: MpcTransportImpl,
 }
 
 #[async_trait]
