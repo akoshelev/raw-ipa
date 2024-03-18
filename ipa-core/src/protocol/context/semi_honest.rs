@@ -117,7 +117,7 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
@@ -201,7 +201,7 @@ impl<'a, B: ShardBinding, F: ExtendableField> super::Context for Upgraded<'a, B,
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 

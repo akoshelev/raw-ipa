@@ -11,7 +11,10 @@ use futures::Stream;
 use typenum::Unsigned;
 
 use crate::{
-    helpers::{buffers::OrderingSender, Error, HelperChannelId, Message, Role, TotalRecords},
+    helpers::{
+        buffers::OrderingSender, ChannelId, Error, HelperChannelId, Message, Role, TotalRecords,
+        TransportIdentity,
+    },
     protocol::RecordId,
     sync::Arc,
     telemetry::{
@@ -21,9 +24,9 @@ use crate::{
 };
 
 /// Sending end of the gateway channel.
-pub struct SendingEnd<M: Message> {
-    sender_role: Role,
-    channel_id: HelperChannelId,
+pub struct SendingEnd<I: TransportIdentity, M: Message> {
+    sender_id: I,
+    channel_id: ChannelId<I>,
     inner: Arc<GatewaySender>,
     _phantom: PhantomData<M>,
 }
@@ -94,14 +97,10 @@ impl GatewaySender {
     }
 }
 
-impl<M: Message> SendingEnd<M> {
-    pub(super) fn new(
-        sender: Arc<GatewaySender>,
-        role: Role,
-        channel_id: &HelperChannelId,
-    ) -> Self {
+impl<I: TransportIdentity, M: Message> SendingEnd<I, M> {
+    pub(super) fn new(sender: Arc<GatewaySender>, id: I, channel_id: &ChannelId<I>) -> Self {
         Self {
-            sender_role: role,
+            sender_id: id,
             channel_id: channel_id.clone(),
             inner: sender,
             _phantom: PhantomData,
@@ -122,11 +121,11 @@ impl<M: Message> SendingEnd<M> {
         let r = self.inner.send(record_id, msg).await;
         metrics::increment_counter!(RECORDS_SENT,
             STEP => self.channel_id.gate.as_ref().to_string(),
-            ROLE => self.sender_role.as_static_str()
+            ROLE => self.sender_id.as_str(),
         );
         metrics::counter!(BYTES_SENT, M::Size::U64,
             STEP => self.channel_id.gate.as_ref().to_string(),
-            ROLE => self.sender_role.as_static_str()
+            ROLE => self.sender_id.as_str(),
         );
 
         r

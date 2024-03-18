@@ -151,7 +151,7 @@ mod gateway {
             &self,
             channel_id: &HelperChannelId,
             total_records: TotalRecords,
-        ) -> SendingEnd<M> {
+        ) -> SendingEnd<Role, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_sender(channel_id, total_records),
@@ -285,7 +285,7 @@ mod send {
         protocol::RecordId,
     };
 
-    impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<M>> {
+    impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<Role, M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]

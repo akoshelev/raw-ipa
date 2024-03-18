@@ -104,7 +104,7 @@ impl Gateway {
         &self,
         channel_id: &HelperChannelId,
         total_records: TotalRecords,
-    ) -> send::SendingEnd<M> {
+    ) -> send::SendingEnd<Role, M> {
         let (tx, maybe_stream) = self.inner.senders.get_or_create::<M>(
             channel_id,
             self.config.active_work(),
@@ -207,7 +207,7 @@ mod tests {
     /// Gateway must be able to deal with it.
     #[tokio::test]
     async fn can_handle_heterogeneous_channels() {
-        async fn send<V: Message + U128Conversions>(channel: &SendingEnd<V>, i: usize) {
+        async fn send<V: Message + U128Conversions>(channel: &SendingEnd<Role, V>, i: usize) {
             channel
                 .send(i.into(), V::truncate_from(u128::try_from(i).unwrap()))
                 .await

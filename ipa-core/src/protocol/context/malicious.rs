@@ -112,7 +112,7 @@ impl<'a> super::Context for Context<'a> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
@@ -326,7 +326,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
         )
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)

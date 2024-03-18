@@ -29,7 +29,7 @@ mod gateway_exports {
     };
 
     pub type Gateway = Observed<InstrumentedGateway>;
-    pub type SendingEnd<M> = Observed<gateway::SendingEnd<M>>;
+    pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;
     pub type ReceivingEnd<M> = Observed<gateway::ReceivingEnd<M>>;
 }
 

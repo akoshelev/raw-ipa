@@ -87,7 +87,7 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
         InstrumentedSequentialSharedRandomness,
     );
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M>;
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M>;
     fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M>;
 }
 
@@ -252,7 +252,7 @@ impl<'a, B: ShardBinding> Context for Base<'a, B> {
         )
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M> {
+    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
