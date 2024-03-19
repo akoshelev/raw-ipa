@@ -20,6 +20,7 @@ use crate::{
     },
     sync::Arc,
 };
+use crate::helpers::ShardTransportImpl;
 
 /// `Processor` accepts and tracks requests to initiate new queries on this helper party
 /// network. It makes sure queries are coordinated and each party starts processing it when
@@ -207,7 +208,8 @@ impl Processor {
     /// If failed to obtain exclusive access to the query collection.
     pub fn receive_inputs(
         &self,
-        transport: MpcTransportImpl,
+        mpc_transport: MpcTransportImpl,
+        shard_transport: ShardTransportImpl,
         input: QueryInput,
     ) -> Result<(), QueryInputError> {
         let mut queries = self.queries.inner.lock().unwrap();
@@ -223,7 +225,8 @@ impl Processor {
                         query_id,
                         GatewayConfig::from(&config),
                         role_assignment,
-                        transport,
+                        mpc_transport,
+                        shard_transport,
                     );
                     queries.insert(
                         input.query_id,

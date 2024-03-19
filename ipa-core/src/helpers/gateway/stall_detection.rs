@@ -80,6 +80,7 @@ mod gateway {
         protocol::QueryId,
         sync::Arc,
     };
+    use crate::helpers::gateway::ShardTransportImpl;
 
     pub struct InstrumentedGateway {
         gateway: Gateway,
@@ -105,13 +106,14 @@ mod gateway {
             query_id: QueryId,
             config: GatewayConfig,
             roles: RoleAssignment,
-            transport: MpcTransportImpl,
+            mpc_transport: MpcTransportImpl,
+            shard_transport: ShardTransportImpl,
         ) -> Self {
             let version = Arc::new(AtomicUsize::default());
             let r = Self::wrap(
                 Arc::downgrade(&version),
                 InstrumentedGateway {
-                    gateway: Gateway::new(query_id, config, roles, transport),
+                    gateway: Gateway::new(query_id, config, roles, mpc_transport, shard_transport),
                     _sn: version,
                 },
             );

@@ -23,6 +23,7 @@ use crate::{
     },
     protocol::QueryId,
 };
+use crate::sharding::ShardIndex;
 
 /// Alias for the currently configured transport.
 ///
@@ -35,14 +36,14 @@ pub type TransportImpl = super::transport::InMemoryTransport<crate::helpers::Hel
 pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 
 pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
+pub type ShardTransportImpl = TransportImpl<ShardIndex>;
 
 pub type TransportError = <MpcTransportImpl as Transport>::Error;
 
 /// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
 pub struct Gateway {
     config: GatewayConfig,
-    transport: RoleResolvingTransport,
-
+    transports: Transports,
     query_id: QueryId,
     #[cfg(feature = "stall-detection")]
     inner: crate::sync::Arc<State>,
@@ -50,10 +51,10 @@ pub struct Gateway {
     inner: State,
 }
 
-// struct Transports {
-//     mpc: RoleResolvingTransport,
-//     shard: Transport
-// }
+struct Transports {
+    mpc: RoleResolvingTransport,
+    shard: ShardTransportImpl,
+}
 
 #[derive(Default)]
 pub struct State {
@@ -80,15 +81,19 @@ impl Gateway {
         query_id: QueryId,
         config: GatewayConfig,
         roles: RoleAssignment,
-        transport: MpcTransportImpl,
+        mpc_transport: MpcTransportImpl,
+        shard_transport: ShardTransportImpl,
     ) -> Self {
         #[allow(clippy::useless_conversion)] // not useless in stall-detection build
         Self {
             query_id,
             config,
-            transport: RoleResolvingTransport {
-                roles,
-                inner: transport,
+            transports: Transports {
+                mpc: RoleResolvingTransport {
+                    roles,
+                    inner: mpc_transport,
+                },
+                shard: shard_transport,
             },
             inner: State::default().into(),
         }
@@ -96,7 +101,7 @@ impl Gateway {
 
     #[must_use]
     pub fn role(&self) -> Role {
-        self.transport.identity()
+        self.transports.mpc.identity()
     }
 
     #[must_use]
@@ -121,7 +126,7 @@ impl Gateway {
         if let Some(stream) = maybe_stream {
             tokio::spawn({
                 let channel_id = channel_id.clone();
-                let transport = self.transport.clone();
+                let transport = self.transports.mpc.clone();
                 let query_id = self.query_id;
                 async move {
                     // TODO(651): In the HTTP case we probably need more robust error handling here.
@@ -150,7 +155,7 @@ impl Gateway {
             self.inner.receivers.get_or_create(channel_id, || {
                 UnorderedReceiver::new(
                     Box::pin(
-                        self.transport
+                        self.transports.mpc
                             .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
                     ),
                     self.config.active_work(),
@@ -267,8 +272,8 @@ mod tests {
                 channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
                 channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),
             )
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         });
 
         let recv_channel = recv_ctx.recv_channel::<Fp31>(Role::H1);
@@ -276,8 +281,8 @@ mod tests {
             recv_channel.receive(RecordId::from(1)),
             recv_channel.receive(RecordId::from(0)),
         )
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(
             (Fp31::truncate_from(1u128), Fp31::truncate_from(0u128)),
@@ -325,14 +330,14 @@ mod tests {
                             .unwrap();
                     })
                 }))
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
 
                 receive_handle.await.unwrap();
             })
         }))
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
         let _world = unsafe { Box::from_raw(world_ptr) };
     }
@@ -377,12 +382,12 @@ mod tests {
                         );
                     })
                 }))
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
             })
         }))
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
         let _world = unsafe { Box::from_raw(world_ptr) };
     }

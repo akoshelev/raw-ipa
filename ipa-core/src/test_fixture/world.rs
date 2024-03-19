@@ -538,14 +538,15 @@ impl<B: ShardBinding> ShardWorld<B> {
         let participants = make_participants(&mut StdRng::seed_from_u64(config.seed + shard_seed));
         let network = InMemoryMpcNetwork::default();
 
-        let mut gateways = network.transports().map(|t| {
+        let mut gateways: [_; 3] = zip(transports.into_iter(), network.transports()).map(|(shard_transport, mpc_transport)| {
             Gateway::new(
                 QueryId,
                 config.gateway_config,
                 config.role_assignment().clone(),
-                t,
+                mpc_transport,
+                shard_transport
             )
-        });
+        }).collect::<Vec<_>>().try_into().unwrap_or_else(|_| unreachable!());
 
         // The name for `g` is too complicated and depends on features enabled
         #[allow(clippy::redundant_closure_for_method_calls)]

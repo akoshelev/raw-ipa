@@ -11,6 +11,7 @@ use crate::{
     },
     sync::Arc,
 };
+use crate::helpers::ShardTransportImpl;
 
 pub struct Setup {
     query_processor: Arc<QueryProcessor>,
@@ -20,7 +21,8 @@ pub struct Setup {
 #[must_use]
 pub struct HelperApp {
     query_processor: Arc<QueryProcessor>,
-    transport: MpcTransportImpl,
+    mpc_transport: MpcTransportImpl,
+    shard_transport: ShardTransportImpl,
 }
 
 impl Setup {
@@ -100,7 +102,7 @@ impl HelperApp {
     pub async fn start_query(&self, query_config: QueryConfig) -> Result<QueryId, NewQueryError> {
         Ok(self
             .query_processor
-            .new_query(Transport::clone_ref(&self.transport), query_config)
+            .new_query(Transport::clone_ref(&self.mpc_transport), query_config)
             .await?
             .query_id)
     }
@@ -110,7 +112,7 @@ impl HelperApp {
     /// ## Errors
     /// Propagates errors from the helper.
     pub fn execute_query(&self, input: QueryInput) -> Result<(), Error> {
-        let transport = Clone::clone(&self.transport);
+        let transport = Clone::clone(&self.mpc_transport);
         self.query_processor.receive_inputs(transport, input)?;
         Ok(())
     }
