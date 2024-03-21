@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Mutex;
 use async_trait::async_trait;
 use crate::{
     helpers::{
@@ -94,28 +95,80 @@ impl RequestHandler for HelperApp {
     }
 }
 
-pub struct RequestHandlerSetup {
-
+struct QueryRequestHandler {
+    qp: Arc<QueryProcessor>,
+    transport: Arc<Mutex<Option<TransportImpl>>>
 }
 
-struct Foo;
-
 #[async_trait]
-impl RequestHandler for Foo {
+impl RequestHandler for QueryRequestHandler {
     type Identity = HelperIdentity;
 
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, ApiError> {
-        todo!()
+        fn ext_query_id(req: &Addr<HelperIdentity>) -> Result<QueryId, ApiError> {
+            req.query_id.ok_or_else(|| ApiError::BadRequest("Query input is missing query_id argument".into()))
+        }
+
+        let qp = Arc::clone(&self.qp);
+
+        Ok(match req.route {
+            RouteId::Records => {
+                // TODO: return failure as handlers are not supposed to handle these
+                HelperResponse::ok()
+            }
+            RouteId::ReceiveQuery => {
+                let req = req.into::<QueryConfig>()?;
+                let transport = self.transport.lock().unwrap().as_ref().unwrap().clone();
+                HelperResponse::from(qp.new_query(transport, req).await?)
+            }
+            RouteId::PrepareQuery => {
+                let req = req.into::<PrepareQuery>()?;
+                let transport = self.transport.lock().unwrap().as_ref().unwrap().clone();
+                HelperResponse::from(qp.prepare(&transport, req)?)
+            }
+            RouteId::QueryInput => {
+                let query_id = ext_query_id(&req)?;
+                let transport = self.transport.lock().unwrap().as_ref().unwrap().clone();
+                HelperResponse::from(qp.receive_inputs(transport, QueryInput {
+                    query_id,
+                    input_stream: data,
+                })?)
+            }
+            RouteId::QueryStatus => {
+                let query_id = ext_query_id(&req)?;
+                HelperResponse::from(qp.query_status(query_id)?)
+            }
+            RouteId::CompleteQuery => {
+                let query_id = ext_query_id(&req)?;
+                HelperResponse::from(qp.complete(query_id).await?)
+            }
+        })
     }
 }
 
+pub struct RequestHandlerSetup {
+    qp: Arc<QueryProcessor>,
+    transport_container: Arc<Mutex<Option<TransportImpl>>>,
+}
+
 impl RequestHandlerSetup {
+    fn new(qp: Arc<QueryProcessor>) -> Self {
+        Self {
+            qp,
+            transport_container: Arc::new(Mutex::new(None)),
+        }
+    }
+
     pub fn make_handler(&self) -> impl RequestHandler<Identity = HelperIdentity> {
-        Foo
+        QueryRequestHandler {
+            qp: Arc::clone(&self.qp),
+            transport: Arc::clone(&self.transport_container),
+        }
     }
 
     pub fn finish(self, transport: TransportImpl) {
-        todo!()
+        let mut guard = self.transport_container.lock().unwrap();
+        *guard = Some(transport);
     }
 }
 
@@ -136,7 +189,7 @@ impl Setup {
         };
 
         // TODO: weak reference to query processor to prevent mem leak
-        (this, RequestHandlerSetup {})
+        (this, RequestHandlerSetup::new(query_processor))
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
