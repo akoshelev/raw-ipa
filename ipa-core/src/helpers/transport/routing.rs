@@ -13,6 +13,9 @@ pub enum RouteId {
     Records,
     ReceiveQuery,
     PrepareQuery,
+    QueryInput,
+    QueryStatus,
+    CompleteQuery,
 }
 
 

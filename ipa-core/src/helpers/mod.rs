@@ -62,6 +62,7 @@ pub use transport::routing;
 pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
 use typenum::{Unsigned, U8};
 use x25519_dalek::PublicKey;
+pub use transport::{HelperResponse, RequestHandler, ApiError};
 
 use crate::{
     ff::Serializable,

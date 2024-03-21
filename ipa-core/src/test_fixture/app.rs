@@ -4,7 +4,7 @@ use generic_array::GenericArray;
 use typenum::Unsigned;
 
 use crate::{
-    app::Error,
+    helpers::ApiError,
     ff::Serializable,
     helpers::{
         query::{QueryConfig, QueryInput},
@@ -88,7 +88,7 @@ impl TestApp {
         &self,
         input: I,
         query_config: QueryConfig,
-    ) -> Result<QueryId, Error>
+    ) -> Result<QueryId, ApiError>
     where
         I: IntoShares<A>,
         A: IntoBuf,
@@ -117,7 +117,7 @@ impl TestApp {
     /// Propagates errors retrieving the query status.
     /// ## Panics
     /// Never.
-    pub fn query_status(&self, query_id: QueryId) -> Result<[QueryStatus; 3], Error> {
+    pub fn query_status(&self, query_id: QueryId) -> Result<[QueryStatus; 3], ApiError> {
         Ok((0..3)
             .map(|i| self.drivers[i].query_status(query_id))
             .collect::<Result<Vec<_>, _>>()?
@@ -129,7 +129,7 @@ impl TestApp {
     /// Returns an error if one or more helpers can't finish the processing.
     /// ## Panics
     /// Never.
-    pub async fn complete_query(&self, query_id: QueryId) -> Result<[Vec<u8>; 3], Error> {
+    pub async fn complete_query(&self, query_id: QueryId) -> Result<[Vec<u8>; 3], ApiError> {
         let results =
             try_join3_array([0, 1, 2].map(|i| self.drivers[i].complete_query(query_id))).await;
         self.network.reset();
@@ -145,7 +145,7 @@ impl TestApp {
         &self,
         input: I,
         query_config: QueryConfig,
-    ) -> Result<[Vec<u8>; 3], Error>
+    ) -> Result<[Vec<u8>; 3], ApiError>
     where
         I: IntoShares<A>,
         A: IntoBuf,

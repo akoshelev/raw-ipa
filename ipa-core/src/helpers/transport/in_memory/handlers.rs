@@ -87,7 +87,7 @@ impl RequestHandler<HelperIdentity> for HelperRequestHandler {
                         inner: Box::new(e),
                     })
             }
-            RouteId::Records => unreachable!(),
+            RouteId::Records | RouteId::QueryInput | RouteId::QueryStatus | RouteId::CompleteQuery => unreachable!(),
         }
     }
 }

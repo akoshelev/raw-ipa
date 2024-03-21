@@ -109,7 +109,7 @@ impl<I: TransportIdentity> InMemoryTransport<I> {
                                 streams.add_stream((query_id, from, gate), stream);
                                 Ok(())
                             }
-                            RouteId::ReceiveQuery | RouteId::PrepareQuery => {
+                            RouteId::ReceiveQuery | RouteId::PrepareQuery | RouteId::QueryInput | RouteId::QueryStatus | RouteId::CompleteQuery => {
                                 callbacks.handle(Clone::clone(&this), addr).await
                             }
                         };

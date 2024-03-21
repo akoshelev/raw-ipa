@@ -26,6 +26,7 @@ pub use stream::{
     BodyStream, BytesStream, LengthDelimitedStream, RecordsStream, StreamCollection, StreamKey,
     WrappedBoxBodyStream,
 };
+pub use handler::{RequestHandler, HelperResponse, Error as ApiError};
 
 use crate::{
     helpers::{Role, TransportIdentity},
