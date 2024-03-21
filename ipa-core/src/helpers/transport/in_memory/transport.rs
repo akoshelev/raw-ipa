@@ -23,18 +23,19 @@ use crate::{
     helpers::{
         HelperIdentity,
         NoResourceIdentifier, QueryIdBinding, ReceiveRecords, RouteParams, StepBinding,
-        StreamCollection, Transport, transport::in_memory::handlers::{HelperRequestHandler, RequestHandler}, TransportIdentity,
+        StreamCollection, Transport, TransportIdentity,
     },
     protocol::{QueryId, step::Gate},
     sharding::ShardIndex,
     sync::{Arc, Weak},
 };
+use crate::helpers::{ApiError, BodyStream, HelperResponse, RequestHandler};
 use crate::helpers::transport::routing::{Addr, RouteId};
 
 type Packet<I> = (
     Addr<I>,
     InMemoryStream,
-    oneshot::Sender<Result<(), Error<I>>>,
+    oneshot::Sender<Result<HelperResponse, ApiError>>,
 );
 type ConnectionTx<I> = Sender<Packet<I>>;
 type ConnectionRx<I> = Receiver<Packet<I>>;
@@ -88,9 +89,9 @@ impl<I: TransportIdentity> InMemoryTransport<I> {
     /// out and processes it, the same way as query processor does. That will allow all tasks to be
     /// created in one place (driver). It does not affect the [`Transport`] interface,
     /// so I'll leave it as is for now.
-    fn listen<L: ListenerSetup<Identity = I>>(
+    fn listen(
         self: &Arc<Self>,
-        mut callbacks: L::Handler,
+        handler: Option<Box<dyn RequestHandler<Identity = I>>>,
         mut rx: ConnectionRx<I>,
     ) {
         tokio::spawn(
@@ -107,10 +108,11 @@ impl<I: TransportIdentity> InMemoryTransport<I> {
                                 let gate = addr.gate.unwrap();
                                 let from = addr.origin.unwrap();
                                 streams.add_stream((query_id, from, gate), stream);
-                                Ok(())
+                                Ok(HelperResponse::ok())
                             }
                             RouteId::ReceiveQuery | RouteId::PrepareQuery | RouteId::QueryInput | RouteId::QueryStatus | RouteId::CompleteQuery => {
-                                callbacks.handle(Clone::clone(&this), addr).await
+                                handler.as_ref().expect("Request handler is provided").handle(addr, BodyStream::from_infallible(stream.map(Vec::into_boxed_slice))).await
+                                // callbacks.handle(Clone::clone(&this), addr).await
                             }
                         };
 
@@ -182,8 +184,7 @@ impl<I: TransportIdentity> Transport for Weak<InMemoryTransport<I>> {
             .map_err(|_recv_error| Error::Rejected {
                 dest,
                 inner: "channel closed".into(),
-            })
-            .and_then(convert::identity)
+            })?.map_err(|e| Error::Rejected { dest, inner: e.into() }).map(|_| ())
     }
 
     fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(
@@ -286,49 +287,52 @@ impl<I: TransportIdentity> Setup<I> {
             .is_none());
     }
 
-    fn into_active_conn<H: Into<<Self as ListenerSetup>::Handler>>(
+
+    pub(crate) fn start(self, handler: Option<Box<dyn RequestHandler<Identity = I>>>) -> Arc<InMemoryTransport<I>> {
+        self.into_active_conn(handler).1
+    }
+
+    fn into_active_conn(
         self,
-        callbacks: H,
+        handler: Option<Box<dyn RequestHandler<Identity = I>>>,
     ) -> (ConnectionTx<I>, Arc<InMemoryTransport<I>>)
-    where
-        Self: ListenerSetup<Identity = I>,
     {
         let transport = Arc::new(InMemoryTransport::new(self.identity, self.connections));
-        transport.listen::<Self>(callbacks.into(), self.rx);
+        transport.listen(handler, self.rx);
 
         (self.tx, transport)
     }
 }
 
-/// Trait to tie up different transports to the requests handlers they can use inside their
-/// listen loop.
-pub trait ListenerSetup {
-    type Identity: TransportIdentity;
-    type Handler: RequestHandler<Self::Identity> + 'static;
-    type Listener;
-
-    fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener;
-}
-
-impl ListenerSetup for Setup<HelperIdentity> {
-    type Identity = HelperIdentity;
-    type Handler = HelperRequestHandler;
-    type Listener = Arc<InMemoryTransport<Self::Identity>>;
-
-    fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener {
-        self.into_active_conn(handler).1
-    }
-}
-
-impl ListenerSetup for Setup<ShardIndex> {
-    type Identity = ShardIndex;
-    type Handler = ();
-    type Listener = Arc<InMemoryTransport<Self::Identity>>;
-
-    fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener {
-        self.into_active_conn(handler).1
-    }
-}
+// /// Trait to tie up different transports to the requests handlers they can use inside their
+// /// listen loop.
+// pub trait ListenerSetup {
+//     type Identity: TransportIdentity;
+//     type Handler: RequestHandler<Self::Identity> + 'static;
+//     type Listener;
+//
+//     fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener;
+// }
+//
+// impl ListenerSetup for Setup<HelperIdentity> {
+//     type Identity = HelperIdentity;
+//     type Handler = HelperRequestHandler;
+//     type Listener = Arc<InMemoryTransport<Self::Identity>>;
+//
+//     fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener {
+//         self.into_active_conn(handler).1
+//     }
+// }
+//
+// impl ListenerSetup for Setup<ShardIndex> {
+//     type Identity = ShardIndex;
+//     type Handler = ();
+//     type Listener = Arc<InMemoryTransport<Self::Identity>>;
+//
+//     fn start<I: Into<Self::Handler>>(self, handler: I) -> Self::Listener {
+//         self.into_active_conn(handler).1
+//     }
+// }
 
 #[cfg(all(test, unit_test))]
 mod tests {

@@ -1,11 +1,14 @@
 use std::future::Future;
+use async_trait::async_trait;
 use crate::error::BoxError;
 use crate::helpers::transport::routing::Addr;
-use crate::helpers::{BodyStream, HelperIdentity, TransportIdentity};
+use crate::helpers::{BodyStream, BytesStream, HelperIdentity, TransportIdentity};
 use crate::helpers::query::PrepareQuery;
+use crate::helpers::transport::stream::BoxBytesStream;
 use crate::query::{NewQueryError, PrepareQueryError, ProtocolResult, QueryCompletionError, QueryInputError, QueryStatus, QueryStatusError};
 
 
+#[derive(Debug)]
 pub struct HelperResponse;
 
 impl HelperResponse {
@@ -58,6 +61,9 @@ pub enum Error {
     BadRequest(BoxError)
 }
 
-pub trait RequestHandler {
-    fn handle(&self, req: Addr<HelperIdentity>, data: BodyStream) -> impl Future<Output = Result<HelperResponse, Error>>;
+/// There is a limitation for RPITIT that traits can't be made object-safe, hence the use of async_trait
+#[async_trait]
+pub trait RequestHandler : Send {
+    type Identity: TransportIdentity;
+    async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error>;
 }

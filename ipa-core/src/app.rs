@@ -1,8 +1,9 @@
 use std::future::Future;
+use async_trait::async_trait;
 use crate::{
     helpers::{
         query::{QueryConfig, QueryInput},
-        Transport, TransportCallbacks, TransportImpl,
+        Transport, TransportImpl,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,
@@ -12,7 +13,7 @@ use crate::{
     },
     sync::Arc,
 };
-use crate::helpers::{ApiError, BodyStream, HelperIdentity, HelperResponse, RequestHandler};
+use crate::helpers::{ApiError, BodyStream, HelperIdentity, HelperResponse, RequestHandler, TransportIdentity};
 use crate::helpers::query::PrepareQuery;
 use crate::helpers::routing::{Addr, RouteId};
 
@@ -22,14 +23,17 @@ pub struct Setup {
 
 /// The API layer to interact with a helper.
 #[must_use]
+#[derive(Clone)]
 pub struct HelperApp {
     query_processor: Arc<QueryProcessor>,
     transport: TransportImpl,
 }
 
 
+#[async_trait]
 impl RequestHandler for HelperApp {
-    fn handle(&self, req: Addr<HelperIdentity>, data: BodyStream) -> impl Future<Output=Result<HelperResponse, ApiError>> {
+    type Identity = HelperIdentity;
+    async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, ApiError> {
         fn ext_query_id(req: &Addr<HelperIdentity>) -> Result<QueryId, ApiError> {
             req.query_id.ok_or_else(|| ApiError::BadRequest("Query input is missing query_id argument".into()))
         }
@@ -37,36 +41,32 @@ impl RequestHandler for HelperApp {
         let transport = self.transport.clone();
         let qp = Arc::clone(&self.query_processor);
 
-
-        async move {
-            Ok(match req.route {
-                RouteId::Records => { HelperResponse::ok() }
-                RouteId::ReceiveQuery => {
-                    let req = req.into::<QueryConfig>()?;
-                    HelperResponse::from(qp.new_query(transport, req).await?)
-
-                }
-                RouteId::PrepareQuery => {
-                    let req = req.into::<PrepareQuery>()?;
-                    HelperResponse::from(qp.prepare(&transport, req)?)
-                }
-                RouteId::QueryInput => {
-                    let query_id = ext_query_id(&req)?;
-                    HelperResponse::from(qp.receive_inputs(transport, QueryInput {
-                        query_id,
-                        input_stream: data,
-                    })?)
-                }
-                RouteId::QueryStatus => {
-                    let query_id = ext_query_id(&req)?;
-                    HelperResponse::from(qp.query_status(query_id)?)
-                }
-                RouteId::CompleteQuery => {
-                    let query_id = ext_query_id(&req)?;
-                    HelperResponse::from(qp.complete(query_id).await?)
-                }
-            })
-        }
+        Ok(match req.route {
+            RouteId::Records => { HelperResponse::ok() }
+            RouteId::ReceiveQuery => {
+                let req = req.into::<QueryConfig>()?;
+                HelperResponse::from(qp.new_query(transport, req).await?)
+            }
+            RouteId::PrepareQuery => {
+                let req = req.into::<PrepareQuery>()?;
+                HelperResponse::from(qp.prepare(&transport, req)?)
+            }
+            RouteId::QueryInput => {
+                let query_id = ext_query_id(&req)?;
+                HelperResponse::from(qp.receive_inputs(transport, QueryInput {
+                    query_id,
+                    input_stream: data,
+                })?)
+            }
+            RouteId::QueryStatus => {
+                let query_id = ext_query_id(&req)?;
+                HelperResponse::from(qp.query_status(query_id)?)
+            }
+            RouteId::CompleteQuery => {
+                let query_id = ext_query_id(&req)?;
+                HelperResponse::from(qp.complete(query_id).await?)
+            }
+        })
         // receive_query: Box::new(move |transport: TransportImpl, receive_query| {
         //     let processor = Arc::clone(&rqp);
         //     Box::pin(async move {
@@ -94,64 +94,54 @@ impl RequestHandler for HelperApp {
     }
 }
 
+pub struct RequestHandlerSetup {
+
+}
+
+struct Foo;
+
+#[async_trait]
+impl RequestHandler for Foo {
+    type Identity = HelperIdentity;
+
+    async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, ApiError> {
+        todo!()
+    }
+}
+
+impl RequestHandlerSetup {
+    pub fn make_handler(&self) -> impl RequestHandler<Identity = HelperIdentity> {
+        Foo
+    }
+
+    pub fn finish(self, transport: TransportImpl) {
+        todo!()
+    }
+}
+
+
 impl Setup {
     #[must_use]
-    pub fn new() -> (Self, TransportCallbacks<TransportImpl>) {
+    pub fn new() -> (Self, RequestHandlerSetup) {
         Self::with_key_registry(KeyRegistry::empty())
     }
 
     #[must_use]
     pub fn with_key_registry(
         key_registry: KeyRegistry<KeyPair>,
-    ) -> (Self, TransportCallbacks<TransportImpl>) {
+    ) -> (Self, RequestHandlerSetup) {
         let query_processor = Arc::new(QueryProcessor::new(key_registry));
         let this = Self {
             query_processor: Arc::clone(&query_processor),
         };
 
         // TODO: weak reference to query processor to prevent mem leak
-        (this, Self::callbacks(&query_processor))
+        (this, RequestHandlerSetup {})
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
     pub fn connect(self, transport: TransportImpl) -> HelperApp {
         HelperApp::new(transport, self.query_processor)
-    }
-
-    /// Create callbacks that tie up query processor and transport.
-    fn callbacks(query_processor: &Arc<QueryProcessor>) -> TransportCallbacks<TransportImpl> {
-        let rqp = Arc::clone(query_processor);
-        let pqp = Arc::clone(query_processor);
-        let iqp = Arc::clone(query_processor);
-        let sqp = Arc::clone(query_processor);
-        let cqp = Arc::clone(query_processor);
-
-        TransportCallbacks {
-            receive_query: Box::new(move |transport: TransportImpl, receive_query| {
-                let processor = Arc::clone(&rqp);
-                Box::pin(async move {
-                    let r = processor.new_query(transport, receive_query).await?;
-
-                    Ok(r.query_id)
-                })
-            }),
-            prepare_query: Box::new(move |transport: TransportImpl, prepare_query| {
-                let processor = Arc::clone(&pqp);
-                Box::pin(async move { processor.prepare(&transport, prepare_query) })
-            }),
-            query_input: Box::new(move |transport: TransportImpl, query_input| {
-                let processor = Arc::clone(&iqp);
-                Box::pin(async move { processor.receive_inputs(transport, query_input) })
-            }),
-            query_status: Box::new(move |_transport: TransportImpl, query_id| {
-                let processor = Arc::clone(&sqp);
-                Box::pin(async move { processor.query_status(query_id) })
-            }),
-            complete_query: Box::new(move |_transport: TransportImpl, query_id| {
-                let processor = Arc::clone(&cqp);
-                Box::pin(async move { processor.complete(query_id).await })
-            }),
-        }
     }
 }
 

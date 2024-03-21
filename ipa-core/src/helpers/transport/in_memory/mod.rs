@@ -2,13 +2,15 @@ mod handlers;
 mod sharding;
 mod transport;
 
+use std::array;
 pub use sharding::InMemoryShardNetwork;
 pub use transport::Setup;
 
 use crate::{
-    helpers::{HelperIdentity, transport::in_memory::transport::ListenerSetup, TransportCallbacks},
+    helpers::{HelperIdentity},
     sync::{Arc, Weak},
 };
+use crate::helpers::RequestHandler;
 
 pub type InMemoryTransport<I> = Weak<transport::InMemoryTransport<I>>;
 
@@ -20,17 +22,13 @@ pub struct InMemoryMpcNetwork {
 
 impl Default for InMemoryMpcNetwork {
     fn default() -> Self {
-        Self::new([
-            TransportCallbacks::default(),
-            TransportCallbacks::default(),
-            TransportCallbacks::default(),
-        ])
+        Self::new(array::from_fn(|_| None))
     }
 }
 
 impl InMemoryMpcNetwork {
     #[must_use]
-    pub fn new(callbacks: [TransportCallbacks<InMemoryTransport<HelperIdentity>>; 3]) -> Self {
+    pub fn new(handlers: [Option<Box<dyn RequestHandler<Identity = HelperIdentity>>>; 3]) -> Self {
         let [mut first, mut second, mut third]: [_; 3] =
             HelperIdentity::make_three().map(Setup::new);
 
@@ -38,7 +36,7 @@ impl InMemoryMpcNetwork {
         second.connect(&mut third);
         third.connect(&mut first);
 
-        let [cb1, cb2, cb3] = callbacks;
+        let [cb1, cb2, cb3] = handlers;
 
         Self {
             transports: [first.start(cb1), second.start(cb2), third.start(cb3)],

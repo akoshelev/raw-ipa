@@ -1,3 +1,4 @@
+use std::array;
 use std::iter::zip;
 
 use generic_array::GenericArray;
@@ -16,6 +17,8 @@ use crate::{
     test_fixture::try_join3_array,
     AppSetup, HelperApp,
 };
+use crate::app::RequestHandlerSetup;
+use crate::helpers::{HelperIdentity, RequestHandler};
 
 pub trait IntoBuf {
     fn into_buf(self) -> Vec<u8>;
@@ -60,15 +63,19 @@ fn unzip_tuple_array<T, U>(input: [(T, U); 3]) -> ([T; 3], [U; 3]) {
 
 impl Default for TestApp {
     fn default() -> Self {
-        let (setup, callbacks) =
-            unzip_tuple_array([AppSetup::new(), AppSetup::new(), AppSetup::new()]);
+        let (setup, mut handlers) = unzip_tuple_array(array::from_fn(|_| AppSetup::new()));
+        let handlers_ref = [&handlers[0], &handlers[1], &handlers[2]];
 
-        let network = InMemoryMpcNetwork::new(callbacks);
+        let network = InMemoryMpcNetwork::new(handlers_ref.map(RequestHandlerSetup::make_handler).map(|v| Box::new(v) as Box<dyn RequestHandler<Identity = HelperIdentity>>).map(Some));
         let drivers = network
             .transports()
             .iter()
             .zip(setup)
-            .map(|(t, s)| s.connect(Clone::clone(t)))
+            .zip(handlers.into_iter())
+            .map(|((t, s), handler_setup)| {
+                handler_setup.finish(t.clone());
+                s.connect(Clone::clone(t))
+            })
             .collect::<Vec<_>>()
             .try_into()
             .map_err(|_| "infallible")

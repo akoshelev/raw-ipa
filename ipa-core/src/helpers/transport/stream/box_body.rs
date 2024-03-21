@@ -2,8 +2,10 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use bytes::Bytes;
 
 use futures::Stream;
+use futures::stream::StreamExt;
 
 use crate::helpers::transport::stream::BoxBytesStream;
 
@@ -16,7 +18,12 @@ impl WrappedBoxBodyStream {
     pub fn new(inner: axum::extract::BodyStream) -> Self {
         Self(Box::pin(super::WrappedAxumBodyStream::new_internal(inner)))
     }
+
+    pub fn from_infallible<S: Stream<Item = Box<[u8]>> + Send + 'static>(input: S) -> Self {
+        Self(Box::pin(input.map(Bytes::from).map(Ok)))
+    }
 }
+
 
 impl Stream for WrappedBoxBodyStream {
     type Item = <BoxBytesStream as Stream>::Item;
