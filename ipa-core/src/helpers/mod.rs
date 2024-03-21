@@ -54,9 +54,10 @@ pub use transport::WrappedAxumBodyStream;
 pub use transport::{
     callbacks::*, query, BodyStream, BytesStream, Identity as TransportIdentity,
     LengthDelimitedStream, LogErrors, NoResourceIdentifier, QueryIdBinding, ReceiveRecords,
-    RecordsStream, RouteId, RouteParams, StepBinding, StreamCollection, StreamKey, Transport,
+    RecordsStream, RouteParams, StepBinding, StreamCollection, StreamKey, Transport,
     WrappedBoxBodyStream,
 };
+pub use transport::routing;
 #[cfg(feature = "in-memory-infra")]
 pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
 use typenum::{Unsigned, U8};

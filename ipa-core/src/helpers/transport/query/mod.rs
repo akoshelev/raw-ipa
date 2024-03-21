@@ -11,10 +11,11 @@ use crate::{
     ff::FieldType,
     helpers::{
         transport::{BodyStream, NoQueryId, NoStep},
-        GatewayConfig, RoleAssignment, RouteId, RouteParams,
+        GatewayConfig, RoleAssignment, RouteParams,
     },
     protocol::{step::Step, QueryId},
 };
+use crate::helpers::transport::routing::RouteId;
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 #[cfg_attr(feature = "enable-serde", derive(Serialize))]

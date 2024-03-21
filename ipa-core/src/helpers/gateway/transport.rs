@@ -3,11 +3,12 @@ use futures::Stream;
 
 use crate::{
     helpers::{
-        NoResourceIdentifier, QueryIdBinding, Role, RoleAssignment, RouteId, RouteParams,
+        NoResourceIdentifier, QueryIdBinding, Role, RoleAssignment, RouteParams,
         StepBinding, Transport, TransportImpl,
     },
     protocol::{step::Gate, QueryId},
 };
+use crate::helpers::transport::routing::RouteId;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to send to {0:?}: {1:?}")]

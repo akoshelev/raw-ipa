@@ -19,10 +19,11 @@ use crate::{
         gateway::{
             receive::GatewayReceivers, send::GatewaySenders, transport::RoleResolvingTransport,
         },
-        HelperChannelId, Message, Role, RoleAssignment, RouteId, TotalRecords, Transport,
+        HelperChannelId, Message, Role, RoleAssignment, TotalRecords, Transport,
     },
     protocol::QueryId,
 };
+use crate::helpers::transport::routing::RouteId;
 
 /// Alias for the currently configured transport.
 ///

@@ -74,12 +74,13 @@ mod tests {
     use tokio_stream::wrappers::ReceiverStream;
 
     use crate::{
-        helpers::{transport::in_memory::InMemoryShardNetwork, HelperIdentity, RouteId, Transport},
+        helpers::{transport::in_memory::InMemoryShardNetwork, HelperIdentity, Transport},
         protocol::{step::Gate, QueryId},
         sharding::ShardIndex,
         test_executor::run,
         test_fixture::logging,
     };
+    use crate::helpers::transport::routing::RouteId;
 
     fn shard_pairs<I: Into<ShardIndex>>(
         shard_count: I,

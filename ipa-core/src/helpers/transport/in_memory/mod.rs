@@ -1,5 +1,4 @@
 mod handlers;
-mod routing;
 mod sharding;
 mod transport;
 
@@ -7,7 +6,7 @@ pub use sharding::InMemoryShardNetwork;
 pub use transport::Setup;
 
 use crate::{
-    helpers::{transport::in_memory::transport::ListenerSetup, HelperIdentity, TransportCallbacks},
+    helpers::{HelperIdentity, transport::in_memory::transport::ListenerSetup, TransportCallbacks},
     sync::{Arc, Weak},
 };
 

@@ -21,17 +21,15 @@ use tracing::Instrument;
 use crate::{
     error::BoxError,
     helpers::{
-        transport::in_memory::{
-            handlers::{HelperRequestHandler, RequestHandler},
-            routing::Addr,
-        },
-        HelperIdentity, NoResourceIdentifier, QueryIdBinding, ReceiveRecords, RouteId, RouteParams,
-        StepBinding, StreamCollection, Transport, TransportIdentity,
+        HelperIdentity,
+        NoResourceIdentifier, QueryIdBinding, ReceiveRecords, RouteParams, StepBinding,
+        StreamCollection, Transport, transport::in_memory::handlers::{HelperRequestHandler, RequestHandler}, TransportIdentity,
     },
-    protocol::{step::Gate, QueryId},
+    protocol::{QueryId, step::Gate},
     sharding::ShardIndex,
     sync::{Arc, Weak},
 };
+use crate::helpers::transport::routing::{Addr, RouteId};
 
 type Packet<I> = (
     Addr<I>,
@@ -55,6 +53,11 @@ pub enum Error<I> {
         #[source]
         inner: BoxError,
     },
+    #[error(transparent)]
+    DeserializationFailed {
+        #[from]
+        inner: serde_json::Error
+    }
 }
 
 /// In-memory implementation of [`Transport`] backed by Tokio mpsc channels.
@@ -339,25 +342,26 @@ mod tests {
         task::Poll,
     };
 
-    use futures_util::{stream::poll_immediate, FutureExt, StreamExt};
+    use futures_util::{FutureExt, stream::poll_immediate, StreamExt};
     use tokio::sync::{mpsc::channel, oneshot};
 
     use crate::{
         ff::{FieldType, Fp31},
         helpers::{
-            query::{QueryConfig, QueryType::TestMultiply},
-            transport::in_memory::{
-                transport::{
+            HelperIdentity,
+            OrderingSender,
+            query::{QueryConfig, QueryType::TestMultiply}, Transport, transport::in_memory::{
+                InMemoryMpcNetwork,
+                Setup, transport::{
                     Addr, ConnectionTx, Error, InMemoryStream, InMemoryTransport, ListenerSetup,
                 },
-                InMemoryMpcNetwork, Setup,
-            },
-            HelperIdentity, OrderingSender, RouteId, Transport, TransportCallbacks,
+            }, TransportCallbacks,
             TransportIdentity,
         },
-        protocol::{step::Gate, QueryId},
+        protocol::{QueryId, step::Gate},
         sync::Arc,
     };
+    use crate::helpers::transport::routing::RouteId;
 
     const STEP: &str = "in-memory-transport";
 

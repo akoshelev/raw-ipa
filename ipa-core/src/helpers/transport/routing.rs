@@ -3,13 +3,22 @@ use std::{borrow::Borrow, fmt::Debug};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    helpers::{QueryIdBinding, RouteId, RouteParams, StepBinding, TransportIdentity},
+    helpers::{QueryIdBinding, RouteParams, StepBinding, TransportIdentity},
     protocol::{step::Gate, QueryId},
 };
 
+// The type of request made to an MPC helper.
+#[derive(Debug, Copy, Clone)]
+pub enum RouteId {
+    Records,
+    ReceiveQuery,
+    PrepareQuery,
+}
+
+
 /// The header/metadata of the incoming request.
 #[derive(Debug)]
-pub(super) struct Addr<I> {
+pub struct Addr<I> {
     pub route: RouteId,
     pub origin: Option<I>,
     pub query_id: Option<QueryId>,
@@ -36,8 +45,12 @@ impl<I: TransportIdentity> Addr<I> {
         }
     }
 
-    pub fn into<T: DeserializeOwned>(self) -> T {
-        serde_json::from_str(&self.params).unwrap()
+    /// Deserializes JSON-encoded request parameters into a client-supplied type `T`.
+    ///
+    /// ## Errors
+    /// If deseserialization fails
+    pub fn into<T: DeserializeOwned>(self) -> Result<T, serde_json::Error> {
+        serde_json::from_str(&self.params)
     }
 
     #[cfg(all(test, unit_test))]

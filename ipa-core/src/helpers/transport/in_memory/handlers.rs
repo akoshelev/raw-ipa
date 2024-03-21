@@ -2,13 +2,14 @@ use std::{collections::HashSet, future::Future};
 
 use crate::{
     helpers::{
+        HelperIdentity,
         query::{PrepareQuery, QueryConfig},
-        transport::in_memory::{routing::Addr, transport::Error, InMemoryTransport},
-        HelperIdentity, RouteId, Transport, TransportCallbacks, TransportIdentity,
+        Transport, transport::in_memory::{InMemoryTransport, transport::Error}, TransportCallbacks, TransportIdentity,
     },
     protocol::QueryId,
     sharding::ShardIndex,
 };
+use crate::helpers::transport::routing::{Addr, RouteId};
 
 /// Trait for in-memory request handlers. MPC handlers need to be able to process query requests,
 /// while shard traffic does not need to and therefore does not make use of it.
@@ -63,7 +64,7 @@ impl RequestHandler<HelperIdentity> for HelperRequestHandler {
         let dest = transport.identity();
         match addr.route {
             RouteId::ReceiveQuery => {
-                let qc = addr.into::<QueryConfig>();
+                let qc = addr.into::<QueryConfig>()?;
                 (self.callbacks.receive_query)(Transport::clone_ref(&transport), qc)
                     .await
                     .map(|query_id| {
@@ -78,7 +79,7 @@ impl RequestHandler<HelperIdentity> for HelperRequestHandler {
                     })
             }
             RouteId::PrepareQuery => {
-                let input = addr.into::<PrepareQuery>();
+                let input = addr.into::<PrepareQuery>()?;
                 (self.callbacks.prepare_query)(Transport::clone_ref(&transport), input)
                     .await
                     .map_err(|e| Error::Rejected {

@@ -16,13 +16,14 @@ use crate::{
         query::{PrepareQuery, QueryConfig, QueryInput},
         BodyStream, CompleteQueryResult, HelperIdentity, LogErrors, NoResourceIdentifier,
         PrepareQueryResult, QueryIdBinding, QueryInputResult, QueryStatusResult,
-        ReceiveQueryResult, ReceiveRecords, RouteId, RouteParams, StepBinding, StreamCollection,
+        ReceiveQueryResult, ReceiveRecords, RouteParams, StepBinding, StreamCollection,
         Transport, TransportCallbacks,
     },
     net::{client::MpcHelperClient, error::Error, MpcHelperServer},
     protocol::{step::Gate, QueryId},
     sync::Arc,
 };
+use crate::helpers::routing::RouteId;
 
 type LogHttpErrors = LogErrors<BodyStream, Bytes, BoxError>;
 

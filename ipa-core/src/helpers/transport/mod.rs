@@ -5,7 +5,7 @@ use futures::Stream;
 
 use crate::{
     helpers::HelperIdentity,
-    protocol::{step::Gate, QueryId},
+    protocol::{QueryId, step::Gate},
 };
 
 pub mod callbacks;
@@ -14,6 +14,8 @@ mod in_memory;
 pub mod query;
 mod receive;
 mod stream;
+pub mod routing;
+mod handler;
 
 #[cfg(feature = "in-memory-infra")]
 pub use in_memory::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
@@ -29,6 +31,7 @@ use crate::{
     helpers::{Role, TransportIdentity},
     sharding::ShardIndex,
 };
+use crate::helpers::transport::routing::RouteId;
 
 /// An identity of a peer that can be communicated with using [`Transport`]. There are currently two
 /// types of peers - helpers and shards.
@@ -56,13 +59,6 @@ where
 pub struct NoResourceIdentifier;
 pub struct NoQueryId;
 pub struct NoStep;
-
-#[derive(Debug, Copy, Clone)]
-pub enum RouteId {
-    Records,
-    ReceiveQuery,
-    PrepareQuery,
-}
 
 impl ResourceIdentifier for NoResourceIdentifier {}
 impl ResourceIdentifier for RouteId {}
