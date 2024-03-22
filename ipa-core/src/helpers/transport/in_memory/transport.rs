@@ -365,6 +365,8 @@ mod tests {
         protocol::{QueryId, step::Gate},
         sync::Arc,
     };
+    use crate::helpers::{HelperResponse, Role, RoleAssignment};
+    use crate::helpers::query::PrepareQuery;
     use crate::helpers::transport::routing::RouteId;
 
     const STEP: &str = "in-memory-transport";
@@ -383,83 +385,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn callback_is_called() {
-        panic!("test is broken");
-        // let (signal_tx, signal_rx) = oneshot::channel();
-        // let signal_tx = Arc::new(Mutex::new(Some(signal_tx)));
-        // let (tx, _transport) =
-        //     Setup::new(HelperIdentity::ONE).into_active_conn(TransportCallbacks {
+    async fn handler_is_called() {
+        let (signal_tx, signal_rx) = oneshot::channel();
+        let signal_tx = Arc::new(Mutex::new(Some(signal_tx)));
+        let (tx, _transport) =
+        // TransportCallbacks {
         //         receive_query: Box::new(move |_transport, query_config| {
         //             let signal_tx = Arc::clone(&signal_tx);
         //             Box::pin(async move {
-        //                 // this works because callback is only called once
-        //                 signal_tx
-        //                     .lock()
-        //                     .unwrap()
-        //                     .take()
-        //                     .expect("query callback invoked more than once")
-        //                     .send(query_config)
-        //                     .unwrap();
-        //                 Ok(QueryId)
         //             })
         //         }),
         //         ..Default::default()
-        //     });
-        // let expected = QueryConfig::new(TestMultiply, FieldType::Fp32BitPrime, 1u32).unwrap();
-        //
-        // send_and_ack(
-        //     &tx,
-        //     Addr::from_route(HelperIdentity::TWO, &expected),
-        //     InMemoryStream::empty(),
-        // )
-        // .await;
-        //
-        // assert_eq!(expected, signal_rx.await.unwrap());
+        //     }
+            Setup::new(HelperIdentity::ONE).into_active_conn(Some(Box::new(move |addr: Addr<HelperIdentity>, stream| {
+                    let RouteId::ReceiveQuery = addr.route else {
+                        panic!("unexpected call: {addr:?}")
+                    };
+                    let query_config = addr.into::<QueryConfig>().unwrap();
+
+                    // this works because callback is only called once
+                    signal_tx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("query callback invoked more than once")
+                        .send(query_config.clone())
+                        .unwrap();
+                    Ok(HelperResponse::from(PrepareQuery {
+                        query_id: QueryId,
+                        config: query_config,
+                        roles: RoleAssignment::try_from([Role::H1, Role::H2, Role::H3]).unwrap()
+                    }))
+                })
+            ));
+        let expected = QueryConfig::new(TestMultiply, FieldType::Fp32BitPrime, 1u32).unwrap();
+
+        send_and_ack(
+            &tx,
+            Addr::from_route(Some(HelperIdentity::TWO), &expected),
+            InMemoryStream::empty(),
+        )
+        .await;
+
+        assert_eq!(expected, signal_rx.await.unwrap());
     }
 
     #[tokio::test]
     async fn receive_not_ready() {
-        panic!("test is broken");
-        // let (tx, transport) =
-        //     Setup::new(HelperIdentity::ONE).into_active_conn(TransportCallbacks::default());
-        // let transport = Arc::downgrade(&transport);
-        // let expected = vec![vec![1], vec![2]];
-        //
-        // let mut stream = transport.receive(HelperIdentity::TWO, (QueryId, Gate::from(STEP)));
-        //
-        // // make sure it is not ready as it hasn't received the records stream yet.
-        // assert!(matches!(
-        //     poll_immediate(&mut stream).next().await,
-        //     Some(Poll::Pending)
-        // ));
-        // send_and_ack(
-        //     &tx,
-        //     Addr::records(HelperIdentity::TWO, QueryId, Gate::from(STEP)),
-        //     InMemoryStream::from_iter(expected.clone()),
-        // )
-        // .await;
-        //
-        // assert_eq!(expected, stream.collect::<Vec<_>>().await);
+        let (tx, transport) =
+            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+        let transport = Arc::downgrade(&transport);
+        let expected = vec![vec![1], vec![2]];
+
+        let mut stream = transport.receive(HelperIdentity::TWO, (QueryId, Gate::from(STEP)));
+
+        // make sure it is not ready as it hasn't received the records stream yet.
+        assert!(matches!(
+            poll_immediate(&mut stream).next().await,
+            Some(Poll::Pending)
+        ));
+        send_and_ack(
+            &tx,
+            Addr::records(HelperIdentity::TWO, QueryId, Gate::from(STEP)),
+            InMemoryStream::from_iter(expected.clone()),
+        )
+        .await;
+
+        assert_eq!(expected, stream.collect::<Vec<_>>().await);
     }
 
     #[tokio::test]
     async fn receive_ready() {
-        panic!("test is broken");
-        // let (tx, transport) =
-        //     Setup::new(HelperIdentity::ONE).into_active_conn(TransportCallbacks::default());
-        // let expected = vec![vec![1], vec![2]];
-        //
-        // send_and_ack(
-        //     &tx,
-        //     Addr::records(HelperIdentity::TWO, QueryId, Gate::from(STEP)),
-        //     InMemoryStream::from_iter(expected.clone()),
-        // )
-        // .await;
-        //
-        // let stream =
-        //     Arc::downgrade(&transport).receive(HelperIdentity::TWO, (QueryId, Gate::from(STEP)));
-        //
-        // assert_eq!(expected, stream.collect::<Vec<_>>().await);
+        let (tx, transport) =
+            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+        let expected = vec![vec![1], vec![2]];
+
+        send_and_ack(
+            &tx,
+            Addr::records(HelperIdentity::TWO, QueryId, Gate::from(STEP)),
+            InMemoryStream::from_iter(expected.clone()),
+        )
+        .await;
+
+        let stream =
+            Arc::downgrade(&transport).receive(HelperIdentity::TWO, (QueryId, Gate::from(STEP)));
+
+        assert_eq!(expected, stream.collect::<Vec<_>>().await);
     }
 
     #[tokio::test]
@@ -503,65 +514,63 @@ mod tests {
             drop(stream_tx);
             assert!(poll_immediate(&mut recv).next().await.is_none());
         }
-        panic!("test is broken");
 
-        // let mut setup1 = Setup::new(HelperIdentity::ONE);
-        // let mut setup2 = Setup::new(HelperIdentity::TWO);
-        //
-        // setup1.connect(&mut setup2);
-        //
-        // let transport1 = setup1.start(TransportCallbacks::default());
-        // let transport2 = setup2.start(TransportCallbacks::default());
-        // let transports = HashMap::from([
-        //     (HelperIdentity::ONE, Arc::downgrade(&transport1)),
-        //     (HelperIdentity::TWO, Arc::downgrade(&transport2)),
-        // ]);
-        //
-        // send_and_verify(HelperIdentity::ONE, HelperIdentity::TWO, &transports).await;
-        // send_and_verify(HelperIdentity::TWO, HelperIdentity::ONE, &transports).await;
+        let mut setup1 = Setup::new(HelperIdentity::ONE);
+        let mut setup2 = Setup::new(HelperIdentity::TWO);
+
+        setup1.connect(&mut setup2);
+
+        let transport1 = setup1.start(None);
+        let transport2 = setup2.start(None);
+        let transports = HashMap::from([
+            (HelperIdentity::ONE, Arc::downgrade(&transport1)),
+            (HelperIdentity::TWO, Arc::downgrade(&transport2)),
+        ]);
+
+        send_and_verify(HelperIdentity::ONE, HelperIdentity::TWO, &transports).await;
+        send_and_verify(HelperIdentity::TWO, HelperIdentity::ONE, &transports).await;
     }
 
     #[tokio::test]
     async fn panic_if_stream_received_twice() {
-        panic!("test is broken");
-        // let (tx, owned_transport) =
-        //     Setup::new(HelperIdentity::ONE).into_active_conn(TransportCallbacks::default());
-        // let gate = Gate::from(STEP);
-        // let (stream_tx, stream_rx) = channel(1);
-        // let stream = InMemoryStream::from(stream_rx);
-        // let transport = Arc::downgrade(&owned_transport);
-        //
-        // let mut recv_stream = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
-        // send_and_ack(
-        //     &tx,
-        //     Addr::records(HelperIdentity::TWO, QueryId, gate.clone()),
-        //     stream,
-        // )
-        // .await;
-        //
-        // stream_tx.send(vec![4, 5, 6]).await.unwrap();
-        // assert_eq!(vec![4, 5, 6], recv_stream.next().await.unwrap());
-        //
-        // // the same stream cannot be received again
-        // let mut err_recv = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
-        // let err = AssertUnwindSafe(err_recv.next()).catch_unwind().await;
-        // assert_eq!(
-        //     Some(true),
-        //     err.unwrap_err()
-        //         .downcast_ref::<String>()
-        //         .map(|s| { s.contains("stream has been consumed already") })
-        // );
-        //
-        // // even after the input stream is closed
-        // drop(stream_tx);
-        // let mut err_recv = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
-        // let err = AssertUnwindSafe(err_recv.next()).catch_unwind().await;
-        // assert_eq!(
-        //     Some(true),
-        //     err.unwrap_err()
-        //         .downcast_ref::<String>()
-        //         .map(|s| { s.contains("stream has been consumed already") })
-        // );
+        let (tx, owned_transport) =
+            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+        let gate = Gate::from(STEP);
+        let (stream_tx, stream_rx) = channel(1);
+        let stream = InMemoryStream::from(stream_rx);
+        let transport = Arc::downgrade(&owned_transport);
+
+        let mut recv_stream = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
+        send_and_ack(
+            &tx,
+            Addr::records(HelperIdentity::TWO, QueryId, gate.clone()),
+            stream,
+        )
+        .await;
+
+        stream_tx.send(vec![4, 5, 6]).await.unwrap();
+        assert_eq!(vec![4, 5, 6], recv_stream.next().await.unwrap());
+
+        // the same stream cannot be received again
+        let mut err_recv = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
+        let err = AssertUnwindSafe(err_recv.next()).catch_unwind().await;
+        assert_eq!(
+            Some(true),
+            err.unwrap_err()
+                .downcast_ref::<String>()
+                .map(|s| { s.contains("stream has been consumed already") })
+        );
+
+        // even after the input stream is closed
+        drop(stream_tx);
+        let mut err_recv = transport.receive(HelperIdentity::TWO, (QueryId, gate.clone()));
+        let err = AssertUnwindSafe(err_recv.next()).catch_unwind().await;
+        assert_eq!(
+            Some(true),
+            err.unwrap_err()
+                .downcast_ref::<String>()
+                .map(|s| { s.contains("stream has been consumed already") })
+        );
     }
 
     #[tokio::test]

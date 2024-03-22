@@ -110,6 +110,19 @@ pub trait RequestHandler : Send + Sync + 'static {
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error>;
 }
 
+// #[async_trait]
+// impl <I, F<I>: Fn(Addr<I>, BodyStream) -> Result<HelperResponse, Error>> RequestHandler for F<I> {
+
+// }
+#[async_trait]
+impl <F> RequestHandler for F where F: Fn(Addr<HelperIdentity>, BodyStream) -> Result<HelperResponse, Error> + Send + Sync + 'static {
+    type Identity = HelperIdentity;
+
+    async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error> {
+        self(req, data)
+    }
+}
+
 pub struct PanickingHandler<I: TransportIdentity> {
     phantom: PhantomData<I>
 }
