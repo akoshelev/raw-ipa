@@ -55,14 +55,14 @@ pub use transport::{
     callbacks::*, query, BodyStream, BytesStream, Identity as TransportIdentity,
     LengthDelimitedStream, LogErrors, NoResourceIdentifier, QueryIdBinding, ReceiveRecords,
     RecordsStream, RouteParams, StepBinding, StreamCollection, StreamKey, Transport,
-    WrappedBoxBodyStream,
+    WrappedBoxBodyStream, NoQueryId, NoStep
 };
 pub use transport::routing;
 #[cfg(feature = "in-memory-infra")]
 pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
 use typenum::{Unsigned, U8};
 use x25519_dalek::PublicKey;
-pub use transport::{HelperResponse, RequestHandler, ApiError};
+pub use transport::{HelperResponse, RequestHandler, ApiError, PanickingHandler};
 
 use crate::{
     ff::Serializable,

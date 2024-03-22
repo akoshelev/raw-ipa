@@ -12,10 +12,14 @@ async fn handler(
     req: http_serde::query::input::Request,
 ) -> Result<(), Error> {
     let transport = Transport::clone_ref(&*transport);
-    transport
-        .query_input(req.query_input)
-        .await
-        .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))
+    let _ = transport.handle_query_req(None, req.query_input).await
+       .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(())
+    // transport
+    //     .query_input(req.query_input)
+    //     .await
+    //     .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 pub fn router(transport: Arc<HttpTransport>) -> Router {
@@ -30,7 +34,7 @@ mod tests {
     use hyper::{Body, StatusCode};
 
     use crate::{
-        helpers::{query::QueryInput, BytesStream, TransportCallbacks},
+        helpers::{query::QueryInput, BytesStream},
         net::{
             http_serde,
             server::handlers::query::{
@@ -44,24 +48,25 @@ mod tests {
 
     #[tokio::test]
     async fn input_test() {
-        let expected_query_id = QueryId;
-        let expected_input = &[4u8; 4];
-        let cb = TransportCallbacks {
-            query_input: Box::new(move |_transport, query_input| {
-                Box::pin(async move {
-                    assert_eq!(query_input.query_id, expected_query_id);
-                    assert_eq!(&query_input.input_stream.to_vec().await, expected_input);
-                    Ok(())
-                })
-            }),
-            ..Default::default()
-        };
-        let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        let req = http_serde::query::input::Request::new(QueryInput {
-            query_id: expected_query_id,
-            input_stream: expected_input.to_vec().into(),
-        });
-        handler(Extension(transport), req).await.unwrap();
+        panic!("test is broken");
+        // let expected_query_id = QueryId;
+        // let expected_input = &[4u8; 4];
+        // let cb = TransportCallbacks {
+        //     query_input: Box::new(move |_transport, query_input| {
+        //         Box::pin(async move {
+        //             assert_eq!(query_input.query_id, expected_query_id);
+        //             assert_eq!(&query_input.input_stream.to_vec().await, expected_input);
+        //             Ok(())
+        //         })
+        //     }),
+        //     ..Default::default()
+        // };
+        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
+        // let req = http_serde::query::input::Request::new(QueryInput {
+        //     query_id: expected_query_id,
+        //     input_stream: expected_input.to_vec().into(),
+        // });
+        // handler(Extension(transport), req).await.unwrap();
     }
 
     struct OverrideReq {

@@ -2,6 +2,7 @@ use std::{borrow::Borrow, fmt::Debug, hash::Hash};
 
 use async_trait::async_trait;
 use futures::Stream;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     helpers::HelperIdentity,
@@ -26,7 +27,7 @@ pub use stream::{
     BodyStream, BytesStream, LengthDelimitedStream, RecordsStream, StreamCollection, StreamKey,
     WrappedBoxBodyStream,
 };
-pub use handler::{RequestHandler, HelperResponse, Error as ApiError};
+pub use handler::{RequestHandler, HelperResponse, PanickingHandler, Error as ApiError};
 
 use crate::{
     helpers::{Role, TransportIdentity},
@@ -87,6 +88,9 @@ where
     Option<QueryId>: From<Q>,
     Option<Gate>: From<S>,
 {
+    // This is not great and definitely not a zero-cost abstraction. We serialize parameters
+    // here, only to deserialize them again inside the request handler. I am not too worried
+    // about it as long as the data we serialize is tiny, which is the case right now.
     type Params: Borrow<str>;
 
     fn resource_identifier(&self) -> R;

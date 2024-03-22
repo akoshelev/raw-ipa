@@ -185,6 +185,7 @@ pub mod query {
             },
             protocol::QueryId,
         };
+        use crate::helpers::HelperResponse;
 
         #[derive(Debug, Clone)]
         pub struct Request {
@@ -227,6 +228,12 @@ pub mod query {
         #[cfg_attr(feature = "enable-serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct ResponseBody {
             pub query_id: QueryId,
+        }
+
+        impl From<HelperResponse> for ResponseBody {
+            fn from(value: HelperResponse) -> Self {
+                value.into_owned()
+            }
         }
 
         pub const AXUM_PATH: &str = "/";
@@ -463,10 +470,32 @@ pub mod query {
         use serde::{Deserialize, Serialize};
 
         use crate::{net::Error, protocol::QueryId, query::QueryStatus};
+        use crate::helpers::{HelperResponse, NoStep, RouteParams};
+        use crate::helpers::routing::RouteId;
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
         pub struct Request {
             pub query_id: QueryId,
+        }
+
+        impl RouteParams<RouteId, QueryId, NoStep> for Request {
+            type Params = String;
+
+            fn resource_identifier(&self) -> RouteId {
+                RouteId::QueryStatus
+            }
+
+            fn query_id(&self) -> QueryId {
+                self.query_id
+            }
+
+            fn gate(&self) -> NoStep {
+                NoStep
+            }
+
+            fn extra(&self) -> Self::Params {
+                serde_json::to_string(self).unwrap()
+            }
         }
 
         impl Request {
@@ -509,6 +538,12 @@ pub mod query {
             pub status: QueryStatus,
         }
 
+        impl From<HelperResponse> for ResponseBody {
+            fn from(value: HelperResponse) -> Self {
+                serde_json::from_slice(value.into_body().as_slice()).unwrap()
+            }
+        }
+
         pub const AXUM_PATH: &str = "/:query_id";
     }
 
@@ -517,10 +552,32 @@ pub mod query {
         use axum::extract::{FromRequest, Path, RequestParts};
 
         use crate::{net::Error, protocol::QueryId};
+        use crate::helpers::{NoStep, RouteParams};
+        use crate::helpers::routing::RouteId;
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
         pub struct Request {
             pub query_id: QueryId,
+        }
+
+        impl RouteParams<RouteId, QueryId, NoStep> for Request {
+            type Params = String;
+
+            fn resource_identifier(&self) -> RouteId {
+                RouteId::CompleteQuery
+            }
+
+            fn query_id(&self) -> QueryId {
+                self.query_id
+            }
+
+            fn gate(&self) -> NoStep {
+                NoStep
+            }
+
+            fn extra(&self) -> Self::Params {
+                serde_json::to_string(self).unwrap()
+            }
         }
 
         impl Request {

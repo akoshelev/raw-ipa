@@ -6,6 +6,8 @@ use crate::{
     query::PrepareQueryError,
     sync::Arc,
 };
+use crate::net::Error;
+use crate::helpers::Transport;
 
 /// Called by whichever peer helper is the leader for an individual query, to initiatialize
 /// processing of that query.
@@ -13,8 +15,13 @@ async fn handler(
     transport: Extension<Arc<HttpTransport>>,
     _: Extension<ClientIdentity>, // require that client is an authenticated helper
     req: http_serde::query::prepare::Request,
-) -> Result<(), PrepareQueryError> {
-    Arc::clone(&transport).prepare_query(req.data).await
+) -> Result<(), Error> {
+    let transport = Transport::clone_ref(&*transport);
+    let _ = transport.handle_query_req(None, req.data).await
+        .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(())
+    // Arc::clone(&transport).prepare_query(req.data).await
 }
 
 impl IntoResponse for PrepareQueryError {
@@ -40,7 +47,7 @@ mod tests {
         ff::FieldType,
         helpers::{
             query::{PrepareQuery, QueryConfig, QueryType::TestMultiply},
-            HelperIdentity, RoleAssignment, TransportCallbacks,
+            HelperIdentity, RoleAssignment,
         },
         net::{
             http_serde,
@@ -59,28 +66,29 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_test() {
-        let req = http_serde::query::prepare::Request::new(PrepareQuery {
-            query_id: QueryId,
-            config: QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap(),
-            roles: RoleAssignment::new(HelperIdentity::make_three()),
-        });
-        let expected_prepare_query = req.data.clone();
-
-        let cb = TransportCallbacks {
-            prepare_query: Box::new(move |_transport, prepare_query| {
-                assert_eq!(prepare_query, expected_prepare_query);
-                Box::pin(ready(Ok(())))
-            }),
-            ..Default::default()
-        };
-        let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        handler(
-            Extension(transport),
-            Extension(ClientIdentity(HelperIdentity::TWO)),
-            req.clone(),
-        )
-        .await
-        .unwrap();
+        panic!("test is broken");
+        // let req = http_serde::query::prepare::Request::new(PrepareQuery {
+        //     query_id: QueryId,
+        //     config: QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap(),
+        //     roles: RoleAssignment::new(HelperIdentity::make_three()),
+        // });
+        // let expected_prepare_query = req.data.clone();
+        //
+        // let cb = TransportCallbacks {
+        //     prepare_query: Box::new(move |_transport, prepare_query| {
+        //         assert_eq!(prepare_query, expected_prepare_query);
+        //         Box::pin(ready(Ok(())))
+        //     }),
+        //     ..Default::default()
+        // };
+        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
+        // handler(
+        //     Extension(transport),
+        //     Extension(ClientIdentity(HelperIdentity::TWO)),
+        //     req.clone(),
+        // )
+        // .await
+        // .unwrap();
     }
 
     // since we tested `QueryType` with `create`, skip it here

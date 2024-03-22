@@ -14,27 +14,48 @@ use crate::{
     error::BoxError,
     helpers::{
         query::{PrepareQuery, QueryConfig, QueryInput},
-        BodyStream, CompleteQueryResult, HelperIdentity, LogErrors, NoResourceIdentifier,
-        PrepareQueryResult, QueryIdBinding, QueryInputResult, QueryStatusResult,
-        ReceiveQueryResult, ReceiveRecords, RouteParams, StepBinding, StreamCollection,
-        Transport, TransportCallbacks,
+        BodyStream, HelperIdentity, LogErrors, NoResourceIdentifier,
+        QueryIdBinding,
+        ReceiveRecords, RouteParams, StepBinding, StreamCollection,
+        Transport,
     },
     net::{client::MpcHelperClient, error::Error, MpcHelperServer},
     protocol::{step::Gate, QueryId},
     sync::Arc,
 };
-use crate::helpers::routing::RouteId;
+use crate::helpers::{ApiError, HelperResponse, NoQueryId, NoStep, RequestHandler};
+use crate::helpers::routing::{Addr, RouteId};
 
 type LogHttpErrors = LogErrors<BodyStream, Bytes, BoxError>;
 
 /// HTTP transport for IPA helper service.
 pub struct HttpTransport {
     identity: HelperIdentity,
-    callbacks: TransportCallbacks<Arc<HttpTransport>>,
     clients: [MpcHelperClient; 3],
     // TODO(615): supporting multiple queries likely require a hashmap here. It will be ok if we
     // only allow one query at a time.
     record_streams: StreamCollection<HelperIdentity, LogHttpErrors>,
+    handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
+}
+
+impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
+    type Params = String;
+
+    fn resource_identifier(&self) -> RouteId {
+        RouteId::ReceiveQuery
+    }
+
+    fn query_id(&self) -> NoQueryId {
+        NoQueryId
+    }
+
+    fn gate(&self) -> NoStep {
+        NoStep
+    }
+
+    fn extra(&self) -> Self::Params {
+        serde_json::to_string(self).unwrap()
+    }
 }
 
 impl HttpTransport {
@@ -44,9 +65,9 @@ impl HttpTransport {
         server_config: ServerConfig,
         network_config: NetworkConfig,
         clients: [MpcHelperClient; 3],
-        callbacks: TransportCallbacks<Arc<HttpTransport>>,
+        handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
     ) -> (Arc<Self>, MpcHelperServer) {
-        let transport = Self::new_internal(identity, clients, callbacks);
+        let transport = Self::new_internal(identity, clients, handler);
         let server = MpcHelperServer::new(Arc::clone(&transport), server_config, network_config);
         (transport, server)
     }
@@ -54,59 +75,67 @@ impl HttpTransport {
     fn new_internal(
         identity: HelperIdentity,
         clients: [MpcHelperClient; 3],
-        callbacks: TransportCallbacks<Arc<HttpTransport>>,
+        handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             identity,
-            callbacks,
             clients,
+            handler,
             record_streams: StreamCollection::default(),
         })
     }
 
-    pub fn receive_query(self: Arc<Self>, req: QueryConfig) -> ReceiveQueryResult {
-        (Arc::clone(&self).callbacks.receive_query)(self, req)
+    pub async fn handle_query_req<Q: QueryIdBinding, R: RouteParams<RouteId, Q, NoStep>>(self: Arc<Self>, origin: Option<HelperIdentity>, req: R)
+        -> Result<HelperResponse, ApiError>
+   where Option<QueryId>: From<Q>
+    {
+        self.handler.handle(Addr::from_route(origin, req), BodyStream::empty()).await
     }
 
-    pub fn prepare_query(self: Arc<Self>, req: PrepareQuery) -> PrepareQueryResult {
-        (Arc::clone(&self).callbacks.prepare_query)(self, req)
-    }
-
-    pub fn query_input(self: Arc<Self>, req: QueryInput) -> QueryInputResult {
-        (Arc::clone(&self).callbacks.query_input)(self, req)
-    }
-
-    pub fn query_status(self: Arc<Self>, query_id: QueryId) -> QueryStatusResult {
-        (Arc::clone(&self).callbacks.query_status)(self, query_id)
-    }
-
-    pub fn complete_query(self: Arc<Self>, query_id: QueryId) -> CompleteQueryResult {
-        /// Cleans up the `records_stream` collection after drop to ensure this transport
-        /// can process the next query even in case of a panic.
-        struct ClearOnDrop {
-            transport: Arc<HttpTransport>,
-            qr: CompleteQueryResult,
-        }
-
-        impl Future for ClearOnDrop {
-            type Output = <CompleteQueryResult as Future>::Output;
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                self.qr.as_mut().poll(cx)
-            }
-        }
-
-        impl Drop for ClearOnDrop {
-            fn drop(&mut self) {
-                self.transport.record_streams.clear();
-            }
-        }
-
-        Box::pin(ClearOnDrop {
-            transport: Arc::clone(&self),
-            qr: Box::pin((Arc::clone(&self).callbacks.complete_query)(self, query_id)),
-        })
-    }
+    // pub fn receive_query(self: Arc<Self>, req: QueryConfig) -> ReceiveQueryResult {
+    //     self.handler.handle()
+    //     // (Arc::clone(&self).callbacks.receive_query)(self, req)
+    // }
+    //
+    // pub fn prepare_query(self: Arc<Self>, req: PrepareQuery) -> PrepareQueryResult {
+    //     (Arc::clone(&self).callbacks.prepare_query)(self, req)
+    // }
+    //
+    // pub fn query_input(self: Arc<Self>, req: QueryInput) -> QueryInputResult {
+    //     (Arc::clone(&self).callbacks.query_input)(self, req)
+    // }
+    //
+    // pub fn query_status(self: Arc<Self>, query_id: QueryId) -> QueryStatusResult {
+    //     (Arc::clone(&self).callbacks.query_status)(self, query_id)
+    // }
+    //
+    // pub fn complete_query(self: Arc<Self>, query_id: QueryId) -> CompleteQueryResult {
+    //     /// Cleans up the `records_stream` collection after drop to ensure this transport
+    //     /// can process the next query even in case of a panic.
+    //     struct ClearOnDrop {
+    //         transport: Arc<HttpTransport>,
+    //         qr: CompleteQueryResult,
+    //     }
+    //
+    //     impl Future for ClearOnDrop {
+    //         type Output = <CompleteQueryResult as Future>::Output;
+    //
+    //         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    //             self.qr.as_mut().poll(cx)
+    //         }
+    //     }
+    //
+    //     impl Drop for ClearOnDrop {
+    //         fn drop(&mut self) {
+    //             self.transport.record_streams.clear();
+    //         }
+    //     }
+    //
+    //     Box::pin(ClearOnDrop {
+    //         transport: Arc::clone(&self),
+    //         qr: Box::pin((Arc::clone(&self).callbacks.complete_query)(self, query_id)),
+    //     })
+    // }
 
     /// Connect an inbound stream of MPC record data.
     ///
@@ -169,8 +198,8 @@ impl Transport for Arc<HttpTransport> {
                 let req = serde_json::from_str(route.extra().borrow()).unwrap();
                 self.clients[dest].prepare_query(req).await
             }
-            RouteId::ReceiveQuery => {
-                unimplemented!("attempting to send ReceiveQuery to another helper")
+            evt @ (RouteId::QueryInput | RouteId::ReceiveQuery | RouteId::QueryStatus | RouteId::CompleteQuery) => {
+                unimplemented!("attempting to send client-specific request {evt:?} to another helper")
             }
         }
     }

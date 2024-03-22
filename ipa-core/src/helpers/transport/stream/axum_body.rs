@@ -28,6 +28,10 @@ impl WrappedAxumBodyStream {
     pub(super) fn new_internal(inner: BodyStream) -> Self {
         Self(inner.map_err(axum::Error::into_inner as fn(axum::Error) -> BoxError))
     }
+
+    pub fn empty() -> Self {
+        todo!()
+    }
 }
 
 impl Stream for WrappedAxumBodyStream {

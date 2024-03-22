@@ -6,6 +6,7 @@ use crate::{
     helpers::{QueryIdBinding, RouteParams, StepBinding, TransportIdentity},
     protocol::{step::Gate, QueryId},
 };
+use crate::helpers::query::QueryConfig;
 
 // The type of request made to an MPC helper.
 #[derive(Debug, Copy, Clone)]
@@ -26,13 +27,14 @@ pub struct Addr<I> {
     pub origin: Option<I>,
     pub query_id: Option<QueryId>,
     pub gate: Option<Gate>,
+    // String and not vec for readability
     pub params: String,
 }
 
 impl<I: TransportIdentity> Addr<I> {
     #[allow(clippy::needless_pass_by_value)] // to avoid using double-reference at callsites
     pub fn from_route<Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>>(
-        origin: I,
+        origin: Option<I>,
         route: R,
     ) -> Self
     where
@@ -41,7 +43,7 @@ impl<I: TransportIdentity> Addr<I> {
     {
         Self {
             route: route.resource_identifier(),
-            origin: Some(origin),
+            origin,
             query_id: route.query_id().into(),
             gate: route.gate().into(),
             params: route.extra().borrow().to_string(),

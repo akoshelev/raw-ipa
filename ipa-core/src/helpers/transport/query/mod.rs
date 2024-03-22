@@ -109,6 +109,26 @@ pub struct PrepareQuery {
     pub roles: RoleAssignment,
 }
 
+impl RouteParams<RouteId, QueryId, NoStep> for PrepareQuery {
+    type Params = String;
+
+    fn resource_identifier(&self) -> RouteId {
+        RouteId::PrepareQuery
+    }
+
+    fn query_id(&self) -> QueryId {
+        self.query_id
+    }
+
+    fn gate(&self) -> NoStep {
+        NoStep
+    }
+
+    fn extra(&self) -> Self::Params {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
 impl RouteParams<RouteId, NoQueryId, NoStep> for &QueryConfig {
     type Params = String;
 
@@ -192,6 +212,26 @@ impl RouteParams<RouteId, QueryId, NoStep> for &PrepareQuery {
 pub struct QueryInput {
     pub query_id: QueryId,
     pub input_stream: BodyStream,
+}
+
+impl RouteParams<RouteId, QueryId, NoStep> for QueryInput {
+    type Params = &'static str;
+
+    fn resource_identifier(&self) -> RouteId {
+        RouteId::QueryInput
+    }
+
+    fn query_id(&self) -> QueryId {
+        self.query_id
+    }
+
+    fn gate(&self) -> NoStep {
+        NoStep
+    }
+
+    fn extra(&self) -> Self::Params {
+        ""
+    }
 }
 
 impl Debug for QueryInput {

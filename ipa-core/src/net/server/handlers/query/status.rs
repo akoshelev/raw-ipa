@@ -12,10 +12,14 @@ async fn handler(
     req: status::Request,
 ) -> Result<Json<status::ResponseBody>, Error> {
     let transport = Transport::clone_ref(&*transport);
-    match transport.query_status(req.query_id).await {
-        Ok(state) => Ok(Json(status::ResponseBody { status: state })),
+    match transport.handle_query_req(None, req).await {
+        Ok(state) => Ok(Json(status::ResponseBody::from(state))),
         Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
+    // match transport.query_status(req.query_id).await {
+    //     Ok(state) => Ok(Json(status::ResponseBody { status: state })),
+    //     Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
+    // }
 }
 
 pub fn router(transport: Arc<HttpTransport>) -> Router {
@@ -32,7 +36,6 @@ mod tests {
     use hyper::StatusCode;
 
     use crate::{
-        helpers::TransportCallbacks,
         net::{
             http_serde,
             server::handlers::query::{
@@ -47,21 +50,22 @@ mod tests {
 
     #[tokio::test]
     async fn status_test() {
-        let expected_status = QueryStatus::Running;
-        let expected_query_id = QueryId;
-        let cb = TransportCallbacks {
-            query_status: Box::new(move |_transport, query_id| {
-                assert_eq!(query_id, expected_query_id);
-                Box::pin(ready(Ok(expected_status)))
-            }),
-            ..Default::default()
-        };
-        let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        let req = http_serde::query::status::Request::new(QueryId);
-        let response = handler(Extension(transport), req.clone()).await.unwrap();
-
-        let Json(http_serde::query::status::ResponseBody { status }) = response;
-        assert_eq!(status, expected_status);
+        panic!("test is broken");
+        // let expected_status = QueryStatus::Running;
+        // let expected_query_id = QueryId;
+        // let cb = TransportCallbacks {
+        //     query_status: Box::new(move |_transport, query_id| {
+        //         assert_eq!(query_id, expected_query_id);
+        //         Box::pin(ready(Ok(expected_status)))
+        //     }),
+        //     ..Default::default()
+        // };
+        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
+        // let req = http_serde::query::status::Request::new(QueryId);
+        // let response = handler(Extension(transport), req.clone()).await.unwrap();
+        //
+        // let Json(http_serde::query::status::ResponseBody { status }) = response;
+        // assert_eq!(status, expected_status);
     }
 
     struct OverrideReq {

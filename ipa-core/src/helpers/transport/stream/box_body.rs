@@ -22,6 +22,10 @@ impl WrappedBoxBodyStream {
     pub fn from_infallible<S: Stream<Item = Box<[u8]>> + Send + 'static>(input: S) -> Self {
         Self(Box::pin(input.map(Bytes::from).map(Ok)))
     }
+
+    pub fn empty() -> Self {
+        todo!()
+    }
 }
 
 

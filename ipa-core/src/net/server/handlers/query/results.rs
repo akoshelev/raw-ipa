@@ -6,6 +6,7 @@ use crate::{
     net::{http_serde, server::Error, HttpTransport},
     sync::Arc,
 };
+use crate::helpers::HelperResponse;
 
 /// Handles the completion of the query by blocking the sender until query is completed.
 async fn handler(
@@ -14,10 +15,15 @@ async fn handler(
 ) -> Result<Vec<u8>, Error> {
     // TODO: we may be able to stream the response
     let transport = Transport::clone_ref(&*transport);
-    match transport.complete_query(req.query_id).await {
-        Ok(result) => Ok(result.into_bytes()),
+    match transport.handle_query_req(None, req).await {
+        Ok(resp) => Ok(resp.into_body()),
         Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
+
+    // match transport.complete_query(req.query_id).await {
+    //     Ok(result) => Ok(result.into_bytes()),
+    //     Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
+    // }
 }
 
 pub fn router(transport: Arc<HttpTransport>) -> Router {
@@ -35,7 +41,6 @@ mod tests {
 
     use crate::{
         ff::Fp31,
-        helpers::TransportCallbacks,
         net::{
             http_serde,
             server::handlers::query::{
@@ -51,24 +56,25 @@ mod tests {
 
     #[tokio::test]
     async fn results_test() {
-        let expected_results = Box::new(vec![Replicated::from((
-            Fp31::try_from(1u128).unwrap(),
-            Fp31::try_from(2u128).unwrap(),
-        ))]);
-        let expected_query_id = QueryId;
-        let raw_results = expected_results.to_vec();
-        let cb = TransportCallbacks {
-            complete_query: Box::new(move |_transport, query_id| {
-                let results: Box<dyn ProtocolResult> = Box::new(raw_results.clone());
-                assert_eq!(query_id, expected_query_id);
-                Box::pin(ready(Ok(results)))
-            }),
-            ..Default::default()
-        };
-        let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        let req = http_serde::query::results::Request::new(QueryId);
-        let results = handler(Extension(transport), req.clone()).await.unwrap();
-        assert_eq!(results, expected_results.into_bytes());
+        panic!("test is broken");
+        // let expected_results = Box::new(vec![Replicated::from((
+        //     Fp31::try_from(1u128).unwrap(),
+        //     Fp31::try_from(2u128).unwrap(),
+        // ))]);
+        // let expected_query_id = QueryId;
+        // let raw_results = expected_results.to_vec();
+        // let cb = TransportCallbacks {
+        //     complete_query: Box::new(move |_transport, query_id| {
+        //         let results: Box<dyn ProtocolResult> = Box::new(raw_results.clone());
+        //         assert_eq!(query_id, expected_query_id);
+        //         Box::pin(ready(Ok(results)))
+        //     }),
+        //     ..Default::default()
+        // };
+        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
+        // let req = http_serde::query::results::Request::new(QueryId);
+        // let results = handler(Extension(transport), req.clone()).await.unwrap();
+        // assert_eq!(results, expected_results.into_bytes());
     }
 
     struct OverrideReq {

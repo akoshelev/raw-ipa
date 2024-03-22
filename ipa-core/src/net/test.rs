@@ -8,7 +8,7 @@
 //! `net::transport::tests`.
 
 #![allow(clippy::missing_panics_doc)]
-
+use crate::helpers::PanickingHandler;
 use std::{
     array,
     net::{SocketAddr, TcpListener},
@@ -23,12 +23,13 @@ use crate::{
         ClientConfig, HpkeClientConfig, HpkeServerConfig, NetworkConfig, PeerConfig, ServerConfig,
         TlsConfig,
     },
-    helpers::{HelperIdentity, TransportCallbacks},
+    helpers::{HelperIdentity},
     hpke::{Deserializable as _, IpaPublicKey},
     net::{ClientIdentity, HttpTransport, MpcHelperClient, MpcHelperServer},
     sync::Arc,
     test_fixture::metrics::MetricsHandle,
 };
+use crate::helpers::RequestHandler;
 
 pub const DEFAULT_TEST_PORTS: [u16; 3] = [3000, 3001, 3002];
 
@@ -204,8 +205,6 @@ impl TestConfigBuilder {
     }
 }
 
-type HttpTransportCallbacks = TransportCallbacks<Arc<HttpTransport>>;
-
 pub struct TestServer {
     pub addr: SocketAddr,
     pub handle: JoinHandle<()>,
@@ -232,7 +231,7 @@ impl TestServer {
 
 #[derive(Default)]
 pub struct TestServerBuilder {
-    callbacks: Option<HttpTransportCallbacks>,
+    handler: Option<Box<dyn RequestHandler<Identity = HelperIdentity>>>,
     metrics: Option<MetricsHandle>,
     disable_https: bool,
     use_http1: bool,
@@ -241,8 +240,8 @@ pub struct TestServerBuilder {
 
 impl TestServerBuilder {
     #[must_use]
-    pub fn with_callbacks(mut self, callbacks: HttpTransportCallbacks) -> Self {
-        self.callbacks = Some(callbacks);
+    pub fn with_request_handler(mut self, handler: Box<dyn RequestHandler<Identity = HelperIdentity>>) -> Self {
+        self.handler = Some(handler);
         self
     }
 
@@ -300,7 +299,7 @@ impl TestServerBuilder {
             server_config,
             network_config.clone(),
             clients,
-            self.callbacks.unwrap_or_default(),
+            self.handler.unwrap_or_else(|| Box::new(PanickingHandler::default())),
         );
         let (addr, handle) = server.start_on(Some(server_socket), self.metrics).await;
         // Get the config for HelperIdentity::ONE

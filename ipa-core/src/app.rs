@@ -242,6 +242,6 @@ impl HelperApp {
     /// ## Errors
     /// Propagates errors from the helper.
     pub async fn complete_query(&self, query_id: QueryId) -> Result<Vec<u8>, ApiError> {
-        Ok(self.query_processor.complete(query_id).await?.into_bytes())
+        Ok(self.query_processor.complete(query_id).await?.as_bytes())
     }
 }
