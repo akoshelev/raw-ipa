@@ -7,7 +7,7 @@ use crate::{
     sync::Arc,
 };
 use crate::net::Error;
-use crate::helpers::Transport;
+use crate::helpers::{BodyStream, Transport};
 
 /// Called by whichever peer helper is the leader for an individual query, to initiatialize
 /// processing of that query.
@@ -17,7 +17,7 @@ async fn handler(
     req: http_serde::query::prepare::Request,
 ) -> Result<(), Error> {
     let transport = Transport::clone_ref(&*transport);
-    let _ = transport.handle_query_req(None, req.data).await
+    let _ = transport.handle_query_req(None, req.data, BodyStream::empty()).await
         .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(())
@@ -63,32 +63,34 @@ mod tests {
         },
         protocol::QueryId,
     };
+    use crate::helpers::{BodyStream, HelperResponse};
+    use crate::helpers::routing::{Addr, RouteId};
 
     #[tokio::test]
     async fn prepare_test() {
-        panic!("test is broken");
-        // let req = http_serde::query::prepare::Request::new(PrepareQuery {
-        //     query_id: QueryId,
-        //     config: QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap(),
-        //     roles: RoleAssignment::new(HelperIdentity::make_three()),
-        // });
-        // let expected_prepare_query = req.data.clone();
-        //
-        // let cb = TransportCallbacks {
-        //     prepare_query: Box::new(move |_transport, prepare_query| {
-        //         assert_eq!(prepare_query, expected_prepare_query);
-        //         Box::pin(ready(Ok(())))
-        //     }),
-        //     ..Default::default()
-        // };
-        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        // handler(
-        //     Extension(transport),
-        //     Extension(ClientIdentity(HelperIdentity::TWO)),
-        //     req.clone(),
-        // )
-        // .await
-        // .unwrap();
+        let req = http_serde::query::prepare::Request::new(PrepareQuery {
+            query_id: QueryId,
+            config: QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap(),
+            roles: RoleAssignment::new(HelperIdentity::make_three()),
+        });
+        let expected_prepare_query = req.data.clone();
+        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+            let RouteId::PrepareQuery = addr.route else {
+                panic!("unexpected call");
+            };
+
+            let query_config = addr.into::<PrepareQuery>().unwrap();
+            assert_eq!(query_config, expected_prepare_query);
+            Ok(HelperResponse::ok())
+        })).build().await;
+
+        handler(
+            Extension(transport),
+            Extension(ClientIdentity(HelperIdentity::TWO)),
+            req.clone(),
+        )
+        .await
+        .unwrap();
     }
 
     // since we tested `QueryType` with `create`, skip it here

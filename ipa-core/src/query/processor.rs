@@ -204,7 +204,7 @@ impl Processor {
     /// if query is not registered on this helper.
     ///
     /// ## Panics
-    /// If failed to obtain an exclusive access to the query collection.
+    /// If failed to obtain exclusive access to the query collection.
     pub fn receive_inputs(
         &self,
         transport: TransportImpl,
@@ -278,7 +278,7 @@ impl Processor {
     /// if query is not registered on this helper.
     ///
     /// ## Panics
-    /// If failed to obtain an exclusive access to the query collection.
+    /// If failed to obtain exclusive access to the query collection.
     pub async fn complete(
         &self,
         query_id: QueryId,
@@ -313,6 +313,7 @@ impl Processor {
 #[cfg(all(test, unit_test))]
 mod tests {
     use std::{array, future::Future, sync::Arc};
+    use async_trait::async_trait;
 
     use futures::pin_mut;
     use futures_util::future::poll_immediate;
@@ -329,14 +330,52 @@ mod tests {
             processor::Processor, state::StateError, NewQueryError, PrepareQueryError, QueryStatus,
         },
     };
+    use crate::helpers::{ApiError, BodyStream, HelperResponse, RequestHandler};
+    use crate::helpers::routing::{Addr, RouteId};
 
-    // fn prepare_query_callback<T, F, Fut>(cb: F) -> Box<dyn PrepareQueryCallback<T>>
-    // where
-    //     F: Fn(T, PrepareQuery) -> Fut + Send + Sync + 'static,
-    //     Fut: Future<Output = Result<(), PrepareQueryError>> + Send + 'static,
-    // {
-    //     Box::new(move |transport, prepare_query| Box::pin(cb(transport, prepare_query)))
-    // }
+    fn prepare_query_handler<F, Fut>(cb: F) -> Box<dyn RequestHandler<Identity = HelperIdentity>>
+    where
+        F: Fn(PrepareQuery) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + 'static,
+    {
+
+        struct Capture<F> {
+            cb: F
+        }
+
+        #[async_trait]
+        impl <Fut, CF> RequestHandler for Capture<CF> where CF: Fn(PrepareQuery) -> Fut + Send + Sync + 'static, Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + 'static {
+            type Identity = HelperIdentity;
+
+            async fn handle(&self, req: Addr<Self::Identity>, _: BodyStream) -> Result<HelperResponse, ApiError> {
+                let RouteId::PrepareQuery = req.route else {
+                    panic!("unexpected call: {req:?}");
+                };
+
+                let prepare_query = req.into().unwrap();
+
+                (self.cb)(prepare_query).await
+            }
+        }
+
+        let v = Capture { cb };
+
+        Box::new(v)
+    }
+
+    fn respond_ok() -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
+        Some(prepare_query_handler(move |_| {
+            async move {
+                Ok(HelperResponse::ok())
+            } }))
+    }
+
+    fn respond_err(err: ApiError) -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
+            Some(prepare_query_handler(move |_| {
+                async move {
+                    Err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget))
+                } }))
+    }
 
     fn test_multiply_config() -> QueryConfig {
         QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap()
@@ -344,131 +383,102 @@ mod tests {
 
     #[tokio::test]
     async fn new_query() {
-        panic!("test is broken");
-        // let barrier = Arc::new(Barrier::new(3));
-        // let cb2_barrier = Arc::clone(&barrier);
-        // let cb3_barrier = Arc::clone(&barrier);
-        // let cb2 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(move |_, _| {
-        //         let barrier = Arc::clone(&cb2_barrier);
-        //         async move {
-        //             barrier.wait().await;
-        //             Ok(())
-        //         }
-        //     }),
-        //     ..Default::default()
-        // };
-        // let cb3 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(move |_, _| {
-        //         let barrier = Arc::clone(&cb3_barrier);
-        //         async move {
-        //             barrier.wait().await;
-        //             Ok(())
-        //         }
-        //     }),
-        //     ..Default::default()
-        // };
-        // let network = InMemoryMpcNetwork::new([TransportCallbacks::default(), cb2, cb3]);
-        // let [t0, _, _] = network.transports();
-        // let p0 = Processor::default();
-        // let request = test_multiply_config();
-        //
-        // let qc_future = p0.new_query(t0, request);
-        // pin_mut!(qc_future);
-        //
-        // // poll future once to trigger query status change
-        // let _qc = poll_immediate(&mut qc_future).await;
-        //
-        // assert_eq!(QueryStatus::Preparing, p0.query_status(QueryId).unwrap());
-        // // unblock sends
-        // barrier.wait().await;
+        let barrier = Arc::new(Barrier::new(3));
+        let h2_barrier = Arc::clone(&barrier);
+        let h3_barrier = Arc::clone(&barrier);
+        let h2 = prepare_query_handler(move |_| {
+                let barrier = Arc::clone(&h2_barrier);
+                async move {
+                    barrier.wait().await;
+                    Ok(HelperResponse::ok())
+                }
+            });
+        let h3 = prepare_query_handler(move |_| {
+                let barrier = Arc::clone(&h3_barrier);
+                async move {
+                    barrier.wait().await;
+                    Ok(HelperResponse::ok())
+                }
+            });
+        let network = InMemoryMpcNetwork::new([None, Some(h2), Some(h3)]);
+        let [t0, _, _] = network.transports();
+        let p0 = Processor::default();
+        let request = test_multiply_config();
 
-        // let qc = qc_future.await.unwrap();
-        // let expected_assignment = RoleAssignment::new(HelperIdentity::make_three());
-        //
-        // assert_eq!(
-        //     PrepareQuery {
-        //         query_id: QueryId,
-        //         config: request,
-        //         roles: expected_assignment,
-        //     },
-        //     qc
-        // );
-        // assert_eq!(
-        //     QueryStatus::AwaitingInputs,
-        //     p0.query_status(QueryId).unwrap()
-        // );
+        let qc_future = p0.new_query(t0, request);
+        pin_mut!(qc_future);
+
+        // poll future once to trigger query status change
+        let _qc = poll_immediate(&mut qc_future).await;
+
+        assert_eq!(QueryStatus::Preparing, p0.query_status(QueryId).unwrap());
+        // unblock sends
+        barrier.wait().await;
+
+        let qc = qc_future.await.unwrap();
+        let expected_assignment = RoleAssignment::new(HelperIdentity::make_three());
+
+        assert_eq!(
+            PrepareQuery {
+                query_id: QueryId,
+                config: request,
+                roles: expected_assignment,
+            },
+            qc
+        );
+        assert_eq!(
+            QueryStatus::AwaitingInputs,
+            p0.query_status(QueryId).unwrap()
+        );
     }
 
     #[tokio::test]
     async fn rejects_duplicate_query_id() {
-        panic!("test is broken");
-        // let cb = array::from_fn(|_| TransportCallbacks {
-        //     prepare_query: prepare_query_callback(|_, _| async { Ok(()) }),
-        //     ..Default::default()
-        // });
-        // let network = InMemoryMpcNetwork::new(cb);
-        // let [t0, _, _] = network.transports();
-        // let p0 = Processor::default();
-        // let request = test_multiply_config();
-        //
-        // let _qc = p0
-        //     .new_query(Transport::clone_ref(&t0), request)
-        //     .await
-        //     .unwrap();
-        // assert!(matches!(
-        //     p0.new_query(t0, request).await,
-        //     Err(NewQueryError::State(StateError::AlreadyRunning)),
-        // ));
+        let handlers = array::from_fn(|_| Some(prepare_query_handler(|_| async { Ok(HelperResponse::ok()) })));
+        let network = InMemoryMpcNetwork::new(handlers);
+        let [t0, _, _] = network.transports();
+        let p0 = Processor::default();
+        let request = test_multiply_config();
+
+        let _qc = p0
+            .new_query(Transport::clone_ref(&t0), request)
+            .await
+            .unwrap();
+        assert!(matches!(
+            p0.new_query(t0, request).await,
+            Err(NewQueryError::State(StateError::AlreadyRunning)),
+        ));
     }
 
     #[tokio::test]
     async fn prepare_error() {
-        panic!("test is broken");
-        // let cb2 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(|_, _| async { Ok(()) }),
-        //     ..Default::default()
-        // };
-        // let cb3 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(|_, _| async {
-        //         Err(PrepareQueryError::WrongTarget)
-        //     }),
-        //     ..Default::default()
-        // };
-        // let network = InMemoryMpcNetwork::new([TransportCallbacks::default(), cb2, cb3]);
-        // let [t0, _, _] = network.transports();
-        // let p0 = Processor::default();
-        // let request = test_multiply_config();
-        //
-        // assert!(matches!(
-        //     p0.new_query(t0, request).await.unwrap_err(),
-        //     NewQueryError::Transport(_)
-        // ));
+        let h2 = respond_ok();
+        let h3 = respond_err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget));
+        let network = InMemoryMpcNetwork::new([None, h2, h3]);
+        let [t0, _, _] = network.transports();
+        let p0 = Processor::default();
+        let request = test_multiply_config();
+
+        assert!(matches!(
+            p0.new_query(t0, request).await.unwrap_err(),
+            NewQueryError::Transport(_)
+        ));
     }
 
     #[tokio::test]
     async fn can_recover_from_prepare_error() {
-        panic!("test is broken");
-        // let cb2 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(|_, _| async { Ok(()) }),
-        //     ..Default::default()
-        // };
-        // let cb3 = TransportCallbacks {
-        //     prepare_query: prepare_query_callback(|_, _| async {
-        //         Err(PrepareQueryError::WrongTarget)
-        //     }),
-        //     ..Default::default()
-        // };
-        // let network = InMemoryMpcNetwork::new([TransportCallbacks::default(), cb2, cb3]);
-        // let [t0, _, _] = network.transports();
-        // let p0 = Processor::default();
-        // let request = test_multiply_config();
-        // p0.new_query(t0.clone_ref(), request).await.unwrap_err();
-        //
-        // assert!(matches!(
-        //     p0.new_query(t0, request).await.unwrap_err(),
-        //     NewQueryError::Transport(_)
-        // ));
+        let h2 = respond_ok();
+        let h3 = respond_err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget));
+        let network = InMemoryMpcNetwork::new([None, h2, h3]);
+        let [t0, _, _] = network.transports();
+        let p0 = Processor::default();
+        let request = test_multiply_config();
+        p0.new_query(t0.clone_ref(), request).await.unwrap_err();
+
+        assert!(matches!(
+            p0.new_query(t0, request).await.unwrap_err(),
+            NewQueryError::Transport(_)
+        ));
     }
 
     mod prepare {

@@ -9,7 +9,7 @@ use crate::{
     sync::Arc,
 };
 use crate::helpers::ApiError::NewQuery;
-use crate::helpers::HelperResponse;
+use crate::helpers::{BodyStream, HelperResponse};
 
 /// Takes details from the HTTP request and creates a `[TransportCommand]::CreateQuery` that is sent
 /// to the [`HttpTransport`].
@@ -18,7 +18,7 @@ async fn handler(
     req: http_serde::query::create::Request,
 ) -> Result<Json<http_serde::query::create::ResponseBody>, Error> {
     let transport = Transport::clone_ref(&*transport);
-    match transport.handle_query_req(None, req.query_config).await {
+    match transport.handle_query_req(None, req.query_config, BodyStream::empty()).await {
         Ok(resp) => Ok(Json(resp.into())),
         Err(err @ NewQuery(NewQueryError::State { .. })) => {
             Err(Error::application(StatusCode::CONFLICT, err))
@@ -62,32 +62,39 @@ mod tests {
         },
         protocol::QueryId,
     };
+    use crate::helpers::{BodyStream, HelperIdentity, HelperResponse, Role, RoleAssignment};
+    use crate::helpers::query::PrepareQuery;
+    use crate::helpers::routing::{Addr, RouteId};
 
     async fn create_test(expected_query_config: QueryConfig) {
-        panic!("create_test is broken");
-        // let cb = TransportCallbacks {
-        //     receive_query: Box::new(move |_transport, query_config| {
-        //         assert_eq!(query_config, expected_query_config);
-        //         Box::pin(ready(Ok(QueryId)))
-        //     }),
-        //     ..Default::default()
-        // };
-        // let TestServer { server, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        // let req = http_serde::query::create::Request::new(expected_query_config);
-        // let req = req
-        //     .try_into_http_request(Scheme::HTTP, Authority::from_static("localhost"))
-        //     .unwrap();
-        // let resp = server.handle_req(req).await;
-        //
-        // let status = resp.status();
-        // let body_bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
-        // let response_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        //
-        // assert_eq!(StatusCode::OK, status, "Request failed: {}", &response_str);
-        //
-        // let http_serde::query::create::ResponseBody { query_id } =
-        //     serde_json::from_slice(&body_bytes).unwrap();
-        // assert_eq!(QueryId, query_id);
+        let TestServer { server, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+            let RouteId::ReceiveQuery = addr.route else {
+                panic!("unexpected call");
+            };
+
+            let query_config = addr.into().unwrap();
+            assert_eq!(query_config, expected_query_config);
+            Ok(HelperResponse::from(PrepareQuery {
+                query_id: QueryId,
+                config: query_config,
+                roles: RoleAssignment::try_from([Role::H1, Role::H2, Role::H3]).unwrap()
+            }))
+        })).build().await;
+        let req = http_serde::query::create::Request::new(expected_query_config);
+        let req = req
+            .try_into_http_request(Scheme::HTTP, Authority::from_static("localhost"))
+            .unwrap();
+        let resp = server.handle_req(req).await;
+
+        let status = resp.status();
+        let body_bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let response_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert_eq!(StatusCode::OK, status, "Request failed: {}", &response_str);
+
+        let http_serde::query::create::ResponseBody { query_id } =
+            serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(QueryId, query_id);
     }
 
     #[tokio::test]

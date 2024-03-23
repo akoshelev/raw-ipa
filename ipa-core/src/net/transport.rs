@@ -85,11 +85,11 @@ impl HttpTransport {
         })
     }
 
-    pub async fn handle_query_req<Q: QueryIdBinding, R: RouteParams<RouteId, Q, NoStep>>(self: Arc<Self>, origin: Option<HelperIdentity>, req: R)
+    pub async fn handle_query_req<Q: QueryIdBinding, R: RouteParams<RouteId, Q, NoStep>>(self: Arc<Self>, origin: Option<HelperIdentity>, req: R, body: BodyStream)
         -> Result<HelperResponse, ApiError>
    where Option<QueryId>: From<Q>
     {
-        self.handler.handle(Addr::from_route(origin, req), BodyStream::empty()).await
+        self.handler.handle(Addr::from_route(origin, req), body).await
     }
 
     // pub fn receive_query(self: Arc<Self>, req: QueryConfig) -> ReceiveQueryResult {

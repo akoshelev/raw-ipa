@@ -140,6 +140,26 @@ impl RouteParams<RouteId, QueryId, Gate> for (RouteId, QueryId, Gate) {
     }
 }
 
+impl RouteParams<RouteId, QueryId, NoStep> for (RouteId, QueryId) {
+    type Params = &'static str;
+
+    fn resource_identifier(&self) -> RouteId {
+        self.0
+    }
+
+    fn query_id(&self) -> QueryId {
+        self.1
+    }
+
+    fn gate(&self) -> NoStep {
+        NoStep
+    }
+
+    fn extra(&self) -> Self::Params {
+        ""
+    }
+}
+
 /// Transport that supports per-query,per-step channels
 #[async_trait]
 pub trait Transport: Clone + Send + Sync + 'static {

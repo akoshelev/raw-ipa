@@ -24,7 +24,7 @@ impl WrappedBoxBodyStream {
     }
 
     pub fn empty() -> Self {
-        todo!()
+        WrappedBoxBodyStream(Box::pin(futures::stream::empty()))
     }
 }
 

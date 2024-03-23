@@ -6,7 +6,7 @@ use crate::{
     net::{http_serde, server::Error, HttpTransport},
     sync::Arc,
 };
-use crate::helpers::HelperResponse;
+use crate::helpers::{BodyStream, HelperResponse};
 
 /// Handles the completion of the query by blocking the sender until query is completed.
 async fn handler(
@@ -15,7 +15,7 @@ async fn handler(
 ) -> Result<Vec<u8>, Error> {
     // TODO: we may be able to stream the response
     let transport = Transport::clone_ref(&*transport);
-    match transport.handle_query_req(None, req).await {
+    match transport.handle_query_req(None, req, BodyStream::empty()).await {
         Ok(resp) => Ok(resp.into_body()),
         Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
@@ -53,28 +53,28 @@ mod tests {
         query::ProtocolResult,
         secret_sharing::replicated::semi_honest::AdditiveShare as Replicated,
     };
+    use crate::helpers::{BodyStream, HelperIdentity, HelperResponse};
+    use crate::helpers::routing::{Addr, RouteId};
 
     #[tokio::test]
     async fn results_test() {
-        panic!("test is broken");
-        // let expected_results = Box::new(vec![Replicated::from((
-        //     Fp31::try_from(1u128).unwrap(),
-        //     Fp31::try_from(2u128).unwrap(),
-        // ))]);
-        // let expected_query_id = QueryId;
-        // let raw_results = expected_results.to_vec();
-        // let cb = TransportCallbacks {
-        //     complete_query: Box::new(move |_transport, query_id| {
-        //         let results: Box<dyn ProtocolResult> = Box::new(raw_results.clone());
-        //         assert_eq!(query_id, expected_query_id);
-        //         Box::pin(ready(Ok(results)))
-        //     }),
-        //     ..Default::default()
-        // };
-        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        // let req = http_serde::query::results::Request::new(QueryId);
-        // let results = handler(Extension(transport), req.clone()).await.unwrap();
-        // assert_eq!(results, expected_results.into_bytes());
+        let expected_results = Box::new(vec![Replicated::from((
+            Fp31::try_from(1u128).unwrap(),
+            Fp31::try_from(2u128).unwrap(),
+        ))]);
+        let expected_query_id = QueryId;
+        let raw_results = expected_results.to_vec();
+        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+            let RouteId::CompleteQuery = addr.route else {
+                panic!("unexpected call");
+            };
+            let results= Box::new(raw_results.clone()) as Box<dyn ProtocolResult>;
+            assert_eq!(addr.query_id, Some(expected_query_id));
+            Ok(HelperResponse::from(results))
+        })).build().await;
+        let req = http_serde::query::results::Request::new(QueryId);
+        let results = handler(Extension(transport), req.clone()).await.unwrap();
+        assert_eq!(results, expected_results.as_bytes());
     }
 
     struct OverrideReq {

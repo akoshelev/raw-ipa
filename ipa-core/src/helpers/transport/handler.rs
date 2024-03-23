@@ -66,7 +66,7 @@ impl From<()> for HelperResponse {
 
 impl From<QueryStatus> for HelperResponse {
     fn from(value: QueryStatus) -> Self {
-        let v = serde_json::to_vec(&value).unwrap();
+        let v = serde_json::to_vec(&json!({"status": value})).unwrap();
         Self {
             body: v
         }

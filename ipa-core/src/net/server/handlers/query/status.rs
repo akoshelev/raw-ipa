@@ -6,13 +6,14 @@ use crate::{
     net::{http_serde::query::status, server::Error, HttpTransport},
     sync::Arc,
 };
+use crate::helpers::BodyStream;
 
 async fn handler(
     transport: Extension<Arc<HttpTransport>>,
     req: status::Request,
 ) -> Result<Json<status::ResponseBody>, Error> {
     let transport = Transport::clone_ref(&*transport);
-    match transport.handle_query_req(None, req).await {
+    match transport.handle_query_req(None, req, BodyStream::empty()).await {
         Ok(state) => Ok(Json(status::ResponseBody::from(state))),
         Err(e) => Err(Error::application(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
@@ -47,25 +48,25 @@ mod tests {
         protocol::QueryId,
         query::QueryStatus,
     };
+    use crate::helpers::{BodyStream, HelperIdentity, HelperResponse};
+    use crate::helpers::routing::{Addr, RouteId};
 
     #[tokio::test]
     async fn status_test() {
-        panic!("test is broken");
-        // let expected_status = QueryStatus::Running;
-        // let expected_query_id = QueryId;
-        // let cb = TransportCallbacks {
-        //     query_status: Box::new(move |_transport, query_id| {
-        //         assert_eq!(query_id, expected_query_id);
-        //         Box::pin(ready(Ok(expected_status)))
-        //     }),
-        //     ..Default::default()
-        // };
-        // let TestServer { transport, .. } = TestServer::builder().with_callbacks(cb).build().await;
-        // let req = http_serde::query::status::Request::new(QueryId);
-        // let response = handler(Extension(transport), req.clone()).await.unwrap();
-        //
-        // let Json(http_serde::query::status::ResponseBody { status }) = response;
-        // assert_eq!(status, expected_status);
+        let expected_status = QueryStatus::Running;
+        let expected_query_id = QueryId;
+        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+            let RouteId::QueryStatus = addr.route else {
+                panic!("unexpected call");
+            };
+            assert_eq!(addr.query_id, Some(expected_query_id));
+            Ok(HelperResponse::from(expected_status))
+        })).build().await;
+        let req = http_serde::query::status::Request::new(QueryId);
+        let response = handler(Extension(transport), req.clone()).await.unwrap();
+
+        let Json(http_serde::query::status::ResponseBody { status }) = response;
+        assert_eq!(status, expected_status);
     }
 
     struct OverrideReq {

@@ -214,26 +214,6 @@ pub struct QueryInput {
     pub input_stream: BodyStream,
 }
 
-impl RouteParams<RouteId, QueryId, NoStep> for QueryInput {
-    type Params = &'static str;
-
-    fn resource_identifier(&self) -> RouteId {
-        RouteId::QueryInput
-    }
-
-    fn query_id(&self) -> QueryId {
-        self.query_id
-    }
-
-    fn gate(&self) -> NoStep {
-        NoStep
-    }
-
-    fn extra(&self) -> Self::Params {
-        ""
-    }
-}
-
 impl Debug for QueryInput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "query_inputs[{:?}]", self.query_id)
