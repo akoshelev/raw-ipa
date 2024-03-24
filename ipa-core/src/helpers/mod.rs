@@ -62,7 +62,7 @@ pub use transport::routing;
 pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
 use typenum::{Unsigned, U8};
 use x25519_dalek::PublicKey;
-pub use transport::{HelperResponse, RequestHandler, ApiError, PanickingHandler};
+pub use transport::{HelperResponse, RequestHandler, make_boxed_handler, ApiError, PanickingHandler};
 
 use crate::{
     ff::Serializable,
@@ -235,7 +235,7 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(test, derive(Copy, PartialEq, Eq))]
 #[cfg_attr(
     feature = "enable-serde",
     derive(serde::Serialize, serde::Deserialize),

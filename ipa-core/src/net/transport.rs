@@ -8,6 +8,7 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, TryFutureExt};
+use pin_project::pin_project;
 
 use crate::{
     config::{NetworkConfig, ServerConfig},
@@ -89,7 +90,36 @@ impl HttpTransport {
         -> Result<HelperResponse, ApiError>
    where Option<QueryId>: From<Q>
     {
-        self.handler.handle(Addr::from_route(origin, req), body).await
+        /// Cleans up the `records_stream` collection after drop to ensure this transport
+        /// can process the next query even in case of a panic.
+        ///
+        /// This implementation is a poor man's safety net and only works because we run
+        /// one query at a time and don't use query identifiers.
+        #[pin_project]
+        struct ClearOnDrop<F: Future> {
+            transport: Arc<HttpTransport>,
+            #[pin]
+            inner: F
+        }
+
+        impl <F: Future> Future for ClearOnDrop<F> {
+            type Output = F::Output;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                self.project().inner.poll(cx)
+            }
+        }
+
+        if let RouteId::CompleteQuery = req.resource_identifier() {
+            ClearOnDrop {
+                transport: Arc::clone(&self),
+                inner: self.handler.handle(Addr::from_route(origin, req), body),
+            }.await
+        } else {
+            self.handler.handle(Addr::from_route(origin, req), body).await
+        }
+
+
     }
 
     // pub fn receive_query(self: Arc<Self>, req: QueryConfig) -> ReceiveQueryResult {
@@ -302,14 +332,14 @@ mod tests {
                     } else {
                         get_test_identity(id)
                     };
-                    let (setup, callbacks) = AppSetup::new();
+                    let (setup, handler_setup) = AppSetup::new();
                     let clients = MpcHelperClient::from_conf(network_config, identity);
                     let (transport, server) = HttpTransport::new(
                         id,
                         server_config,
                         network_config.clone(),
                         clients,
-                        callbacks,
+                        handler_setup.make_handler(),
                     );
                     server.start_on(Some(socket), ()).await;
 

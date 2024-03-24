@@ -4,6 +4,7 @@ use std::{
 };
 
 use axum::extract::{BodyStream, FromRequest, RequestParts};
+use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
 use hyper::Body;
 use pin_project::pin_project;
@@ -30,7 +31,7 @@ impl WrappedAxumBodyStream {
     }
 
     pub fn empty() -> Self {
-        todo!()
+        Self::from_body(Bytes::new())
     }
 }
 

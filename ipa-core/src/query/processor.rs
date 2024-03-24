@@ -330,37 +330,18 @@ mod tests {
             processor::Processor, state::StateError, NewQueryError, PrepareQueryError, QueryStatus,
         },
     };
-    use crate::helpers::{ApiError, BodyStream, HelperResponse, RequestHandler};
+    use crate::helpers::{ApiError, BodyStream, HelperResponse, make_boxed_handler, RequestHandler};
     use crate::helpers::routing::{Addr, RouteId};
 
     fn prepare_query_handler<F, Fut>(cb: F) -> Box<dyn RequestHandler<Identity = HelperIdentity>>
     where
         F: Fn(PrepareQuery) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + 'static,
+        Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + Sync + 'static,
     {
-
-        struct Capture<F> {
-            cb: F
-        }
-
-        #[async_trait]
-        impl <Fut, CF> RequestHandler for Capture<CF> where CF: Fn(PrepareQuery) -> Fut + Send + Sync + 'static, Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + 'static {
-            type Identity = HelperIdentity;
-
-            async fn handle(&self, req: Addr<Self::Identity>, _: BodyStream) -> Result<HelperResponse, ApiError> {
-                let RouteId::PrepareQuery = req.route else {
-                    panic!("unexpected call: {req:?}");
-                };
-
-                let prepare_query = req.into().unwrap();
-
-                (self.cb)(prepare_query).await
-            }
-        }
-
-        let v = Capture { cb };
-
-        Box::new(v)
+        make_boxed_handler(move |req, _| {
+            let prepare_query = req.into().unwrap();
+            cb(prepare_query)
+        })
     }
 
     fn respond_ok() -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
@@ -371,10 +352,10 @@ mod tests {
     }
 
     fn respond_err(err: ApiError) -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
-            Some(prepare_query_handler(move |_| {
-                async move {
-                    Err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget))
-                } }))
+        Some(prepare_query_handler(move |_| {
+            async move {
+                Err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget))
+            } }))
     }
 
     fn test_multiply_config() -> QueryConfig {

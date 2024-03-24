@@ -20,6 +20,7 @@ use crate::helpers::routing::{Addr, RouteId};
 
 pub struct Setup {
     query_processor: Arc<QueryProcessor>,
+    handler_setup: RequestHandlerSetup,
 }
 
 /// The API layer to interact with a helper.
@@ -146,6 +147,7 @@ impl RequestHandler for QueryRequestHandler {
     }
 }
 
+#[derive(Clone)]
 pub struct RequestHandlerSetup {
     qp: Arc<QueryProcessor>,
     transport_container: Arc<Mutex<Option<TransportImpl>>>,
@@ -159,14 +161,14 @@ impl RequestHandlerSetup {
         }
     }
 
-    pub fn make_handler(&self) -> impl RequestHandler<Identity = HelperIdentity> {
-        QueryRequestHandler {
+    pub fn make_handler(&self) -> Box<dyn RequestHandler<Identity = HelperIdentity>> {
+        Box::new(QueryRequestHandler {
             qp: Arc::clone(&self.qp),
             transport: Arc::clone(&self.transport_container),
-        }
+        }) as Box<dyn RequestHandler<Identity = HelperIdentity>>
     }
 
-    pub fn finish(self, transport: TransportImpl) {
+    fn finish(self, transport: TransportImpl) {
         let mut guard = self.transport_container.lock().unwrap();
         *guard = Some(transport);
     }
@@ -184,16 +186,19 @@ impl Setup {
         key_registry: KeyRegistry<KeyPair>,
     ) -> (Self, RequestHandlerSetup) {
         let query_processor = Arc::new(QueryProcessor::new(key_registry));
+        let handler_setup = RequestHandlerSetup::new(Arc::clone(&query_processor));
         let this = Self {
-            query_processor: Arc::clone(&query_processor),
+            query_processor,
+            handler_setup: handler_setup.clone(),
         };
 
         // TODO: weak reference to query processor to prevent mem leak
-        (this, RequestHandlerSetup::new(query_processor))
+        (this, handler_setup)
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
     pub fn connect(self, transport: TransportImpl) -> HelperApp {
+        self.handler_setup.finish(transport.clone());
         HelperApp::new(transport, self.query_processor)
     }
 }

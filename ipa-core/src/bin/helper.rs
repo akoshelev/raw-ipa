@@ -19,6 +19,7 @@ use ipa_core::{
     AppSetup,
 };
 use tracing::{error, info};
+use ipa_core::helpers::RequestHandler;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
@@ -131,7 +132,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
         });
 
     let key_registry = hpke_registry(mk_encryption.as_ref()).await?;
-    let (setup, callbacks) = AppSetup::with_key_registry(key_registry);
+    let (setup, handler_setup) = AppSetup::with_key_registry(key_registry);
 
     let server_config = ServerConfig {
         port: args.port,
@@ -155,7 +156,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
         server_config,
         network_config,
         clients,
-        callbacks,
+        handler_setup.make_handler(),
     );
 
     let _app = setup.connect(transport.clone());

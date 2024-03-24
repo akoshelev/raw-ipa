@@ -21,7 +21,7 @@ use crate::query::{NewQueryError, PrepareQueryError, ProtocolResult, QueryComple
 
 
 pub struct HelperResponse {
-    body: Vec<u8>
+    body: Vec<u8>,
     // Empty,
     // QueryCreated(QueryId),
     // QueryStatus(QueryStatus),
@@ -73,7 +73,7 @@ impl From<QueryStatus> for HelperResponse {
     }
 }
 
-impl <R: AsRef<dyn ProtocolResult>> From<R> for HelperResponse {
+impl<R: AsRef<dyn ProtocolResult>> From<R> for HelperResponse {
     fn from(value: R) -> Self {
         let v = value.as_ref().as_bytes();
         Self {
@@ -99,23 +99,20 @@ pub enum Error {
     #[error(transparent)]
     DeserializationFailure(#[from] serde_json::Error),
     #[error("MalformedRequest: {0}")]
-    BadRequest(BoxError)
+    BadRequest(BoxError),
 }
 
 
 /// There is a limitation for RPITIT that traits can't be made object-safe, hence the use of async_trait
 #[async_trait]
-pub trait RequestHandler : Send + Sync + 'static {
+pub trait RequestHandler: Send + Sync {
     type Identity: TransportIdentity;
+    // Use RouteParams
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error>;
 }
 
-// #[async_trait]
-// impl <I, F<I>: Fn(Addr<I>, BodyStream) -> Result<HelperResponse, Error>> RequestHandler for F<I> {
-
-// }
 #[async_trait]
-impl <F> RequestHandler for F where F: Fn(Addr<HelperIdentity>, BodyStream) -> Result<HelperResponse, Error> + Send + Sync + 'static {
+impl<F> RequestHandler for F where F: Fn(Addr<HelperIdentity>, BodyStream) -> Result<HelperResponse, Error> + Send + Sync + 'static {
     type Identity = HelperIdentity;
 
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error> {
@@ -123,11 +120,37 @@ impl <F> RequestHandler for F where F: Fn(Addr<HelperIdentity>, BodyStream) -> R
     }
 }
 
-pub struct PanickingHandler<I: TransportIdentity> {
-    phantom: PhantomData<I>
+
+pub fn make_boxed_handler<'a, I, F, Fut>(
+    handler: F
+) -> Box<dyn RequestHandler<Identity=I> + 'a>
+    where I: TransportIdentity,
+          F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync + 'a,
+          Fut: Future<Output=Result<HelperResponse, Error>> + Send + 'a {
+    struct Handler<I, F> {
+        inner: F,
+        phantom: PhantomData<I>,
+    }
+    #[async_trait]
+    impl<I, F, Fut> RequestHandler for Handler<I, F>
+        where I: TransportIdentity,
+              F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync,
+              Fut: Future<Output=Result<HelperResponse, Error>> + Send {
+        type Identity = I;
+
+        async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error> {
+            (self.inner)(req, data).await
+        }
+    }
+
+    Box::new(Handler { inner: handler, phantom: PhantomData })
 }
 
-impl <I: TransportIdentity> Default for PanickingHandler<I> {
+pub struct PanickingHandler<I: TransportIdentity> {
+    phantom: PhantomData<I>,
+}
+
+impl<I: TransportIdentity> Default for PanickingHandler<I> {
     fn default() -> Self {
         Self {
             phantom: PhantomData
@@ -136,7 +159,7 @@ impl <I: TransportIdentity> Default for PanickingHandler<I> {
 }
 
 #[async_trait]
-impl <I: TransportIdentity> RequestHandler for PanickingHandler<I> {
+impl<I: TransportIdentity> RequestHandler for PanickingHandler<I> {
     type Identity = I;
 
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error> {

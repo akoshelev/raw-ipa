@@ -101,7 +101,7 @@ pub enum QueryConfigError {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(test, derive(Copy, PartialEq, Eq))]
 #[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub struct PrepareQuery {
     pub query_id: QueryId,

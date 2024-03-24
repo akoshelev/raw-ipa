@@ -66,14 +66,13 @@ impl Default for TestApp {
         let (setup, mut handlers) = unzip_tuple_array(array::from_fn(|_| AppSetup::new()));
         let handlers_ref = [&handlers[0], &handlers[1], &handlers[2]];
 
-        let network = InMemoryMpcNetwork::new(handlers_ref.map(RequestHandlerSetup::make_handler).map(|v| Box::new(v) as Box<dyn RequestHandler<Identity = HelperIdentity>>).map(Some));
+        let network = InMemoryMpcNetwork::new(handlers_ref.map(RequestHandlerSetup::make_handler).map(Some));
         let drivers = network
             .transports()
             .iter()
             .zip(setup)
             .zip(handlers.into_iter())
             .map(|((t, s), handler_setup)| {
-                handler_setup.finish(t.clone());
                 s.connect(Clone::clone(t))
             })
             .collect::<Vec<_>>()
