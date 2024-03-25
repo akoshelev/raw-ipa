@@ -6,10 +6,11 @@ use crate::{
     net::{http_serde, Error, HttpTransport},
     sync::Arc,
 };
+use crate::helpers::{HelperIdentity, RequestHandler};
 use crate::helpers::routing::RouteId;
 
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     req: http_serde::query::input::Request,
 ) -> Result<(), Error> {
     let transport = Transport::clone_ref(&*transport);
@@ -17,15 +18,12 @@ async fn handler(
        .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(())
-    // transport
-    //     .query_input(req.query_input)
-    //     .await
-    //     .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+/// TODO: type alias for MPC helper handlers
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(http_serde::query::input::AXUM_PATH, post(handler))
+        .route(http_serde::query::input::AXUM_PATH, post(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -54,7 +52,7 @@ mod tests {
     async fn input_test() {
         let expected_query_id = QueryId;
         let expected_input = &[4u8; 4];
-        let req_handler = Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+        let req_handler = move |addr: Addr<HelperIdentity>, data: BodyStream| {
             let RouteId::QueryInput = addr.route else {
                 panic!("unexpected call");
             };
@@ -67,9 +65,9 @@ mod tests {
             }),  expected_input);
 
             Ok(HelperResponse::ok())
-        });
+        };
 
-        let TestServer { transport, .. } = TestServer::builder().with_request_handler(req_handler).build().await;
+        let TestServer { transport, .. } = TestServer::builder(req_handler).build().await;
         let req = http_serde::query::input::Request::new(QueryInput {
             query_id: expected_query_id,
             input_stream: expected_input.to_vec().into(),

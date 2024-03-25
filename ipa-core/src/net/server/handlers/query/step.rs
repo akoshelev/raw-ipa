@@ -9,10 +9,11 @@ use crate::{
     },
     sync::Arc,
 };
+use crate::helpers::{HelperIdentity, RequestHandler};
 
 #[allow(clippy::unused_async)] // axum doesn't like synchronous handler
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     from: Extension<ClientIdentity>,
     req: http_serde::query::step::Request<BodyStream>,
 ) -> Result<(), Error> {
@@ -21,9 +22,9 @@ async fn handler(
     Ok(())
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(http_serde::query::step::AXUM_PATH, post(handler))
+        .route(http_serde::query::step::AXUM_PATH, post(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -55,7 +56,7 @@ mod tests {
 
     #[tokio::test]
     async fn step() {
-        let TestServer { transport, .. } = TestServer::builder().build().await;
+        let TestServer { transport, .. } = TestServer::default().await;
 
         let step = Gate::default().narrow("test");
         let payload = vec![213; DATA_LEN * MESSAGE_PAYLOAD_SIZE_BYTES];

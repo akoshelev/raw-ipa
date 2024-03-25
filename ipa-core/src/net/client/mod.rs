@@ -441,7 +441,7 @@ pub(crate) mod tests {
         secret_sharing::replicated::semi_honest::AdditiveShare as Replicated,
         sync::Arc,
     };
-    use crate::helpers::{ApiError, BodyStream, HelperResponse, make_boxed_handler, PanickingHandler, RequestHandler};
+    use crate::helpers::{ApiError, BodyStream, HelperResponse, make_handler, PanickingHandler, RequestHandler};
     use crate::helpers::routing::Addr;
 
     #[tokio::test]
@@ -475,7 +475,7 @@ pub(crate) mod tests {
     /// Also tests that the same functionality works for both `http` and `https` and all supported
     /// HTTP versions (HTTP 1.1 and HTTP 2 at the moment) . In order to ensure
     /// this, the return type of `clientf` must be `Eq + Debug` so that the results can be compared.
-    async fn test_query_command<ClientOut, ClientFut, ClientF, HandlerF>(
+    async fn test_query_command<H: RequestHandler<Identity = HelperIdentity>, ClientOut, ClientFut, ClientF, HandlerF>(
         clientf: ClientF,
         server_handler: HandlerF
     ) -> ClientOut
@@ -483,11 +483,11 @@ pub(crate) mod tests {
         ClientOut: Eq + Debug,
         ClientFut: Future<Output = ClientOut>,
         ClientF: Fn(MpcHelperClient) -> ClientFut,
-        HandlerF: Fn() -> Box<dyn RequestHandler<Identity = HelperIdentity>>
+        HandlerF: Fn() -> H,
     {
         let mut results = Vec::with_capacity(4);
         for (use_https, use_http1) in zip([true, false], [true, false]) {
-            let mut test_server_builder = TestServer::builder();
+            let mut test_server_builder = TestServer::<H>::builder(server_handler());
             if !use_https {
                 test_server_builder = test_server_builder.disable_https();
             }
@@ -496,10 +496,10 @@ pub(crate) mod tests {
                 test_server_builder = test_server_builder.use_http1();
             }
 
-            let TestServer {
+            let TestServer::<H> {
                 client: http_client,
                 ..
-            } = test_server_builder.with_request_handler(server_handler()).build().await;
+            } = test_server_builder.build().await;
 
             results.push(clientf(http_client).await);
         }
@@ -515,7 +515,7 @@ pub(crate) mod tests {
 
         let output = test_query_command(
             |client| async move { client.echo(expected_output).await.unwrap() },
-            || Box::new(PanickingHandler::default()),
+            || PanickingHandler::default(),
         )
         .await;
         assert_eq!(expected_output, &output);
@@ -527,7 +527,7 @@ pub(crate) mod tests {
         let expected_query_config = QueryConfig::new(TestMultiply, FieldType::Fp31, 1).unwrap();
 
         let handler = || {
-            make_boxed_handler(move |addr, _| async move {
+            make_handler(move |addr, _| async move {
                 let query_config = addr.into::<QueryConfig>().unwrap();
                 assert_eq!(query_config, expected_query_config);
 
@@ -554,7 +554,7 @@ pub(crate) mod tests {
             roles: RoleAssignment::new(HelperIdentity::make_three()),
         };
         let handler = move || {
-            make_boxed_handler(move |addr, _| async move {
+            make_handler(move |addr, _| async move {
                 let prepare_query = addr.into::<PrepareQuery>().unwrap();
                 assert_eq!(prepare_query, input);
 
@@ -577,7 +577,7 @@ pub(crate) mod tests {
         let expected_query_id = QueryId;
         let expected_input = &[8u8; 25];
         let handler = move || {
-            make_boxed_handler(move |addr, data| async move {
+            make_handler(move |addr, data| async move {
                 assert_eq!(addr.query_id, Some(expected_query_id));
                 assert_eq!(data.to_vec().await, expected_input);
 
@@ -601,7 +601,7 @@ pub(crate) mod tests {
     async fn step() {
         let TestServer {
             client, transport, ..
-        } = TestServer::builder().build().await;
+        } = TestServer::default().await;
         let expected_query_id = QueryId;
         let expected_step = Gate::default().narrow("test-step");
         let expected_payload = vec![7u8; MESSAGE_PAYLOAD_SIZE_BYTES];
@@ -632,7 +632,7 @@ pub(crate) mod tests {
         let expected_results = [Fp31::try_from(1u128).unwrap(), Fp31::try_from(2u128).unwrap()];
         let expected_query_id = QueryId;
         let handler = move || {
-            make_boxed_handler(move |addr, _| async move {
+            make_handler(move |addr, _| async move {
                 let results: Box<dyn ProtocolResult> = Box::new([Replicated::from((expected_results[0], expected_results[1]))].to_vec());
                 assert_eq!(addr.query_id, Some(expected_query_id));
                 Ok(HelperResponse::from(results))

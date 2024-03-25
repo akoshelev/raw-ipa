@@ -64,9 +64,9 @@ fn unzip_tuple_array<T, U>(input: [(T, U); 3]) -> ([T; 3], [U; 3]) {
 impl Default for TestApp {
     fn default() -> Self {
         let (setup, mut handlers) = unzip_tuple_array(array::from_fn(|_| AppSetup::new()));
-        let handlers_ref = [&handlers[0], &handlers[1], &handlers[2]];
+        let [h1, h2, h3] = [&handlers[0], &handlers[1], &handlers[2]];
 
-        let network = InMemoryMpcNetwork::new(handlers_ref.map(RequestHandlerSetup::make_handler).map(Some));
+        let network = InMemoryMpcNetwork::new(h1.make_handler(), h2.make_handler(), h3.make_handler());
         let drivers = network
             .transports()
             .iter()

@@ -7,12 +7,12 @@ use crate::{
     sync::Arc,
 };
 use crate::net::Error;
-use crate::helpers::{BodyStream, Transport};
+use crate::helpers::{BodyStream, HelperIdentity, RequestHandler, Transport};
 
 /// Called by whichever peer helper is the leader for an individual query, to initiatialize
 /// processing of that query.
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     _: Extension<ClientIdentity>, // require that client is an authenticated helper
     req: http_serde::query::prepare::Request,
 ) -> Result<(), Error> {
@@ -21,7 +21,6 @@ async fn handler(
         .map_err(|e| Error::application(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(())
-    // Arc::clone(&transport).prepare_query(req.data).await
 }
 
 impl IntoResponse for PrepareQueryError {
@@ -30,9 +29,9 @@ impl IntoResponse for PrepareQueryError {
     }
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(http_serde::query::prepare::AXUM_PATH, post(handler))
+        .route(http_serde::query::prepare::AXUM_PATH, post(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -74,7 +73,7 @@ mod tests {
             roles: RoleAssignment::new(HelperIdentity::make_three()),
         });
         let expected_prepare_query = req.data.clone();
-        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+        let TestServer { transport, .. } = TestServer::builder(move |addr: Addr<HelperIdentity>, data: BodyStream| {
             let RouteId::PrepareQuery = addr.route else {
                 panic!("unexpected call");
             };
@@ -82,7 +81,7 @@ mod tests {
             let query_config = addr.into::<PrepareQuery>().unwrap();
             assert_eq!(query_config, expected_prepare_query);
             Ok(HelperResponse::ok())
-        })).build().await;
+        }).build().await;
 
         handler(
             Extension(transport),

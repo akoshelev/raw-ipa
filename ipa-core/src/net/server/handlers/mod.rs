@@ -7,8 +7,9 @@ use crate::{
     net::{http_serde, HttpTransport},
     sync::Arc,
 };
+use crate::helpers::{HelperIdentity, RequestHandler};
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     echo::router().nest(
         http_serde::query::BASE_AXUM_PATH,
         Router::new()

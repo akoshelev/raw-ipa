@@ -6,10 +6,10 @@ use crate::{
     net::{http_serde::query::status, server::Error, HttpTransport},
     sync::Arc,
 };
-use crate::helpers::BodyStream;
+use crate::helpers::{BodyStream, HelperIdentity, RequestHandler};
 
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     req: status::Request,
 ) -> Result<Json<status::ResponseBody>, Error> {
     let transport = Transport::clone_ref(&*transport);
@@ -23,9 +23,9 @@ async fn handler(
     // }
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(status::AXUM_PATH, get(handler))
+        .route(status::AXUM_PATH, get(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -55,13 +55,13 @@ mod tests {
     async fn status_test() {
         let expected_status = QueryStatus::Running;
         let expected_query_id = QueryId;
-        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+        let TestServer { transport, .. } = TestServer::builder(move |addr: Addr<HelperIdentity>, data: BodyStream| {
             let RouteId::QueryStatus = addr.route else {
                 panic!("unexpected call");
             };
             assert_eq!(addr.query_id, Some(expected_query_id));
             Ok(HelperResponse::from(expected_status))
-        })).build().await;
+        }).build().await;
         let req = http_serde::query::status::Request::new(QueryId);
         let response = handler(Extension(transport), req.clone()).await.unwrap();
 

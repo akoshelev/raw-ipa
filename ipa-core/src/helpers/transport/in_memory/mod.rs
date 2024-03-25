@@ -10,7 +10,8 @@ use crate::{
     helpers::{HelperIdentity},
     sync::{Arc, Weak},
 };
-use crate::helpers::RequestHandler;
+use crate::app::QueryRequestHandler;
+use crate::helpers::{PanickingHandler, RequestHandler};
 
 pub type InMemoryTransport<I> = Weak<transport::InMemoryTransport<I>>;
 
@@ -22,13 +23,17 @@ pub struct InMemoryMpcNetwork {
 
 impl Default for InMemoryMpcNetwork {
     fn default() -> Self {
-        Self::new(array::from_fn(|_| None))
+        Self::new(PanickingHandler::default(), PanickingHandler::default(), PanickingHandler::default())
     }
 }
 
 impl InMemoryMpcNetwork {
     #[must_use]
-    pub fn new(handlers: [Option<Box<dyn RequestHandler<Identity = HelperIdentity>>>; 3]) -> Self {
+    pub fn new<
+        H1: RequestHandler<Identity = HelperIdentity>,
+        H2: RequestHandler<Identity = HelperIdentity>,
+        H3: RequestHandler<Identity = HelperIdentity>
+    >(h1: H1, h2: H2, h3: H3) -> Self {
         let [mut first, mut second, mut third]: [_; 3] =
             HelperIdentity::make_three().map(Setup::new);
 
@@ -36,10 +41,8 @@ impl InMemoryMpcNetwork {
         second.connect(&mut third);
         third.connect(&mut first);
 
-        let [cb1, cb2, cb3] = handlers;
-
         Self {
-            transports: [first.start(cb1), second.start(cb2), third.start(cb3)],
+            transports: [first.start(h1), second.start(h2), third.start(h3)],
         }
     }
 

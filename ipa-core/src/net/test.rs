@@ -205,44 +205,62 @@ impl TestConfigBuilder {
     }
 }
 
-pub struct TestServer {
+pub struct TestServer<H: RequestHandler = PanickingHandler<HelperIdentity>> {
     pub addr: SocketAddr,
     pub handle: JoinHandle<()>,
-    pub transport: Arc<HttpTransport>,
-    pub server: MpcHelperServer,
+    pub transport: Arc<HttpTransport<H>>,
+    pub server: MpcHelperServer<H>,
     pub client: MpcHelperClient,
 }
 
-impl TestServer {
+impl TestServer<PanickingHandler<HelperIdentity>> {
     /// Build default set of test clients
     ///
     /// All three clients will be configured with the same default server URL, thus,
     /// at most one client will do anything useful.
-    pub async fn default() -> TestServer {
-        Self::builder().build().await
+    pub async fn default() -> Self {
+        Self::default_builder().build().await
     }
 
-    /// Return a test client builder
-    #[must_use]
-    pub fn builder() -> TestServerBuilder {
-        TestServerBuilder::default()
+    pub fn default_builder() -> TestServerBuilder<PanickingHandler<HelperIdentity>> {
+        Self::builder(PanickingHandler::default())
     }
 }
 
-#[derive(Default)]
-pub struct TestServerBuilder {
-    handler: Option<Box<dyn RequestHandler<Identity = HelperIdentity>>>,
+impl <H: RequestHandler<Identity = HelperIdentity>> TestServer<H> {
+
+    /// Return a test client builder
+    #[must_use]
+    pub fn builder(handler: H) -> TestServerBuilder<H> {
+        TestServerBuilder::<H>::new(handler)
+    }
+}
+
+
+pub struct TestServerBuilder<H: RequestHandler = PanickingHandler<HelperIdentity>> {
+    handler: H,
     metrics: Option<MetricsHandle>,
     disable_https: bool,
     use_http1: bool,
     disable_matchkey_encryption: bool,
 }
 
-impl TestServerBuilder {
+impl Default for TestServerBuilder<PanickingHandler<HelperIdentity>> {
+    fn default() -> Self {
+        Self::new(PanickingHandler::default())
+    }
+}
+
+impl <H: RequestHandler<Identity = HelperIdentity>> TestServerBuilder<H> {
     #[must_use]
-    pub fn with_request_handler(mut self, handler: Box<dyn RequestHandler<Identity = HelperIdentity>>) -> Self {
-        self.handler = Some(handler);
-        self
+    pub fn new(handler: H) -> Self {
+        Self {
+            handler,
+            metrics: None,
+            disable_https: false,
+            use_http1: false,
+            disable_matchkey_encryption: false,
+        }
     }
 
     #[cfg(all(test, unit_test))]
@@ -273,7 +291,7 @@ impl TestServerBuilder {
         self
     }
 
-    pub async fn build(self) -> TestServer {
+    pub async fn build(self) -> TestServer<H> {
         let identity = if self.disable_https {
             ClientIdentity::Helper(HelperIdentity::ONE)
         } else {
@@ -299,7 +317,7 @@ impl TestServerBuilder {
             server_config,
             network_config.clone(),
             clients,
-            self.handler.unwrap_or_else(|| Box::new(PanickingHandler::default())),
+            self.handler,
         );
         let (addr, handle) = server.start_on(Some(server_socket), self.metrics).await;
         // Get the config for HelperIdentity::ONE

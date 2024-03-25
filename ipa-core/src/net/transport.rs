@@ -24,19 +24,20 @@ use crate::{
     protocol::{step::Gate, QueryId},
     sync::Arc,
 };
+use crate::app::QueryRequestHandler;
 use crate::helpers::{ApiError, HelperResponse, NoQueryId, NoStep, RequestHandler};
 use crate::helpers::routing::{Addr, RouteId};
 
 type LogHttpErrors = LogErrors<BodyStream, Bytes, BoxError>;
 
 /// HTTP transport for IPA helper service.
-pub struct HttpTransport {
+pub struct HttpTransport<H: RequestHandler = QueryRequestHandler> {
     identity: HelperIdentity,
     clients: [MpcHelperClient; 3],
     // TODO(615): supporting multiple queries likely require a hashmap here. It will be ok if we
     // only allow one query at a time.
     record_streams: StreamCollection<HelperIdentity, LogHttpErrors>,
-    handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
+    handler: H
 }
 
 impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
@@ -59,15 +60,15 @@ impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
     }
 }
 
-impl HttpTransport {
+impl <H: RequestHandler<Identity = HelperIdentity>> HttpTransport<H> {
     #[must_use]
     pub fn new(
         identity: HelperIdentity,
         server_config: ServerConfig,
         network_config: NetworkConfig,
         clients: [MpcHelperClient; 3],
-        handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
-    ) -> (Arc<Self>, MpcHelperServer) {
+        handler: H,
+    ) -> (Arc<Self>, MpcHelperServer<H>) {
         let transport = Self::new_internal(identity, clients, handler);
         let server = MpcHelperServer::new(Arc::clone(&transport), server_config, network_config);
         (transport, server)
@@ -76,7 +77,7 @@ impl HttpTransport {
     fn new_internal(
         identity: HelperIdentity,
         clients: [MpcHelperClient; 3],
-        handler: Box<dyn RequestHandler<Identity = HelperIdentity>>,
+        handler: H
     ) -> Arc<Self> {
         Arc::new(Self {
             identity,
@@ -96,13 +97,13 @@ impl HttpTransport {
         /// This implementation is a poor man's safety net and only works because we run
         /// one query at a time and don't use query identifiers.
         #[pin_project(PinnedDrop)]
-        struct ClearOnDrop<F: Future> {
-            transport: Arc<HttpTransport>,
+        struct ClearOnDrop<H: RequestHandler, F: Future> {
+            transport: Arc<HttpTransport<H>>,
             #[pin]
             inner: F
         }
 
-        impl <F: Future> Future for ClearOnDrop<F> {
+        impl <H: RequestHandler, F: Future> Future for ClearOnDrop<H, F> {
             type Output = F::Output;
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -111,7 +112,7 @@ impl HttpTransport {
         }
 
         #[pinned_drop]
-        impl <F: Future> PinnedDrop for ClearOnDrop<F> {
+        impl <H: RequestHandler, F: Future> PinnedDrop for ClearOnDrop<H, F> {
             fn drop(self: Pin<&mut Self>) {
                 self.transport.record_streams.clear();
             }
@@ -147,7 +148,7 @@ impl HttpTransport {
 }
 
 #[async_trait]
-impl Transport for Arc<HttpTransport> {
+impl <H: RequestHandler<Identity = HelperIdentity> + 'static> Transport for Arc<HttpTransport<H>> {
     type Identity = HelperIdentity;
     type RecordsStream = ReceiveRecords<HelperIdentity, LogHttpErrors>;
     type Error = Error;

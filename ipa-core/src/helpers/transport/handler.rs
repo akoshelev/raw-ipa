@@ -106,7 +106,8 @@ pub enum Error {
 /// Trait for custom-handling different request types made against MPC helper parties.
 /// There is a limitation for RPITIT that traits can't be made object-safe, hence the use of async_trait
 #[async_trait]
-pub trait RequestHandler: Send + Sync {
+pub trait RequestHandler: Send + Sync + 'static {
+    /// todo: remove it
     type Identity: TransportIdentity;
     /// Handle the incoming request with metadata/headers specified in [`Addr`] and body encoded as
     /// [`BodyStream`].
@@ -123,12 +124,12 @@ impl<F> RequestHandler for F where F: Fn(Addr<HelperIdentity>, BodyStream) -> Re
 }
 
 
-pub fn make_boxed_handler<'a, I, F, Fut>(
+pub fn make_handler<I, F, Fut>(
     handler: F
-) -> Box<dyn RequestHandler<Identity=I> + 'a>
+) -> impl RequestHandler<Identity=I>
     where I: TransportIdentity,
-          F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync + 'a,
-          Fut: Future<Output=Result<HelperResponse, Error>> + Send + 'a {
+          F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync + 'static,
+          Fut: Future<Output=Result<HelperResponse, Error>> + Send + 'static {
     struct Handler<I, F> {
         inner: F,
         phantom: PhantomData<I>,
@@ -136,8 +137,8 @@ pub fn make_boxed_handler<'a, I, F, Fut>(
     #[async_trait]
     impl<I, F, Fut> RequestHandler for Handler<I, F>
         where I: TransportIdentity,
-              F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync,
-              Fut: Future<Output=Result<HelperResponse, Error>> + Send {
+              F: Fn(Addr<I>, BodyStream) -> Fut + Send + Sync + 'static,
+              Fut: Future<Output=Result<HelperResponse, Error>> + Send + 'static {
         type Identity = I;
 
         async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error> {
@@ -145,7 +146,7 @@ pub fn make_boxed_handler<'a, I, F, Fut>(
         }
     }
 
-    Box::new(Handler { inner: handler, phantom: PhantomData })
+    Handler { inner: handler, phantom: PhantomData }
 }
 
 pub struct PanickingHandler<I: TransportIdentity> {

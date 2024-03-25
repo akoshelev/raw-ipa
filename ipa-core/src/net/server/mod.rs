@@ -50,6 +50,8 @@ use crate::{
     task::JoinHandle,
     telemetry::metrics::{web::RequestProtocolVersion, REQUESTS_RECEIVED},
 };
+use crate::app::QueryRequestHandler;
+use crate::helpers::RequestHandler;
 
 pub trait TracingSpanMaker: Send + Sync + Clone + 'static {
     fn make_span(&self) -> Span;
@@ -74,15 +76,15 @@ impl TracingSpanMaker for () {
 /// IPA helper web service
 ///
 /// `MpcHelperServer` handles requests from both peer helpers and external clients.
-pub struct MpcHelperServer {
-    transport: Arc<HttpTransport>,
+pub struct MpcHelperServer<H: RequestHandler = QueryRequestHandler> {
+    transport: Arc<HttpTransport<H>>,
     config: ServerConfig,
     network_config: NetworkConfig,
 }
 
-impl MpcHelperServer {
+impl <H: RequestHandler<Identity = HelperIdentity>> MpcHelperServer<H> {
     pub fn new(
-        transport: Arc<HttpTransport>,
+        transport: Arc<HttpTransport<H>>,
         config: ServerConfig,
         network_config: NetworkConfig,
     ) -> Self {
@@ -522,7 +524,7 @@ mod e2e_tests {
     #[tokio::test]
     async fn can_do_http() {
         // server
-        let TestServer { addr, .. } = TestServer::builder().disable_https().build().await;
+        let TestServer { addr, .. } = TestServer::default_builder().disable_https().build().await;
 
         // client
         let client = hyper::Client::new();
@@ -556,7 +558,7 @@ mod e2e_tests {
 
     #[tokio::test]
     async fn can_do_https() {
-        let TestServer { addr, .. } = TestServer::builder().build().await;
+        let TestServer { addr, .. } = TestServer::default().await;
 
         // self-signed cert CN is "localhost", therefore request authority must not use the ip address
         let authority = format!("localhost:{}", addr.port());
@@ -592,7 +594,7 @@ mod e2e_tests {
         let handle = MetricsHandle::new(Level::INFO);
 
         // server
-        let TestServer { addr, .. } = TestServer::builder()
+        let TestServer { addr, .. } = TestServer::default_builder()
             .disable_https() // required because this test uses a vanilla hyper client
             .with_metrics(handle.clone())
             .build()
@@ -625,7 +627,7 @@ mod e2e_tests {
         let handle = MetricsHandle::new(Level::INFO);
 
         // server
-        let TestServer { addr, .. } = TestServer::builder()
+        let TestServer { addr, .. } = TestServer::default_builder()
             .disable_https() // required because this test uses vanilla hyper clients
             .with_metrics(handle.clone())
             .build()
@@ -665,7 +667,7 @@ mod e2e_tests {
         let handle = MetricsHandle::new(Level::INFO);
 
         // server
-        let TestServer { addr, client, .. } = TestServer::builder()
+        let TestServer { addr, client, .. } = TestServer::default_builder()
             // HTTP2 is disabled by default for HTTP traffic, so this verifies
             // our client is configured to enable it.
             // See https://github.com/private-attribution/ipa/issues/650 for motivation why

@@ -29,7 +29,7 @@ use crate::{
     sharding::ShardIndex,
     sync::{Arc, Weak},
 };
-use crate::helpers::{ApiError, BodyStream, HelperResponse, RequestHandler};
+use crate::helpers::{ApiError, BodyStream, HelperResponse, PanickingHandler, RequestHandler};
 use crate::helpers::transport::routing::{Addr, RouteId};
 
 type Packet<I> = (
@@ -91,7 +91,7 @@ impl<I: TransportIdentity> InMemoryTransport<I> {
     /// so I'll leave it as is for now.
     fn listen(
         self: &Arc<Self>,
-        handler: Option<Box<dyn RequestHandler<Identity = I>>>,
+        handler: impl RequestHandler<Identity = I>,
         mut rx: ConnectionRx<I>,
     ) {
         tokio::spawn(
@@ -111,7 +111,7 @@ impl<I: TransportIdentity> InMemoryTransport<I> {
                                 Ok(HelperResponse::ok())
                             }
                             RouteId::ReceiveQuery | RouteId::PrepareQuery | RouteId::QueryInput | RouteId::QueryStatus | RouteId::CompleteQuery => {
-                                handler.as_ref().expect("Request handler is provided").handle(addr, BodyStream::from_infallible(stream.map(Vec::into_boxed_slice))).await
+                                handler.handle(addr, BodyStream::from_infallible(stream.map(Vec::into_boxed_slice))).await
                                 // callbacks.handle(Clone::clone(&this), addr).await
                             }
                         };
@@ -288,13 +288,17 @@ impl<I: TransportIdentity> Setup<I> {
     }
 
 
-    pub(crate) fn start(self, handler: Option<Box<dyn RequestHandler<Identity = I>>>) -> Arc<InMemoryTransport<I>> {
+    pub(crate) fn start(self, handler: impl RequestHandler<Identity = I>) -> Arc<InMemoryTransport<I>> {
         self.into_active_conn(handler).1
+    }
+
+    pub fn start_no_handler(self) -> Arc<InMemoryTransport<I>> {
+        self.into_active_conn(PanickingHandler::default()).1
     }
 
     fn into_active_conn(
         self,
-        handler: Option<Box<dyn RequestHandler<Identity = I>>>,
+        handler: impl RequestHandler<Identity = I>,
     ) -> (ConnectionTx<I>, Arc<InMemoryTransport<I>>)
     {
         let transport = Arc::new(InMemoryTransport::new(self.identity, self.connections));
@@ -365,7 +369,7 @@ mod tests {
         protocol::{QueryId, step::Gate},
         sync::Arc,
     };
-    use crate::helpers::{HelperResponse, Role, RoleAssignment};
+    use crate::helpers::{HelperResponse, PanickingHandler, Role, RoleAssignment};
     use crate::helpers::query::PrepareQuery;
     use crate::helpers::transport::routing::RouteId;
 
@@ -397,7 +401,7 @@ mod tests {
         //         }),
         //         ..Default::default()
         //     }
-            Setup::new(HelperIdentity::ONE).into_active_conn(Some(Box::new(move |addr: Addr<HelperIdentity>, stream| {
+            Setup::new(HelperIdentity::ONE).into_active_conn(move |addr: Addr<HelperIdentity>, stream| {
                     let RouteId::ReceiveQuery = addr.route else {
                         panic!("unexpected call: {addr:?}")
                     };
@@ -416,8 +420,7 @@ mod tests {
                         config: query_config,
                         roles: RoleAssignment::try_from([Role::H1, Role::H2, Role::H3]).unwrap()
                     }))
-                })
-            ));
+                });
         let expected = QueryConfig::new(TestMultiply, FieldType::Fp32BitPrime, 1u32).unwrap();
 
         send_and_ack(
@@ -433,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn receive_not_ready() {
         let (tx, transport) =
-            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+            Setup::new(HelperIdentity::ONE).into_active_conn(PanickingHandler::default());
         let transport = Arc::downgrade(&transport);
         let expected = vec![vec![1], vec![2]];
 
@@ -457,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn receive_ready() {
         let (tx, transport) =
-            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+            Setup::new(HelperIdentity::ONE).into_active_conn(PanickingHandler::default());
         let expected = vec![vec![1], vec![2]];
 
         send_and_ack(
@@ -520,8 +523,8 @@ mod tests {
 
         setup1.connect(&mut setup2);
 
-        let transport1 = setup1.start(None);
-        let transport2 = setup2.start(None);
+        let transport1 = setup1.start(PanickingHandler::default());
+        let transport2 = setup2.start(PanickingHandler::default());
         let transports = HashMap::from([
             (HelperIdentity::ONE, Arc::downgrade(&transport1)),
             (HelperIdentity::TWO, Arc::downgrade(&transport2)),
@@ -534,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn panic_if_stream_received_twice() {
         let (tx, owned_transport) =
-            Setup::new(HelperIdentity::ONE).into_active_conn(None);
+            Setup::new(HelperIdentity::ONE).into_active_conn(PanickingHandler::default());
         let gate = Gate::from(STEP);
         let (stream_tx, stream_rx) = channel(1);
         let stream = InMemoryStream::from(stream_rx);

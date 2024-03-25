@@ -330,32 +330,32 @@ mod tests {
             processor::Processor, state::StateError, NewQueryError, PrepareQueryError, QueryStatus,
         },
     };
-    use crate::helpers::{ApiError, BodyStream, HelperResponse, make_boxed_handler, RequestHandler};
+    use crate::helpers::{ApiError, BodyStream, HelperResponse, make_handler, PanickingHandler, RequestHandler};
     use crate::helpers::routing::{Addr, RouteId};
 
-    fn prepare_query_handler<F, Fut>(cb: F) -> Box<dyn RequestHandler<Identity = HelperIdentity>>
+    fn prepare_query_handler<F, Fut>(cb: F) -> impl RequestHandler<Identity = HelperIdentity>
     where
         F: Fn(PrepareQuery) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<HelperResponse, ApiError>> + Send + Sync + 'static,
     {
-        make_boxed_handler(move |req, _| {
+        make_handler(move |req, _| {
             let prepare_query = req.into().unwrap();
             cb(prepare_query)
         })
     }
 
-    fn respond_ok() -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
-        Some(prepare_query_handler(move |_| {
+    fn respond_ok() -> impl RequestHandler<Identity = HelperIdentity> {
+        prepare_query_handler(move |_| {
             async move {
                 Ok(HelperResponse::ok())
-            } }))
+            } })
     }
 
-    fn respond_err(err: ApiError) -> Option<Box<dyn RequestHandler<Identity = HelperIdentity>>> {
-        Some(prepare_query_handler(move |_| {
+    fn respond_err(err: ApiError) -> impl RequestHandler<Identity = HelperIdentity> {
+        prepare_query_handler(move |_| {
             async move {
                 Err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget))
-            } }))
+            } })
     }
 
     fn test_multiply_config() -> QueryConfig {
@@ -381,7 +381,7 @@ mod tests {
                     Ok(HelperResponse::ok())
                 }
             });
-        let network = InMemoryMpcNetwork::new([None, Some(h2), Some(h3)]);
+        let network = InMemoryMpcNetwork::new(PanickingHandler::default(), h2, h3);
         let [t0, _, _] = network.transports();
         let p0 = Processor::default();
         let request = test_multiply_config();
@@ -415,8 +415,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_duplicate_query_id() {
-        let handlers = array::from_fn(|_| Some(prepare_query_handler(|_| async { Ok(HelperResponse::ok()) })));
-        let network = InMemoryMpcNetwork::new(handlers);
+        let [h1, h2, h3] = array::from_fn(|_| prepare_query_handler(|_| async { Ok(HelperResponse::ok()) }));
+        let network = InMemoryMpcNetwork::new(h1, h2, h3);
         let [t0, _, _] = network.transports();
         let p0 = Processor::default();
         let request = test_multiply_config();
@@ -435,7 +435,7 @@ mod tests {
     async fn prepare_error() {
         let h2 = respond_ok();
         let h3 = respond_err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget));
-        let network = InMemoryMpcNetwork::new([None, h2, h3]);
+        let network = InMemoryMpcNetwork::new(PanickingHandler::default(), h2, h3);
         let [t0, _, _] = network.transports();
         let p0 = Processor::default();
         let request = test_multiply_config();
@@ -450,7 +450,7 @@ mod tests {
     async fn can_recover_from_prepare_error() {
         let h2 = respond_ok();
         let h3 = respond_err(ApiError::QueryPrepare(PrepareQueryError::WrongTarget));
-        let network = InMemoryMpcNetwork::new([None, h2, h3]);
+        let network = InMemoryMpcNetwork::new(PanickingHandler::default(), h2, h3);
         let [t0, _, _] = network.transports();
         let p0 = Processor::default();
         let request = test_multiply_config();

@@ -36,7 +36,7 @@ impl InMemoryShardNetwork {
 
             shard_connections
                 .into_iter()
-                .map(|s| tracing::info_span!("", ?h).in_scope(|| s.start(None)))
+                .map(|s| tracing::info_span!("", ?h).in_scope(|| s.start_no_handler()))
                 .collect::<Vec<_>>()
                 .into()
         });

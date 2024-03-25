@@ -22,13 +22,14 @@ use crate::{
     net::{server::ClientIdentity, HttpTransport},
     sync::Arc,
 };
+use crate::helpers::{HelperIdentity, RequestHandler};
 
 /// Construct router for IPA query web service
 ///
 /// In principle, this web service could be backed by either an HTTP-interconnected helper network or
 /// an in-memory helper network. These are the APIs used by external callers (report collectors) to
 /// examine attribution results.
-pub fn query_router(transport: Arc<HttpTransport>) -> Router {
+pub fn query_router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
         .merge(create::router(Arc::clone(&transport)))
         .merge(input::router(Arc::clone(&transport)))
@@ -43,7 +44,7 @@ pub fn query_router(transport: Arc<HttpTransport>) -> Router {
 /// particular query, to coordinate servicing that query.
 //
 // It might make sense to split the query and h2h handlers into two modules.
-pub fn h2h_router(transport: Arc<HttpTransport>) -> Router {
+pub fn h2h_router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
         .merge(prepare::router(Arc::clone(&transport)))
         .merge(step::router(transport))

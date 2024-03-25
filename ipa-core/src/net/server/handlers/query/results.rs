@@ -6,11 +6,11 @@ use crate::{
     net::{http_serde, server::Error, HttpTransport},
     sync::Arc,
 };
-use crate::helpers::{BodyStream, HelperResponse};
+use crate::helpers::{BodyStream, HelperIdentity, HelperResponse, RequestHandler};
 
 /// Handles the completion of the query by blocking the sender until query is completed.
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     req: http_serde::query::results::Request,
 ) -> Result<Vec<u8>, Error> {
     // TODO: we may be able to stream the response
@@ -26,9 +26,9 @@ async fn handler(
     // }
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(http_serde::query::results::AXUM_PATH, get(handler))
+        .route(http_serde::query::results::AXUM_PATH, get(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -64,14 +64,14 @@ mod tests {
         ))]);
         let expected_query_id = QueryId;
         let raw_results = expected_results.to_vec();
-        let TestServer { transport, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+        let TestServer { transport, .. } = TestServer::builder(move |addr: Addr<HelperIdentity>, data: BodyStream| {
             let RouteId::CompleteQuery = addr.route else {
                 panic!("unexpected call");
             };
             let results= Box::new(raw_results.clone()) as Box<dyn ProtocolResult>;
             assert_eq!(addr.query_id, Some(expected_query_id));
             Ok(HelperResponse::from(results))
-        })).build().await;
+        }).build().await;
         let req = http_serde::query::results::Request::new(QueryId);
         let results = handler(Extension(transport), req.clone()).await.unwrap();
         assert_eq!(results, expected_results.as_bytes());

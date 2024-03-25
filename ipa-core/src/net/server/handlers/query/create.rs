@@ -9,12 +9,12 @@ use crate::{
     sync::Arc,
 };
 use crate::helpers::ApiError::NewQuery;
-use crate::helpers::{BodyStream, HelperResponse};
+use crate::helpers::{BodyStream, HelperIdentity, HelperResponse, RequestHandler};
 
 /// Takes details from the HTTP request and creates a `[TransportCommand]::CreateQuery` that is sent
 /// to the [`HttpTransport`].
-async fn handler(
-    transport: Extension<Arc<HttpTransport>>,
+async fn handler<H: RequestHandler<Identity = HelperIdentity>>(
+    transport: Extension<Arc<HttpTransport<H>>>,
     req: http_serde::query::create::Request,
 ) -> Result<Json<http_serde::query::create::ResponseBody>, Error> {
     let transport = Transport::clone_ref(&*transport);
@@ -34,9 +34,9 @@ async fn handler(
     // }
 }
 
-pub fn router(transport: Arc<HttpTransport>) -> Router {
+pub fn router<H: RequestHandler<Identity = HelperIdentity>>(transport: Arc<HttpTransport<H>>) -> Router {
     Router::new()
-        .route(http_serde::query::create::AXUM_PATH, post(handler))
+        .route(http_serde::query::create::AXUM_PATH, post(handler::<H>))
         .layer(Extension(transport))
 }
 
@@ -67,7 +67,7 @@ mod tests {
     use crate::helpers::routing::{Addr, RouteId};
 
     async fn create_test(expected_query_config: QueryConfig) {
-        let TestServer { server, .. } = TestServer::builder().with_request_handler(Box::new(move |addr: Addr<HelperIdentity>, data: BodyStream| {
+        let TestServer { server, .. } = TestServer::builder(move |addr: Addr<HelperIdentity>, data: BodyStream| {
             let RouteId::ReceiveQuery = addr.route else {
                 panic!("unexpected call");
             };
@@ -79,7 +79,7 @@ mod tests {
                 config: query_config,
                 roles: RoleAssignment::try_from([Role::H1, Role::H2, Role::H3]).unwrap()
             }))
-        })).build().await;
+        }).build().await;
         let req = http_serde::query::create::Request::new(expected_query_config);
         let req = req
             .try_into_http_request(Scheme::HTTP, Authority::from_static("localhost"))
