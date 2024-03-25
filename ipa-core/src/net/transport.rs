@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, TryFutureExt};
-use pin_project::pin_project;
+use pin_project::{pin_project, pinned_drop};
 
 use crate::{
     config::{NetworkConfig, ServerConfig},
@@ -95,7 +95,7 @@ impl HttpTransport {
         ///
         /// This implementation is a poor man's safety net and only works because we run
         /// one query at a time and don't use query identifiers.
-        #[pin_project]
+        #[pin_project(PinnedDrop)]
         struct ClearOnDrop<F: Future> {
             transport: Arc<HttpTransport>,
             #[pin]
@@ -110,62 +110,26 @@ impl HttpTransport {
             }
         }
 
-        if let RouteId::CompleteQuery = req.resource_identifier() {
-            ClearOnDrop {
-                transport: Arc::clone(&self),
-                inner: self.handler.handle(Addr::from_route(origin, req), body),
-            }.await
-        } else {
-            self.handler.handle(Addr::from_route(origin, req), body).await
+        #[pinned_drop]
+        impl <F: Future> PinnedDrop for ClearOnDrop<F> {
+            fn drop(self: Pin<&mut Self>) {
+                self.transport.record_streams.clear();
+            }
         }
 
+        let route_id = req.resource_identifier();
+        let r = self.handler.handle(Addr::from_route(origin, req), body);
 
+        if let RouteId::CompleteQuery = route_id {
+            ClearOnDrop {
+                transport: Arc::clone(&self),
+                inner: r
+            }.await
+        } else {
+            r.await
+        }
     }
 
-    // pub fn receive_query(self: Arc<Self>, req: QueryConfig) -> ReceiveQueryResult {
-    //     self.handler.handle()
-    //     // (Arc::clone(&self).callbacks.receive_query)(self, req)
-    // }
-    //
-    // pub fn prepare_query(self: Arc<Self>, req: PrepareQuery) -> PrepareQueryResult {
-    //     (Arc::clone(&self).callbacks.prepare_query)(self, req)
-    // }
-    //
-    // pub fn query_input(self: Arc<Self>, req: QueryInput) -> QueryInputResult {
-    //     (Arc::clone(&self).callbacks.query_input)(self, req)
-    // }
-    //
-    // pub fn query_status(self: Arc<Self>, query_id: QueryId) -> QueryStatusResult {
-    //     (Arc::clone(&self).callbacks.query_status)(self, query_id)
-    // }
-    //
-    // pub fn complete_query(self: Arc<Self>, query_id: QueryId) -> CompleteQueryResult {
-    //     /// Cleans up the `records_stream` collection after drop to ensure this transport
-    //     /// can process the next query even in case of a panic.
-    //     struct ClearOnDrop {
-    //         transport: Arc<HttpTransport>,
-    //         qr: CompleteQueryResult,
-    //     }
-    //
-    //     impl Future for ClearOnDrop {
-    //         type Output = <CompleteQueryResult as Future>::Output;
-    //
-    //         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    //             self.qr.as_mut().poll(cx)
-    //         }
-    //     }
-    //
-    //     impl Drop for ClearOnDrop {
-    //         fn drop(&mut self) {
-    //             self.transport.record_streams.clear();
-    //         }
-    //     }
-    //
-    //     Box::pin(ClearOnDrop {
-    //         transport: Arc::clone(&self),
-    //         qr: Box::pin((Arc::clone(&self).callbacks.complete_query)(self, query_id)),
-    //     })
-    // }
 
     /// Connect an inbound stream of MPC record data.
     ///
