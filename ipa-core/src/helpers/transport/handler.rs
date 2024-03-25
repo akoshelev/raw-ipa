@@ -103,11 +103,13 @@ pub enum Error {
 }
 
 
+/// Trait for custom-handling different request types made against MPC helper parties.
 /// There is a limitation for RPITIT that traits can't be made object-safe, hence the use of async_trait
 #[async_trait]
 pub trait RequestHandler: Send + Sync {
     type Identity: TransportIdentity;
-    // Use RouteParams
+    /// Handle the incoming request with metadata/headers specified in [`Addr`] and body encoded as
+    /// [`BodyStream`].
     async fn handle(&self, req: Addr<Self::Identity>, data: BodyStream) -> Result<HelperResponse, Error>;
 }
 
