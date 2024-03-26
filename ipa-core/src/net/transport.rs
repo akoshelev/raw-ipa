@@ -221,7 +221,8 @@ impl Transport for Arc<HttpTransport> {
     }
 }
 
-#[cfg(all(test, web_test))]
+// #[cfg(all(test, web_test))] //FIXME
+#[cfg(all(test, feature = "real-world-infra"))]
 mod tests {
     use std::{iter::zip, net::TcpListener, task::Poll};
 
@@ -307,14 +308,14 @@ mod tests {
                     } else {
                         get_test_identity(id)
                     };
-                    let (setup, handler_setup) = AppSetup::new();
+                    let (setup, handler) = AppSetup::new();
                     let clients = MpcHelperClient::from_conf(network_config, identity);
                     let (transport, server) = HttpTransport::new(
                         id,
                         server_config,
                         network_config.clone(),
                         clients,
-                        handler_setup.make_handler(),
+                        Box::new(handler),
                     );
                     server.start_on(Some(socket), ()).await;
 
