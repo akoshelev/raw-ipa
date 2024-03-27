@@ -369,7 +369,7 @@ mod tests {
                 let mut suite = EncryptionSuite::new(1, rng);
                 let mut encryption = suite.seal(0, EventType::Source, &new_share(0, 0));
 
-                encryption.ct.as_mut()[bad_byte] ^= 1 << bad_bit;
+                encryption.ct[bad_byte] ^= 1 << bad_bit;
                 suite.open(0, EventType::Source, encryption).unwrap_err();
             }
         }
@@ -382,7 +382,7 @@ mod tests {
                 let mut suite = EncryptionSuite::new(1, rng);
                 let mut encryption = suite.seal(0, EventType::Source, &new_share(0, 0));
 
-                encryption.enc.as_mut()[bad_byte] ^= 1 << bad_bit;
+                encryption.enc[bad_byte] ^= 1 << bad_bit;
                 suite.open(0, EventType::Source, encryption).unwrap_err();
             }
         }
