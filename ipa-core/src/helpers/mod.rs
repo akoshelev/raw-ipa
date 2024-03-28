@@ -71,6 +71,7 @@ use crate::{
     protocol::{step::Gate, RecordId},
     secret_sharing::Sendable,
 };
+use crate::sharding::ShardIndex;
 
 // TODO work with ArrayLength only
 pub type MessagePayloadArrayLen = U8;
@@ -409,7 +410,7 @@ impl TryFrom<[Role; 3]> for RoleAssignment {
 /// Combination of helper role and step that uniquely identifies a single channel of communication
 /// between two helpers.
 #[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ChannelId<I: transport::Identity> {
+pub struct ChannelId<I> {
     /// Entity we are talking to through this channel. It can be a source or a destination.
     pub peer: I,
     // TODO: step could be either reference or owned value. references are convenient to use inside
@@ -418,6 +419,7 @@ pub struct ChannelId<I: transport::Identity> {
 }
 
 pub type HelperChannelId = ChannelId<Role>;
+pub type ShardChannelId = ChannelId<ShardIndex>;
 
 impl<I: transport::Identity> ChannelId<I> {
     #[must_use]

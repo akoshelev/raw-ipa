@@ -39,27 +39,10 @@ pub struct HttpTransport {
     handler: Option<HandlerRef>,
 }
 
+/// Future HTTP transport for shard traffic
 #[derive(Clone, Default)]
 pub struct HttpShardTransport;
 
-#[async_trait]
-impl Transport for HttpShardTransport {
-    type Identity = ShardIndex;
-    type RecordsStream = ReceiveRecords<ShardIndex, LogHttpErrors>;
-    type Error = ();
-
-    fn identity(&self) -> Self::Identity {
-        todo!()
-    }
-
-    async fn send<D, Q, S, R>(&self, _dest: Self::Identity, _route: R, _data: D) -> Result<(), Self::Error> where Option<QueryId>: From<Q>, Option<Gate>: From<S>, Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>, D: Stream<Item=Vec<u8>> + Send + 'static {
-        todo!()
-    }
-
-    fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(&self, _from: Self::Identity, _route: R) -> Self::RecordsStream {
-        todo!()
-    }
-}
 
 impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
     type Params = String;
@@ -249,6 +232,25 @@ impl Transport for Arc<HttpTransport> {
             (route.query_id(), from, route.gate()),
             self.record_streams.clone(),
         )
+    }
+}
+
+#[async_trait]
+impl Transport for HttpShardTransport {
+    type Identity = ShardIndex;
+    type RecordsStream = ReceiveRecords<ShardIndex, LogHttpErrors>;
+    type Error = ();
+
+    fn identity(&self) -> Self::Identity {
+        unimplemented!()
+    }
+
+    async fn send<D, Q, S, R>(&self, _dest: Self::Identity, _route: R, _data: D) -> Result<(), Self::Error> where Option<QueryId>: From<Q>, Option<Gate>: From<S>, Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>, D: Stream<Item=Vec<u8>> + Send + 'static {
+        unimplemented!()
+    }
+
+    fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(&self, _from: Self::Identity, _route: R) -> Self::RecordsStream {
+        unimplemented!()
     }
 }
 

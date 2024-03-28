@@ -156,7 +156,7 @@ mod gateway {
         ) -> SendingEnd<Role, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
-                self.inner().gateway.get_sender(channel_id, total_records),
+                self.inner().gateway.get_mpc_sender(channel_id, total_records),
             )
         }
 
@@ -200,7 +200,7 @@ mod gateway {
 
         fn get_state(&self) -> Option<Self::State> {
             self.upgrade().and_then(|state| {
-                match (state.senders.get_state(), state.receivers.get_state()) {
+                match (state.mpc_senders.get_state(), state.mpc_receivers.get_state()) {
                     (None, None) => None,
                     (senders_state, receivers_state) => Some(Self::State {
                         senders_state,
@@ -286,6 +286,7 @@ mod send {
         },
         protocol::RecordId,
     };
+    use crate::helpers::HelperIdentity;
 
     impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<Role, M>> {
         delegate::delegate! {
@@ -312,7 +313,7 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySenders {
+    impl ObserveState for GatewaySenders<Role> {
         type State = WaitingTasks;
 
         fn get_state(&self) -> Option<Self::State> {
@@ -329,7 +330,7 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySender {
+    impl ObserveState for GatewaySender<Role> {
         type State = Vec<String>;
 
         fn get_state(&self) -> Option<Self::State> {

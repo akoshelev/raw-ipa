@@ -24,7 +24,8 @@ use crate::{
     },
     protocol::QueryId,
 };
-use crate::helpers::HelperIdentity;
+use crate::helpers::{ChannelId, HelperIdentity, ShardChannelId, TransportIdentity};
+use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
 
 /// Alias for the currently configured transport.
@@ -66,8 +67,8 @@ struct Transports {
 
 #[derive(Default)]
 pub struct State {
-    senders: GatewaySenders,
-    receivers: GatewayReceivers,
+    mpc_senders: GatewaySenders<Role>,
+    mpc_receivers: GatewayReceivers,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -117,16 +118,17 @@ impl Gateway {
         &self.config
     }
 
+    /// Returns a sender suitable for sending data between MPC helpers.
     ///
     /// ## Panics
     /// If there is a failure connecting via HTTP
     #[must_use]
-    pub fn get_sender<M: Message>(
+    pub fn get_mpc_sender<M: Message>(
         &self,
         channel_id: &HelperChannelId,
         total_records: TotalRecords,
     ) -> send::SendingEnd<Role, M> {
-        let (tx, maybe_stream) = self.inner.senders.get_or_create::<M>(
+        let (tx, maybe_stream) = self.inner.mpc_senders.get_or_create::<M>(
             channel_id,
             self.config.active_work(),
             total_records,
@@ -153,6 +155,17 @@ impl Gateway {
         send::SendingEnd::new(tx, self.role(), channel_id)
     }
 
+    /// Returns a sender for shard-to-shard traffic. This sender is more relaxed compared to one
+    /// returned by [`Self::get_mpc_sender`] as it allows anything that can be serialized into bytes
+    /// to be sent out. MPC sender needs to be more careful about it and not to allow sending sensitive
+    /// information to be accidentally revealed.
+    /// An example of such sensitive data could be secret sharings - it is perfectly fine to send them
+    /// between shards as they are known to each helper anyway. Sending them across MPC helper boundary
+    /// could lead to information reveal.
+    pub fn get_shard_sender<M: Sendable>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
+        todo!()
+    }
+
     #[must_use]
     pub fn get_receiver<M: Message>(
         &self,
@@ -160,7 +173,7 @@ impl Gateway {
     ) -> receive::ReceivingEnd<M> {
         receive::ReceivingEnd::new(
             channel_id.clone(),
-            self.inner.receivers.get_or_create(channel_id, || {
+            self.inner.mpc_receivers.get_or_create(channel_id, || {
                 UnorderedReceiver::new(
                     Box::pin(
                         self.transports.mpc
@@ -170,6 +183,13 @@ impl Gateway {
                 )
             }),
         )
+    }
+
+
+    fn get_sender<F, I: TransportIdentity, M: Sendable>(&self,
+                                                        channel_id: ChannelId<I>,
+                                                        total_records: TotalRecords) -> send::SendingEnd<I, M> {
+        todo!()
     }
 }
 
