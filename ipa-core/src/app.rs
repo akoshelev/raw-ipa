@@ -14,7 +14,7 @@ use crate::{
     query::{NewQueryError, QueryProcessor, QueryStatus},
     sync::Arc,
 };
-use crate::helpers::ShardTransportImpl;
+use crate::helpers::{MpcTransportImpl, ShardTransportImpl};
 
 pub struct Setup {
     query_processor: QueryProcessor,
@@ -57,10 +57,11 @@ impl Setup {
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
-    pub fn connect(self, transport: TransportImpl) -> HelperApp {
+    pub fn connect(self, mpc_transport: MpcTransportImpl, shard_transport: ShardTransportImpl) -> HelperApp {
         let app = Arc::new(Inner {
             query_processor: self.query_processor,
-            transport,
+            mpc_transport,
+            shard_transport
         });
         self.handler.set_handler(
             Arc::downgrade(&app) as Weak<dyn RequestHandler<Identity = HelperIdentity>>
@@ -82,7 +83,7 @@ impl HelperApp {
         Ok(self
             .inner
             .query_processor
-            .new_query(Transport::clone_ref(&self.inner.transport), query_config)
+            .new_query(Transport::clone_ref(&self.inner.mpc_transport), query_config)
             .await?
             .query_id)
     }
@@ -92,10 +93,11 @@ impl HelperApp {
     /// ## Errors
     /// Propagates errors from the helper.
     pub fn execute_query(&self, input: QueryInput) -> Result<(), ApiError> {
-        let transport = <TransportImpl as Clone>::clone(&self.inner.transport);
+        let mpc_transport = Transport::clone_ref(&self.inner.mpc_transport);
+        let shard_transport = Transport::clone_ref(&self.inner.shard_transport);
         self.inner
             .query_processor
-            .receive_inputs(transport, input)?;
+            .receive_inputs(mpc_transport, shard_transport, input)?;
         Ok(())
     }
 
@@ -147,18 +149,19 @@ impl RequestHandler for Inner {
             RouteId::ReceiveQuery => {
                 let req = req.into::<QueryConfig>()?;
                 HelperResponse::from(
-                    qp.new_query(Transport::clone_ref(&self.transport), req)
+                    qp.new_query(Transport::clone_ref(&self.mpc_transport), req)
                         .await?,
                 )
             }
             RouteId::PrepareQuery => {
                 let req = req.into::<PrepareQuery>()?;
-                HelperResponse::from(qp.prepare(&self.transport, req)?)
+                HelperResponse::from(qp.prepare(&self.mpc_transport, req)?)
             }
             RouteId::QueryInput => {
                 let query_id = ext_query_id(&req)?;
                 HelperResponse::from(qp.receive_inputs(
-                    Transport::clone_ref(&self.transport),
+                    Transport::clone_ref(&self.mpc_transport),
+                    Transport::clone_ref(&self.shard_transport),
                     QueryInput {
                         query_id,
                         input_stream: data,

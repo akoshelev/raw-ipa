@@ -12,7 +12,7 @@ use crate::helpers::MpcTransportImpl;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to send to {0:?}: {1:?}")]
-pub struct SendToRoleError(Role, <TransportImpl as Transport>::Error);
+pub struct SendToRoleError(Role, <MpcTransportImpl as Transport>::Error);
 
 /// Transport adapter that resolves [`Role`] -> [`HelperIdentity`] mapping. As gateways created
 /// per query, it is not ambiguous.
@@ -27,7 +27,7 @@ pub struct RoleResolvingTransport {
 #[async_trait]
 impl Transport for RoleResolvingTransport {
     type Identity = Role;
-    type RecordsStream = <TransportImpl as Transport>::RecordsStream;
+    type RecordsStream = <MpcTransportImpl as Transport>::RecordsStream;
     type Error = SendToRoleError;
 
     fn identity(&self) -> Role {

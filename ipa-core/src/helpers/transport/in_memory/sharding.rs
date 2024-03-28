@@ -64,6 +64,14 @@ impl InMemoryShardNetwork {
             Arc::downgrade(&self.shard_network[2][shard_id]),
         ]
     }
+
+    pub fn reset(&self) {
+        for helper in &self.shard_network {
+            for shard in helper.iter() {
+                shard.reset();
+            }
+        }
+    }
 }
 
 #[cfg(all(test, unit_test))]

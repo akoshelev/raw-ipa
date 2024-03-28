@@ -1,4 +1,3 @@
-mod handlers;
 mod routing;
 mod sharding;
 mod transport;

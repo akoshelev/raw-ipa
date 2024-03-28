@@ -302,7 +302,7 @@ impl<I: TransportIdentity> Setup<I> {
         self.into_active_conn(handler).1
     }
 
-    fn into_active_conn<H: Into<<Self as ListenerSetup>::Handler>>(
+    fn into_active_conn(
         self,
         handler: Option<HandlerRef<I>>,
     ) -> (ConnectionTx<I>, Arc<InMemoryTransport<I>>) {

@@ -24,6 +24,7 @@ use crate::{
     },
     protocol::QueryId,
 };
+use crate::helpers::HelperIdentity;
 use crate::sharding::ShardIndex;
 
 /// Alias for the currently configured transport.
@@ -31,10 +32,10 @@ use crate::sharding::ShardIndex;
 /// To avoid proliferation of type parameters, most code references this concrete type alias, rather
 /// than a type parameter `T: Transport`.
 #[cfg(feature = "in-memory-infra")]
-pub type TransportImpl = super::transport::InMemoryTransport<crate::helpers::HelperIdentity>;
+pub type TransportImpl<I> = super::transport::InMemoryTransport<I>;
 
 #[cfg(feature = "real-world-infra")]
-pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
+pub type TransportImpl<I> = crate::sync::Arc<crate::net::HttpTransport<I>>;
 
 pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
 pub type ShardTransportImpl = TransportImpl<ShardIndex>;

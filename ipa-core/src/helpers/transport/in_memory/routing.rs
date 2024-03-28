@@ -3,9 +3,10 @@ use std::{borrow::Borrow, fmt::Debug};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    helpers::{QueryIdBinding, RouteId, RouteParams, StepBinding, TransportIdentity},
+    helpers::{QueryIdBinding, RouteParams, StepBinding, TransportIdentity},
     protocol::{step::Gate, QueryId},
 };
+use crate::helpers::routing::RouteId;
 
 /// The header/metadata of the incoming request.
 #[derive(Debug)]
