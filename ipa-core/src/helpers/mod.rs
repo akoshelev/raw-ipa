@@ -39,7 +39,7 @@ mod gateway_exports {
     use crate::helpers::gateway;
 
     pub type Gateway = gateway::Gateway;
-    pub type SendingEnd<M> = gateway::SendingEnd<M>;
+    pub type SendingEnd<I, M> = gateway::SendingEnd<I, M>;
     pub type ReceivingEnd<M> = gateway::ReceivingEnd<M>;
 }
 

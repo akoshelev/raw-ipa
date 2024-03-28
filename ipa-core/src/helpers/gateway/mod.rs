@@ -33,12 +33,18 @@ use crate::sharding::ShardIndex;
 /// than a type parameter `T: Transport`.
 #[cfg(feature = "in-memory-infra")]
 pub type TransportImpl<I> = super::transport::InMemoryTransport<I>;
+#[cfg(feature = "in-memory-infra")]
+pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
+#[cfg(feature = "in-memory-infra")]
+pub type ShardTransportImpl = TransportImpl<ShardIndex>;
 
 #[cfg(feature = "real-world-infra")]
-pub type TransportImpl<I> = crate::sync::Arc<crate::net::HttpTransport<I>>;
+pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
+#[cfg(feature = "real-world-infra")]
+pub type MpcTransportImpl = TransportImpl;
+#[cfg(feature = "real-world-infra")]
+pub type ShardTransportImpl = crate::net::HttpShardTransport;
 
-pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
-pub type ShardTransportImpl = TransportImpl<ShardIndex>;
 
 pub type TransportError = <MpcTransportImpl as Transport>::Error;
 

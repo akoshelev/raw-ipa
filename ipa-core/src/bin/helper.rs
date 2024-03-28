@@ -19,6 +19,7 @@ use ipa_core::{
     AppSetup,
 };
 use tracing::{error, info};
+use ipa_core::net::HttpShardTransport;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
@@ -158,7 +159,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
         Some(handler),
     );
 
-    let _app = setup.connect(transport.clone());
+    let _app = setup.connect(transport.clone(), HttpShardTransport::default());
 
     let listener = args.server_socket_fd
         .map(|fd| {

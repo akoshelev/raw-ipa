@@ -24,10 +24,12 @@ use crate::{
     protocol::{step::Gate, QueryId},
     sync::Arc,
 };
+use crate::sharding::ShardIndex;
 
 type LogHttpErrors = LogErrors<BodyStream, Bytes, BoxError>;
 
 /// HTTP transport for IPA helper service.
+/// TODO: rename to MPC
 pub struct HttpTransport {
     identity: HelperIdentity,
     clients: [MpcHelperClient; 3],
@@ -35,6 +37,28 @@ pub struct HttpTransport {
     // only allow one query at a time.
     record_streams: StreamCollection<HelperIdentity, LogHttpErrors>,
     handler: Option<HandlerRef>,
+}
+
+#[derive(Clone, Default)]
+pub struct HttpShardTransport;
+
+#[async_trait]
+impl Transport for HttpShardTransport {
+    type Identity = ShardIndex;
+    type RecordsStream = ReceiveRecords<ShardIndex, LogHttpErrors>;
+    type Error = ();
+
+    fn identity(&self) -> Self::Identity {
+        todo!()
+    }
+
+    async fn send<D, Q, S, R>(&self, _dest: Self::Identity, _route: R, _data: D) -> Result<(), Self::Error> where Option<QueryId>: From<Q>, Option<Gate>: From<S>, Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>, D: Stream<Item=Vec<u8>> + Send + 'static {
+        todo!()
+    }
+
+    fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(&self, _from: Self::Identity, _route: R) -> Self::RecordsStream {
+        todo!()
+    }
 }
 
 impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
@@ -325,7 +349,7 @@ mod tests {
                     );
                     server.start_on(Some(socket), ()).await;
 
-                    setup.connect(transport)
+                    setup.connect(transport, HttpShardTransport::default())
                 },
             ),
         )
