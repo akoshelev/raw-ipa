@@ -287,6 +287,7 @@ mod send {
         protocol::RecordId,
     };
     use crate::helpers::HelperIdentity;
+    use crate::secret_sharing::Sendable;
 
     impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<Role, M>> {
         delegate::delegate! {

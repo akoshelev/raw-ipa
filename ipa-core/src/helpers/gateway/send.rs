@@ -9,6 +9,7 @@ use std::{
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
 use typenum::Unsigned;
+use crate::helpers::Transport;
 
 use crate::{
     helpers::{
@@ -22,9 +23,15 @@ use crate::{
         metrics::{BYTES_SENT, RECORDS_SENT},
     },
 };
+use crate::helpers::gateway::TransportContainer;
+use crate::helpers::routing::RouteId;
+use crate::helpers::ShardChannelId;
+use crate::protocol::QueryId;
+use crate::secret_sharing::Sendable;
+use crate::sharding::ShardIndex;
 
 /// Sending end of the gateway channel.
-pub struct SendingEnd<I: TransportIdentity, M: Message> {
+pub struct SendingEnd<I: TransportIdentity, M> {
     sender_id: I,
     channel_id: ChannelId<I>,
     inner: Arc<GatewaySender<I>>,
@@ -53,6 +60,8 @@ impl <I: TransportIdentity> Default for GatewaySenders<I> {
         }
     }
 }
+
+
 impl <I: TransportIdentity> GatewaySender<I> {
     fn new(channel_id: ChannelId<I>, tx: OrderingSender, total_records: TotalRecords) -> Self {
         Self {
@@ -137,12 +146,34 @@ impl<I: TransportIdentity, M: Message> SendingEnd<I, M> {
         r
     }
 }
+// impl GatewaySenders<Role> {
+//     pub fn get_or_create<M: Sendable>(&self,
+//                                      channel_id: HelperChannelId,
+//                                      capacity: NonZeroUsize,
+//                                      total_records: TotalRecords
+//     ) -> (Arc<GatewaySender<Role>>, Option<GatewaySendStream<Role>>) {
+//         self.make_channel::<M>(&channel_id, capacity, total_records)
+//     }
+// }
+//
+// impl GatewaySenders<ShardIndex> {
+//     pub fn get_or_create<M: Sendable>(&self,
+//                                      channel_id: ShardChannelId,
+//                                      capacity: NonZeroUsize,
+//                                      total_records: TotalRecords
+//     ) -> (Arc<GatewaySender<ShardIndex>>, Option<GatewaySendStream<ShardIndex>>) {
+//         self.make_channel::<M>(&channel_id, capacity, total_records)
+//     }
+// }
+
 
 impl <I: TransportIdentity> GatewaySenders<I> {
+
+
     /// Returns or creates a new communication channel. In case if channel is newly created,
     /// returns the receiving end of it as well. It must be sent over to the receiver in order for
     /// messages to get through.
-    pub(crate) fn get_or_create<M: Message>(
+    pub fn get_or_create<M: Message>(
         &self,
         channel_id: &ChannelId<I>,
         capacity: NonZeroUsize,

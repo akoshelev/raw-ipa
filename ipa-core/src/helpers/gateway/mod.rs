@@ -65,11 +65,46 @@ struct Transports {
     shard: ShardTransportImpl,
 }
 
+trait TransportContainer<I: TransportIdentity> {
+    fn get(&self) -> impl Transport<Identity = I>;
+}
+
+
+impl TransportContainer<Role> for Transports {
+    fn get(&self) -> impl Transport<Identity=Role> {
+        self.mpc.clone()
+    }
+}
+
+impl TransportContainer<ShardIndex> for Transports {
+    fn get(&self) -> impl Transport<Identity=ShardIndex> {
+        self.shard.clone()
+    }
+}
+
+trait Senders<I: TransportIdentity> {
+    fn get_senders(&self) -> &GatewaySenders<I>;
+}
+
 #[derive(Default)]
 pub struct State {
     mpc_senders: GatewaySenders<Role>,
+    shard_senders: GatewaySenders<ShardIndex>,
     mpc_receivers: GatewayReceivers,
 }
+
+impl Senders<Role> for State {
+    fn get_senders(&self) -> &GatewaySenders<Role> {
+        &self.mpc_senders
+    }
+}
+
+impl Senders<ShardIndex> for State {
+    fn get_senders(&self) -> &GatewaySenders<ShardIndex> {
+        &self.shard_senders
+    }
+}
+
 
 #[derive(Clone, Copy, Debug)]
 pub struct GatewayConfig {
@@ -128,31 +163,7 @@ impl Gateway {
         channel_id: &HelperChannelId,
         total_records: TotalRecords,
     ) -> send::SendingEnd<Role, M> {
-        let (tx, maybe_stream) = self.inner.mpc_senders.get_or_create::<M>(
-            channel_id,
-            self.config.active_work(),
-            total_records,
-        );
-        if let Some(stream) = maybe_stream {
-            tokio::spawn({
-                let channel_id = channel_id.clone();
-                let transport = self.transports.mpc.clone();
-                let query_id = self.query_id;
-                async move {
-                    // TODO(651): In the HTTP case we probably need more robust error handling here.
-                    transport
-                        .send(
-                            channel_id.peer,
-                            (RouteId::Records, query_id, channel_id.gate),
-                            stream,
-                        )
-                        .await
-                        .expect("{channel_id:?} receiving end should be accepted by transport");
-                }
-            });
-        }
-
-        send::SendingEnd::new(tx, self.role(), channel_id)
+        self.get_sender(channel_id, total_records)
     }
 
     /// Returns a sender for shard-to-shard traffic. This sender is more relaxed compared to one
@@ -163,7 +174,7 @@ impl Gateway {
     /// between shards as they are known to each helper anyway. Sending them across MPC helper boundary
     /// could lead to information reveal.
     pub fn get_shard_sender<M: Sendable>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
-        todo!()
+        self.get_sender(channel_id, total_records)
     }
 
     #[must_use]
@@ -186,10 +197,32 @@ impl Gateway {
     }
 
 
-    fn get_sender<F, I: TransportIdentity, M: Sendable>(&self,
-                                                        channel_id: ChannelId<I>,
-                                                        total_records: TotalRecords) -> send::SendingEnd<I, M> {
-        todo!()
+    fn get_sender<I: TransportIdentity, M: Message>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
+        State: Senders<I>, Transports: TransportContainer<I> {
+        let gateway_senders: &GatewaySenders<I> = self.inner.get_senders();
+        let transport = self.transports.get();
+        let (tx, maybe_stream) = gateway_senders.get_or_create::<M>(
+            channel_id,
+            self.config.active_work(),
+            total_records,
+        );
+        if let Some(stream) = maybe_stream {
+            tokio::spawn({
+                let ChannelId { peer, gate} = channel_id.clone();
+                let query_id = self.query_id;
+                let transport = transport.clone();
+                async move {
+                    // TODO(651): In the HTTP case we probably need more robust error handling here.
+                    transport
+                        .send(peer, (RouteId::Records, query_id, gate),
+                              stream,
+                        )
+                        .await
+                        .expect("{channel_id:?} receiving end should be accepted by transport");
+                }
+            });
+        }
+        send::SendingEnd::new(tx, transport.identity(), &channel_id)
     }
 }
 

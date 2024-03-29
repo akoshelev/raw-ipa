@@ -62,7 +62,7 @@ pub trait Block: Sized + Copy + Debug {
     type Size: ArrayLength;
 }
 
-pub trait Sendable: Send + Debug + Serializable + 'static {}
+pub trait Sendable: Send + Debug + Serializable + 'static + Sized {}
 
 impl<V: SharedValue> Sendable for V {}
 
