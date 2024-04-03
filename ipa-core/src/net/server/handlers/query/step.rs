@@ -32,6 +32,7 @@ mod tests {
     use std::task::Poll;
 
     use axum::http::Request;
+    use bytes::Bytes;
     use futures::{stream::poll_immediate, StreamExt};
     use hyper::{Body, StatusCode};
 
@@ -70,7 +71,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut stream = Arc::clone(&transport).receive(HelperIdentity::TWO, (QueryId, step));
+        let mut stream = Arc::clone(&transport).receive(HelperIdentity::TWO, (QueryId, step)).into_bytes_stream();
 
         assert_eq!(
             poll_immediate(&mut stream).next().await,

@@ -130,6 +130,7 @@ mod tests {
                     sum += shard_network
                         .transport(identity, a)
                         .receive(b, (QueryId, Gate::default()))
+                        .into_bytes_stream()
                         .collect::<Vec<_>>()
                         .await
                         .into_iter()

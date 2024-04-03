@@ -35,7 +35,7 @@ pub struct HttpTransport {
     clients: [MpcHelperClient; 3],
     // TODO(615): supporting multiple queries likely require a hashmap here. It will be ok if we
     // only allow one query at a time.
-    record_streams: StreamCollection<HelperIdentity, LogHttpErrors>,
+    record_streams: StreamCollection<HelperIdentity, BodyStream>,
     handler: Option<HandlerRef>,
 }
 
@@ -162,14 +162,14 @@ impl HttpTransport {
         stream: BodyStream,
     ) {
         self.record_streams
-            .add_stream((query_id, from, gate), LogErrors::new(stream));
+            .add_stream((query_id, from, gate), stream);
     }
 }
 
 #[async_trait]
 impl Transport for Arc<HttpTransport> {
     type Identity = HelperIdentity;
-    type RecordsStream = ReceiveRecords<HelperIdentity, LogHttpErrors>;
+    type RecordsStream = ReceiveRecords<HelperIdentity, BodyStream>;
     type Error = Error;
 
     fn identity(&self) -> HelperIdentity {
@@ -238,7 +238,7 @@ impl Transport for Arc<HttpTransport> {
 #[async_trait]
 impl Transport for HttpShardTransport {
     type Identity = ShardIndex;
-    type RecordsStream = ReceiveRecords<ShardIndex, LogHttpErrors>;
+    type RecordsStream = ReceiveRecords<ShardIndex, BodyStream>;
     type Error = ();
 
     fn identity(&self) -> Self::Identity {

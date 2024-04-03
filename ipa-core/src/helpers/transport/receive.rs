@@ -15,6 +15,7 @@ use crate::{
         TransportIdentity,
     },
 };
+use crate::helpers::BytesStream;
 
 /// Adapt a stream of `Result<T: Into<Vec<u8>>, Error>` to a stream of `Vec<u8>`.
 ///
@@ -81,6 +82,18 @@ impl<I, S> ReceiveRecords<I, S> {
         Self {
             inner: ReceiveRecordsInner::Pending(key, coll),
         }
+    }
+}
+
+impl <I: TransportIdentity, S: BytesStream> ReceiveRecords<I, S> {
+
+    /// Converts this into a stream that yields owned byte chunks.
+    ///
+    /// ## Panics
+    /// If inner stream yields [`Err`] chunk.
+    #[cfg(test)]
+    pub(crate) fn into_bytes_stream(self) -> impl Stream<Item = Vec<u8>> {
+        self.inner.map(Result::unwrap).map(Into::into)
     }
 }
 
