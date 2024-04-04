@@ -37,7 +37,7 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::RoleResolvingTransport;
+use crate::helpers::{Message, RoleResolvingTransport};
 use crate::secret_sharing::Sendable;
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
@@ -91,7 +91,7 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
 
     fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M>;
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M>;
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M>;
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M>;
 }
 
@@ -262,7 +262,7 @@ impl<'a, B: ShardBinding> Context for Base<'a, B> {
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
     }
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
         self.inner.gateway.get_shard_sender(&ChannelId::new(dest_shard, self.gate.clone()), self.total_records)
     }
 

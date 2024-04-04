@@ -80,7 +80,7 @@ mod gateway {
         protocol::QueryId,
         sync::Arc,
     };
-    use crate::helpers::{ChannelId, ShardChannelId};
+    use crate::helpers::{ChannelId, Message, ShardChannelId};
     use crate::helpers::gateway::ShardTransportImpl;
     use crate::helpers::gateway::transport::RoleResolvingTransport;
     use crate::secret_sharing::Sendable;
@@ -164,7 +164,7 @@ mod gateway {
             )
         }
 
-        pub fn get_shard_sender<M: Sendable>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> SendingEnd<ShardIndex, M> {
+        pub fn get_shard_sender<M: Message>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> SendingEnd<ShardIndex, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner.gateway.get_shard_sender(&channel_id, total_records),
@@ -300,10 +300,10 @@ mod send {
         },
         protocol::RecordId,
     };
-    use crate::helpers::{HelperIdentity, TransportIdentity};
+    use crate::helpers::{HelperIdentity, Message, TransportIdentity};
     use crate::secret_sharing::Sendable;
 
-    impl<I: TransportIdentity, M: MpcMessage> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
+    impl<I: TransportIdentity, M: Message> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]

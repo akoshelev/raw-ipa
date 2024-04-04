@@ -29,7 +29,7 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::RoleResolvingTransport;
+use crate::helpers::{Message, RoleResolvingTransport};
 use crate::secret_sharing::Sendable;
 
 #[derive(Clone)]
@@ -123,7 +123,7 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
         self.inner.send_channel(role)
     }
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
         self.inner.shard_send_channel(dest_shard)
     }
 
@@ -211,7 +211,7 @@ impl<'a, B: ShardBinding, F: ExtendableField> super::Context for Upgraded<'a, B,
         self.inner.send_channel(role)
     }
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
         self.inner.shard_send_channel(dest_shard)
     }
 

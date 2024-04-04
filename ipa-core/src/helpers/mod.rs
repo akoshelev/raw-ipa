@@ -437,18 +437,17 @@ impl<I: transport::Identity> Debug for ChannelId<I> {
     }
 }
 
+/// Anything that can be sent between MPC helpers, can also be sent across shards. Shards can also
+/// send/receive data that is private to the current helper and this trait is implemented for it.
+pub trait Message: Debug + Send + Serializable + 'static + Sized {}
+
 /// Trait for messages sent between helpers. Everything needs to be serializable and safe to send.
 ///
 /// Infrastructure's `Message` trait corresponds to IPA's `Sendable` trait.
-pub trait MpcMessage: Debug + Send + Serializable + 'static + Sized {}
-
-/// Anything that can be sent between MPC helpers, can also be sent across shards. Shards can also
-/// send/receive data that is private to the current helper and this trait is implemented for it.
-pub trait ShardMessage: Debug + Send + Serializable + 'static + Sized {}
-
-impl <M: MpcMessage> ShardMessage for M {}
+pub trait MpcMessage: Message {}
 
 impl<V: Sendable> MpcMessage for V {}
+impl <V: Debug + Send + Serializable + 'static + Sized> Message for V {}
 
 impl Serializable for PublicKey {
     type Size = typenum::U32;

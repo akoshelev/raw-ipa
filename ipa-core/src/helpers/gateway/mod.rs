@@ -26,7 +26,7 @@ use crate::{
     },
     protocol::QueryId,
 };
-use crate::helpers::{ChannelId, HelperIdentity, LogErrors, RecordsStream, ShardChannelId, TransportIdentity};
+use crate::helpers::{ChannelId, HelperIdentity, LogErrors, Message, RecordsStream, ShardChannelId, TransportIdentity};
 use crate::helpers::gateway::receive::ShardReceiveStream;
 use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
@@ -178,7 +178,7 @@ impl Gateway {
     /// An example of such sensitive data could be secret sharings - it is perfectly fine to send them
     /// between shards as they are known to each helper anyway. Sending them across MPC helper boundary
     /// could lead to information reveal.
-    pub fn get_shard_sender<M: Sendable>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
+    pub fn get_shard_sender<M: Message>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
         self.get_sender(channel_id, total_records)
     }
 
@@ -212,7 +212,7 @@ impl Gateway {
     }
 
 
-    fn get_sender<I: TransportIdentity, M: MpcMessage>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
+    fn get_sender<I: TransportIdentity, M: Message>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
         State: Senders<I>, Transports: TransportContainer<I> {
         let gateway_senders = self.inner.get_senders();
         let transport = self.transports.get();
@@ -486,7 +486,7 @@ mod tests {
                     let mut record_id = 0;
                     for item in input {
                         let dest_shard = ctx.peer_shards().next().unwrap();
-                        // ctx.shard_send_channel(dest_shard).send(record_id.into(), item).await.unwrap();
+                        ctx.shard_send_channel(dest_shard).send(record_id.into(), item).await.unwrap();
                         record_id += 1;
                     }
 

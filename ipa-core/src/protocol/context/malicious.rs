@@ -35,7 +35,7 @@ use crate::{
     sharding::NotSharded,
     sync::Arc,
 };
-use crate::helpers::RoleResolvingTransport;
+use crate::helpers::{Message, RoleResolvingTransport};
 use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
 
@@ -119,7 +119,7 @@ impl<'a> super::Context for Context<'a> {
         self.inner.send_channel(role)
     }
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
         self.inner.shard_send_channel(dest_shard)
     }
 
@@ -339,7 +339,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
     }
 
-    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+    fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
         self.inner.gateway.get_shard_sender(&ChannelId::new(dest_shard, self.gate.clone()), self.total_records)
     }
 

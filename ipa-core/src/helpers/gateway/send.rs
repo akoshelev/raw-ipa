@@ -9,7 +9,7 @@ use std::{
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
 use typenum::Unsigned;
-use crate::helpers::Transport;
+use crate::helpers::{Message, Transport};
 
 use crate::{
     helpers::{
@@ -71,7 +71,7 @@ impl <I: TransportIdentity> GatewaySender<I> {
         }
     }
 
-    pub async fn send<M: MpcMessage, B: Borrow<M>>(
+    pub async fn send<M: Message, B: Borrow<M>>(
         &self,
         record_id: RecordId,
         msg: B,
@@ -112,7 +112,7 @@ impl <I: TransportIdentity> GatewaySender<I> {
     }
 }
 
-impl<I: TransportIdentity, M: MpcMessage> SendingEnd<I, M> {
+impl<I: TransportIdentity, M: Message> SendingEnd<I, M> {
     pub(super) fn new(sender: Arc<GatewaySender<I>>, id: I, channel_id: &ChannelId<I>) -> Self {
         Self {
             sender_id: id,
@@ -173,7 +173,7 @@ impl <I: TransportIdentity> GatewaySenders<I> {
     /// Returns or creates a new communication channel. In case if channel is newly created,
     /// returns the receiving end of it as well. It must be sent over to the receiver in order for
     /// messages to get through.
-    pub fn get_or_create<M: MpcMessage>(
+    pub fn get_or_create<M: Message>(
         &self,
         channel_id: &ChannelId<I>,
         capacity: NonZeroUsize,
