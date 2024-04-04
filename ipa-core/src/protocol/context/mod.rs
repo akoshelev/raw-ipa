@@ -23,7 +23,7 @@ pub type ShardedSemiHonestContext<'a> = semi_honest::Context<'a, Sharded>;
 
 use crate::{
     error::Error,
-    helpers::{ChannelId, Gateway, Message, ReceivingEnd, Role, SendingEnd, TotalRecords},
+    helpers::{ChannelId, Gateway, MpcMessage, MpcReceivingEnd, Role, SendingEnd, TotalRecords},
     protocol::{
         basics::ZeroPositions,
         prss::Endpoint as PrssEndpoint,
@@ -37,6 +37,8 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
+use crate::helpers::RoleResolvingTransport;
+use crate::secret_sharing::Sendable;
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
 /// generator and communication channel.
@@ -87,8 +89,10 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
         InstrumentedSequentialSharedRandomness,
     );
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M>;
-    fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M>;
+    fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M>;
+
+    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M>;
+    fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M>;
 }
 
 pub trait UpgradableContext: Context {
@@ -252,13 +256,17 @@ impl<'a, B: ShardBinding> Context for Base<'a, B> {
         )
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
+    fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
             .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
     }
 
-    fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M> {
+    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+        self.inner.gateway.get_shard_sender(&ChannelId::new(dest_shard, self.gate.clone()), self.total_records)
+    }
+
+    fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner
             .gateway
             .get_receiver(&ChannelId::new(role, self.gate.clone()))

@@ -11,7 +11,7 @@ use ipa_macros::Step;
 use super::{Context as SuperContext, UpgradeContext, UpgradeToMalicious};
 use crate::{
     error::Error,
-    helpers::{Gateway, Message, ReceivingEnd, Role, SendingEnd, TotalRecords},
+    helpers::{Gateway, MpcMessage, MpcReceivingEnd, Role, SendingEnd, TotalRecords},
     protocol::{
         basics::{ShareKnownValue, ZeroPositions},
         context::{
@@ -29,6 +29,8 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
+use crate::helpers::RoleResolvingTransport;
+use crate::secret_sharing::Sendable;
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {
@@ -117,11 +119,15 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
+    fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
-    fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M> {
+    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+        self.inner.shard_send_channel(dest_shard)
+    }
+
+    fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner.recv_channel(role)
     }
 }
@@ -201,11 +207,15 @@ impl<'a, B: ShardBinding, F: ExtendableField> super::Context for Upgraded<'a, B,
         self.inner.prss_rng()
     }
 
-    fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<Role, M> {
+    fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner.send_channel(role)
     }
 
-    fn recv_channel<M: Message>(&self, role: Role) -> ReceivingEnd<M> {
+    fn shard_send_channel<M: Sendable>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
+        self.inner.shard_send_channel(dest_shard)
+    }
+
+    fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner.recv_channel(role)
     }
 }

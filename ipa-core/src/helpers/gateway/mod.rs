@@ -5,26 +5,29 @@ pub(super) mod stall_detection;
 mod transport;
 
 use std::num::NonZeroUsize;
+use crate::sync::{Arc, Mutex};
 
-pub(super) use receive::ReceivingEnd;
+pub(super) use receive::{MpcReceivingEnd, UR};
 pub(super) use send::SendingEnd;
 #[cfg(all(test, feature = "shuttle"))]
 use shuttle::future as tokio;
 #[cfg(feature = "stall-detection")]
 pub(super) use stall_detection::InstrumentedGateway;
+pub use transport::RoleResolvingTransport;
 
 use crate::{
     helpers::{
         buffers::UnorderedReceiver,
         gateway::{
-            receive::GatewayReceivers, send::GatewaySenders, transport::RoleResolvingTransport,
+            receive::GatewayReceivers, send::GatewaySenders,
         },
         transport::routing::RouteId,
-        HelperChannelId, Message, Role, RoleAssignment, TotalRecords, Transport,
+        HelperChannelId, MpcMessage, Role, RoleAssignment, TotalRecords, Transport,
     },
     protocol::QueryId,
 };
-use crate::helpers::{ChannelId, HelperIdentity, ShardChannelId, TransportIdentity};
+use crate::helpers::{ChannelId, HelperIdentity, LogErrors, RecordsStream, ShardChannelId, TransportIdentity};
+use crate::helpers::gateway::receive::ShardReceiveStream;
 use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
 
@@ -60,13 +63,14 @@ pub struct Gateway {
     inner: State,
 }
 
+/// Set of transports used inside [`Gateway`].
 struct Transports {
     mpc: RoleResolvingTransport,
     shard: ShardTransportImpl,
 }
 
 trait TransportContainer<I: TransportIdentity> {
-    fn get(&self) -> impl Transport<Identity = I>;
+    fn get(&self) -> impl Transport<Identity=I>;
 }
 
 
@@ -90,7 +94,8 @@ trait Senders<I: TransportIdentity> {
 pub struct State {
     mpc_senders: GatewaySenders<Role>,
     shard_senders: GatewaySenders<ShardIndex>,
-    mpc_receivers: GatewayReceivers,
+    mpc_receivers: GatewayReceivers<Role, UR>,
+    shard_receivers: GatewayReceivers<ShardIndex, ShardReceiveStream>,
 }
 
 impl Senders<Role> for State {
@@ -158,7 +163,7 @@ impl Gateway {
     /// ## Panics
     /// If there is a failure connecting via HTTP
     #[must_use]
-    pub fn get_mpc_sender<M: Message>(
+    pub fn get_mpc_sender<M: MpcMessage>(
         &self,
         channel_id: &HelperChannelId,
         total_records: TotalRecords,
@@ -177,30 +182,41 @@ impl Gateway {
         self.get_sender(channel_id, total_records)
     }
 
+    // TODO: rename to get_mpc_receiver
     #[must_use]
-    pub fn get_receiver<M: Message>(
+    pub fn get_receiver<M: MpcMessage>(
         &self,
         channel_id: &HelperChannelId,
-    ) -> receive::ReceivingEnd<M> {
-        receive::ReceivingEnd::new(
+    ) -> receive::MpcReceivingEnd<M> {
+        receive::MpcReceivingEnd::new(
             channel_id.clone(),
             self.inner.mpc_receivers.get_or_create(channel_id, || {
                 UnorderedReceiver::new(
-                    Box::pin(
+                    Box::pin(LogErrors::new(
                         self.transports.mpc
                             .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
-                    ),
+                    )),
                     self.config.active_work(),
                 )
             }),
         )
     }
 
+    pub fn get_shard_receiver<M: Sendable>(&self, channel_id: &ShardChannelId) -> receive::ShardReceivingEnd<M> {
+        receive::ShardReceivingEnd {
+            channel_id: channel_id.clone(),
+            rx: RecordsStream::new(self.inner.shard_receivers.get_or_create(channel_id, || {
+                ShardReceiveStream(Arc::new(Mutex::new(self.transports.shard.receive(channel_id.peer, (self.query_id, channel_id.gate.clone())))))
+            })),
+        }
+    }
 
-    fn get_sender<I: TransportIdentity, M: Message>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
+
+    fn get_sender<I: TransportIdentity, M: MpcMessage>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
         State: Senders<I>, Transports: TransportContainer<I> {
-        let gateway_senders: &GatewaySenders<I> = self.inner.get_senders();
+        let gateway_senders = self.inner.get_senders();
         let transport = self.transports.get();
+        assert_ne!(transport.identity(), channel_id.peer, "Can't send to itself: {channel_id:?}");
         let (tx, maybe_stream) = gateway_senders.get_or_create::<M>(
             channel_id,
             self.config.active_work(),
@@ -208,7 +224,7 @@ impl Gateway {
         );
         if let Some(stream) = maybe_stream {
             tokio::spawn({
-                let ChannelId { peer, gate} = channel_id.clone();
+                let ChannelId { peer, gate } = channel_id.clone();
                 let query_id = self.query_id;
                 let transport = transport.clone();
                 async move {
@@ -266,13 +282,19 @@ mod tests {
     use std::iter::{repeat, zip};
 
     use futures_util::future::{join, try_join, try_join_all};
+    use futures_util::SinkExt;
 
     use crate::{
         ff::{Fp31, Fp32BitPrime, Gf2, U128Conversions},
-        helpers::{Direction, GatewayConfig, Message, Role, SendingEnd},
+        helpers::{Direction, GatewayConfig, MpcMessage, Role, SendingEnd},
         protocol::{context::Context, RecordId},
         test_fixture::{Runner, TestWorld, TestWorldConfig},
     };
+    use crate::ff::boolean_array::BA3;
+    use crate::secret_sharing::replicated::semi_honest::AdditiveShare;
+    use crate::sharding::{ShardConfiguration, Sharded};
+    use crate::test_executor::run;
+    use crate::test_fixture::{Reconstruct, WithShards};
 
     /// Verifies that [`Gateway`] send buffer capacity is adjusted to the message size.
     /// IPA protocol opens many channels to send values from different fields, while message size
@@ -281,7 +303,7 @@ mod tests {
     /// Gateway must be able to deal with it.
     #[tokio::test]
     async fn can_handle_heterogeneous_channels() {
-        async fn send<V: Message + U128Conversions>(channel: &SendingEnd<Role, V>, i: usize) {
+        async fn send<V: MpcMessage + U128Conversions>(channel: &SendingEnd<Role, V>, i: usize) {
             channel
                 .send(i.into(), V::truncate_from(u128::try_from(i).unwrap()))
                 .await
@@ -451,6 +473,32 @@ mod tests {
             .unwrap();
 
         let _world = unsafe { Box::from_raw(world_ptr) };
+    }
+
+    #[test]
+    fn shards() {
+        run(|| async move {
+            let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
+            let input = vec![BA3::truncate_from(0_u32), BA3::truncate_from(1_u32)];
+            let r = world
+                .semi_honest(input.clone().into_iter(), |ctx, input| async move {
+                    let ctx = ctx.set_total_records(input.len());
+                    let mut record_id = 0;
+                    for item in input {
+                        let dest_shard = ctx.peer_shards().next().unwrap();
+                        // ctx.shard_send_channel(dest_shard).send(record_id.into(), item).await.unwrap();
+                        record_id += 1;
+                    }
+
+                    Vec::<AdditiveShare<BA3>>::new()
+                })
+                .await
+                .into_iter()
+                .flat_map(|v| v.reconstruct())
+                .collect::<Vec<_>>();
+
+            assert_eq!(input, r);
+        })
     }
 
     fn make_world() -> (&'static TestWorld, *mut TestWorld) {

@@ -74,13 +74,17 @@ mod gateway {
     use crate::{
         helpers::{
             gateway::{Gateway, State},
-            GatewayConfig, HelperChannelId, Message, MpcTransportImpl, ReceivingEnd, Role,
+            GatewayConfig, HelperChannelId, MpcMessage, MpcTransportImpl, MpcReceivingEnd, Role,
             RoleAssignment, SendingEnd, TotalRecords,
         },
         protocol::QueryId,
         sync::Arc,
     };
+    use crate::helpers::{ChannelId, ShardChannelId};
     use crate::helpers::gateway::ShardTransportImpl;
+    use crate::helpers::gateway::transport::RoleResolvingTransport;
+    use crate::secret_sharing::Sendable;
+    use crate::sharding::ShardIndex;
 
     pub struct InstrumentedGateway {
         gateway: Gateway,
@@ -149,7 +153,7 @@ mod gateway {
         }
 
         #[must_use]
-        pub fn get_sender<M: Message>(
+        pub fn get_sender<M: MpcMessage>(
             &self,
             channel_id: &HelperChannelId,
             total_records: TotalRecords,
@@ -160,8 +164,15 @@ mod gateway {
             )
         }
 
+        pub fn get_shard_sender<M: Sendable>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> SendingEnd<ShardIndex, M> {
+            Observed::wrap(
+                Weak::clone(self.get_sn()),
+                self.inner.gateway.get_shard_sender(&channel_id, total_records),
+            )
+        }
+
         #[must_use]
-        pub fn get_receiver<M: Message>(&self, channel_id: &HelperChannelId) -> ReceivingEnd<M> {
+        pub fn get_receiver<M: MpcMessage>(&self, channel_id: &HelperChannelId) -> MpcReceivingEnd<M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_receiver(channel_id),
@@ -222,13 +233,15 @@ mod receive {
     use crate::{
         helpers::{
             error::Error,
-            gateway::{receive::GatewayReceivers, ReceivingEnd},
-            HelperChannelId, Message, Role,
+            gateway::{receive::GatewayReceivers, MpcReceivingEnd},
+            HelperChannelId, MpcMessage, Role,
         },
         protocol::RecordId,
     };
+    use crate::helpers::gateway::receive::UR;
+    use crate::helpers::gateway::transport::RoleResolvingTransport;
 
-    impl<M: Message> Observed<ReceivingEnd<M>> {
+    impl<M: MpcMessage> Observed<MpcReceivingEnd<M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]
@@ -253,7 +266,8 @@ mod receive {
         }
     }
 
-    impl ObserveState for GatewayReceivers {
+    // TODO: stall detection for shard as well
+    impl ObserveState for GatewayReceivers<Role, UR> {
         type State = WaitingTasks;
 
         fn get_state(&self) -> Option<Self::State> {
@@ -282,18 +296,18 @@ mod send {
         helpers::{
             error::Error,
             gateway::send::{GatewaySender, GatewaySenders},
-            HelperChannelId, Message, Role, TotalRecords,
+            HelperChannelId, MpcMessage, Role, TotalRecords,
         },
         protocol::RecordId,
     };
-    use crate::helpers::HelperIdentity;
+    use crate::helpers::{HelperIdentity, TransportIdentity};
     use crate::secret_sharing::Sendable;
 
-    impl<M: Message> Observed<crate::helpers::gateway::send::SendingEnd<Role, M>> {
+    impl<I: TransportIdentity, M: MpcMessage> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
         delegate::delegate! {
             to { self.advance(); self.inner() } {
                 #[inline]
-                pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error<Role>>;
+                pub async fn send<B: Borrow<M>>(&self, record_id: RecordId, msg: B) -> Result<(), Error<I>>;
             }
         }
     }

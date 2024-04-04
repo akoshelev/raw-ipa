@@ -14,7 +14,7 @@ use generic_array::GenericArray;
 use typenum::Unsigned;
 
 use crate::{
-    helpers::Message,
+    helpers::MpcMessage,
     sync::{
         atomic::{
             AtomicUsize,
@@ -81,7 +81,7 @@ impl State {
     // It is harder to prove through assertions and/or static analysis that every message ever
     // sent will be the same size, so we settle for a less strict check that should at least
     // prevent reaching a deadlock.
-    fn write<M: Message>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
+    fn write<M: MpcMessage>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
         debug_assert!(
             self.spare != 0 || self.buf.capacity() % M::Size::USIZE == 0,
             "invalid spare capacity for OrderingSender (see docs)",
@@ -330,7 +330,7 @@ impl OrderingSender {
     /// * the same index is provided more than once.
     ///
     /// [capacity]: OrderingSender#spare-capacity-configuration
-    pub fn send<M: Message, B: Borrow<M>>(&self, i: usize, m: B) -> Send<'_, M, B> {
+    pub fn send<M: MpcMessage, B: Borrow<M>>(&self, i: usize, m: B) -> Send<'_, M, B> {
         Send {
             i,
             m,
@@ -438,14 +438,14 @@ impl OrderingSender {
 }
 
 /// A future for writing item `i` into an `OrderingSender`.
-pub struct Send<'a, M: Message, B: Borrow<M> + 'a> {
+pub struct Send<'a, M: MpcMessage, B: Borrow<M> + 'a> {
     i: usize,
     m: B,
     sender: &'a OrderingSender,
     phantom_data: PhantomData<M>,
 }
 
-impl<'a, M: Message, B: Borrow<M> + 'a> Future for Send<'a, M, B> {
+impl<'a, M: MpcMessage, B: Borrow<M> + 'a> Future for Send<'a, M, B> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -524,7 +524,7 @@ mod test {
     use super::OrderingSender;
     use crate::{
         ff::{Fp31, Fp32BitPrime, Gf20Bit, Gf9Bit, Serializable, U128Conversions},
-        helpers::Message,
+        helpers::MpcMessage,
         rand::thread_rng,
         sync::Arc,
         test_executor::run,
@@ -622,7 +622,7 @@ mod test {
     >;
 
     // Given a message, returns a closure that sends the message and increments an associated record index.
-    fn send_fn<M: Message>(m: M) -> BoxedSendFn {
+    fn send_fn<M: MpcMessage>(m: M) -> BoxedSendFn {
         Box::new(|s: &OrderingSender, i: &mut usize| {
             let fut = s.send(*i, m).boxed();
             *i += 1;

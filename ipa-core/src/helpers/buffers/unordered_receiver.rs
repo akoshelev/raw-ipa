@@ -11,7 +11,7 @@ use generic_array::GenericArray;
 use typenum::Unsigned;
 
 use crate::{
-    helpers::{Error, Message, Role},
+    helpers::{Error, MpcMessage, Role},
     protocol::RecordId,
     sync::{Arc, Mutex},
 };
@@ -21,7 +21,7 @@ pub struct Receiver<S, C, M>
 where
     S: Stream<Item = C> + Send,
     C: AsRef<[u8]>,
-    M: Message,
+    M: MpcMessage,
 {
     i: usize,
     shared_state: Arc<Mutex<OperatingState<S, C>>>,
@@ -32,7 +32,7 @@ impl<S, C, M> Future for Receiver<S, C, M>
 where
     S: Stream<Item = C> + Send,
     C: AsRef<[u8]>,
-    M: Message,
+    M: MpcMessage,
 {
     type Output = Result<M, ReceiveError<M>>;
 
@@ -57,7 +57,7 @@ struct Spare {
 
 impl Spare {
     /// Read a message from the buffer.  Returns `None` if there isn't enough data.
-    fn read<M: Message>(&mut self) -> Option<Result<M, M::DeserializationError>> {
+    fn read<M: MpcMessage>(&mut self) -> Option<Result<M, M::DeserializationError>> {
         let end = self.offset + M::Size::USIZE;
         if end <= self.buf.len() {
             let m = M::deserialize(GenericArray::from_slice(&self.buf[self.offset..end]));
@@ -79,7 +79,7 @@ impl Spare {
     /// This returns a message if there is enough data.
     /// This returns a value because it can be more efficient in cases where
     /// received chunks don't align with messages.
-    fn extend<M: Message>(&mut self, v: &[u8]) -> Option<Result<M, M::DeserializationError>> {
+    fn extend<M: MpcMessage>(&mut self, v: &[u8]) -> Option<Result<M, M::DeserializationError>> {
         let sz = <M::Size as Unsigned>::USIZE;
         let remainder = self.buf.len() - self.offset;
         if remainder + v.len() < sz {
@@ -156,7 +156,7 @@ where
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ReceiveError<M: Message> {
+pub enum ReceiveError<M: MpcMessage> {
     #[error("Error deserializing {0:?} record: {1}")]
     DeserializationError(RecordId, #[source] M::DeserializationError),
     #[error(transparent)]
@@ -228,7 +228,7 @@ where
 
     /// Poll for the next record.  This should only be invoked when
     /// the future for the next message is polled.
-    fn poll_next<M: Message>(&mut self, cx: &mut Context<'_>) -> Poll<Result<M, ReceiveError<M>>> {
+    fn poll_next<M: MpcMessage>(&mut self, cx: &mut Context<'_>) -> Poll<Result<M, ReceiveError<M>>> {
         self.max_polled_idx = std::cmp::max(self.max_polled_idx, self.next);
         if let Some(m) = self.spare.read() {
             self.wake_next();
@@ -345,7 +345,7 @@ where
     /// Only if there are multiple invocations for the same `i`.
     /// If one future is resolved, the other will panic when polled.
     /// If both futures are polled by different contexts, the second will panic.
-    pub fn recv<M: Message, I: Into<usize>>(&self, i: I) -> Receiver<S, C, M> {
+    pub fn recv<M: MpcMessage, I: Into<usize>>(&self, i: I) -> Receiver<S, C, M> {
         Receiver {
             i: i.into(),
             shared_state: Arc::clone(&self.inner),
@@ -377,11 +377,11 @@ where
 }
 
 /// Convert `Result<M, M::DeserError>` to `Result<M, ReceiveError<M>>`
-trait ReceiveErrorExt<M: Message>: Sized {
+trait ReceiveErrorExt<M: MpcMessage>: Sized {
     fn map_error_to_receive(self, next: usize) -> Result<M, ReceiveError<M>>;
 }
 
-impl<M: Message> ReceiveErrorExt<M> for Result<M, M::DeserializationError> {
+impl<M: MpcMessage> ReceiveErrorExt<M> for Result<M, M::DeserializationError> {
     fn map_error_to_receive(self, next: usize) -> Result<M, ReceiveError<M>> {
         self.map_err(|e| ReceiveError::DeserializationError(RecordId::from(next), e))
     }

@@ -24,14 +24,17 @@ pub use futures::MaybeFuture;
 
 #[cfg(feature = "stall-detection")]
 mod gateway_exports {
-    use crate::helpers::{
-        gateway,
-        gateway::{stall_detection::Observed, InstrumentedGateway},
-    };
+    use futures::Stream;
+    use crate::helpers::{gateway, gateway::{stall_detection::Observed, InstrumentedGateway}, RoleResolvingTransport, Transport};
+    use crate::helpers::buffers::UnorderedReceiver;
+    use crate::helpers::gateway::UR;
 
     pub type Gateway = Observed<InstrumentedGateway>;
     pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;
-    pub type ReceivingEnd<M> = Observed<gateway::ReceivingEnd<M>>;
+    // TODO: alias for helper/shard receiving ends
+    // pub type ReceivingEnd<T, M> = Observed<gateway::ReceivingEnd<T, M>>;
+
+    pub type MpcReceivingEnd<M> = Observed<gateway::MpcReceivingEnd<M>>;
 }
 
 #[cfg(not(feature = "stall-detection"))]
@@ -40,14 +43,14 @@ mod gateway_exports {
 
     pub type Gateway = gateway::Gateway;
     pub type SendingEnd<I, M> = gateway::SendingEnd<I, M>;
-    pub type ReceivingEnd<M> = gateway::ReceivingEnd<M>;
+    pub type ReceivingEnd<M> = gateway::MpcReceivingEnd<M>;
 }
 
 pub use gateway::GatewayConfig;
 // TODO: this type should only be available within infra. Right now several infra modules
 // are exposed at the root level. That makes it impossible to have a proper hierarchy here.
-pub use gateway::{MpcTransportImpl, TransportError, TransportImpl, ShardTransportImpl};
-pub use gateway_exports::{Gateway, ReceivingEnd, SendingEnd};
+pub use gateway::{MpcTransportImpl, TransportError, TransportImpl, ShardTransportImpl, RoleResolvingTransport};
+pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd};
 pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
@@ -437,9 +440,15 @@ impl<I: transport::Identity> Debug for ChannelId<I> {
 /// Trait for messages sent between helpers. Everything needs to be serializable and safe to send.
 ///
 /// Infrastructure's `Message` trait corresponds to IPA's `Sendable` trait.
-pub trait Message: Debug + Send + Serializable + 'static + Sized {}
+pub trait MpcMessage: Debug + Send + Serializable + 'static + Sized {}
 
-impl<V: Sendable> Message for V {}
+/// Anything that can be sent between MPC helpers, can also be sent across shards. Shards can also
+/// send/receive data that is private to the current helper and this trait is implemented for it.
+pub trait ShardMessage: Debug + Send + Serializable + 'static + Sized {}
+
+impl <M: MpcMessage> ShardMessage for M {}
+
+impl<V: Sendable> MpcMessage for V {}
 
 impl Serializable for PublicKey {
     type Size = typenum::U32;
@@ -456,7 +465,7 @@ impl Serializable for PublicKey {
     }
 }
 
-impl Message for PublicKey {}
+impl MpcMessage for PublicKey {}
 
 #[derive(Clone, Copy, Debug)]
 pub enum TotalRecords {
