@@ -40,7 +40,7 @@ use crate::{
 
 /// An identity of a peer that can be communicated with using [`Transport`]. There are currently two
 /// types of peers - helpers and shards.
-pub trait Identity: Copy + Clone + Debug + PartialEq + Eq + Hash + Send + Sync + 'static {
+pub trait Identity: Copy + Clone + Debug + PartialEq + Eq + PartialOrd + Ord + Hash + Send + Sync + 'static {
     fn as_str<'a>(&self) -> Cow<'a, str>;
 }
 

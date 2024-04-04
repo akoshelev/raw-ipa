@@ -193,17 +193,21 @@ mod gateway {
         }
     }
 
-    pub struct GatewayWaitingTasks<S, R> {
-        senders_state: Option<S>,
-        receivers_state: Option<R>,
+    pub struct GatewayWaitingTasks<M, S, R> {
+        mpc_senders_state: Option<M>,
+        shard_senders_state: Option<S>,
+        mpc_receivers_state: Option<R>,
     }
 
-    impl<S: Debug, R: Debug> Debug for GatewayWaitingTasks<S, R> {
+    impl<M: Debug, S: Debug, R: Debug> Debug for GatewayWaitingTasks<M, S, R> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            if let Some(senders_state) = &self.senders_state {
+            if let Some(senders_state) = &self.mpc_senders_state {
                 write!(f, "\n{{{senders_state:?}\n}}")?;
             }
-            if let Some(receivers_state) = &self.receivers_state {
+            if let Some(senders_state) = &self.shard_senders_state {
+                write!(f, "\n{{{senders_state:?}\n}}")?;
+            }
+            if let Some(receivers_state) = &self.mpc_receivers_state {
                 write!(f, "\n{{{receivers_state:?}\n}}")?;
             }
 
@@ -212,15 +216,16 @@ mod gateway {
     }
 
     impl ObserveState for Weak<State> {
-        type State = GatewayWaitingTasks<send::WaitingTasks, receive::WaitingTasks>;
+        type State = GatewayWaitingTasks<send::WaitingTasks<Role>, send::WaitingTasks<ShardIndex>, receive::WaitingTasks>;
 
         fn get_state(&self) -> Option<Self::State> {
             self.upgrade().and_then(|state| {
-                match (state.mpc_senders.get_state(), state.mpc_receivers.get_state()) {
-                    (None, None) => None,
-                    (senders_state, receivers_state) => Some(Self::State {
-                        senders_state,
-                        receivers_state,
+                match (state.mpc_senders.get_state(), state.shard_senders.get_state(), state.mpc_receivers.get_state()) {
+                    (None, None, None) => None,
+                    (mpc_senders_state, shard_senders_state, mpc_receivers_state) => Some(Self::State {
+                        mpc_senders_state,
+                        shard_senders_state,
+                        mpc_receivers_state,
                     }),
                 }
             })
@@ -307,7 +312,7 @@ mod send {
         },
         protocol::RecordId,
     };
-    use crate::helpers::{HelperIdentity, Message, TransportIdentity};
+    use crate::helpers::{ChannelId, HelperIdentity, Message, TransportIdentity};
     use crate::secret_sharing::Sendable;
 
     impl<I: TransportIdentity, M: Message> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
@@ -319,9 +324,9 @@ mod send {
         }
     }
 
-    pub struct WaitingTasks(BTreeMap<HelperChannelId, (TotalRecords, Vec<String>)>);
+    pub struct WaitingTasks<I>(BTreeMap<ChannelId<I>, (TotalRecords, Vec<String>)>);
 
-    impl Debug for WaitingTasks {
+    impl <I: TransportIdentity> Debug for WaitingTasks<I> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             for (channel, (total, records)) in &self.0 {
                 write!(
@@ -335,8 +340,8 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySenders<Role> {
-        type State = WaitingTasks;
+    impl <I: TransportIdentity> ObserveState for GatewaySenders<I> {
+        type State = WaitingTasks<I>;
 
         fn get_state(&self) -> Option<Self::State> {
             let mut state = BTreeMap::new();
@@ -352,7 +357,7 @@ mod send {
         }
     }
 
-    impl ObserveState for GatewaySender<Role> {
+    impl <I: TransportIdentity> ObserveState for GatewaySender<I> {
         type State = Vec<String>;
 
         fn get_state(&self) -> Option<Self::State> {

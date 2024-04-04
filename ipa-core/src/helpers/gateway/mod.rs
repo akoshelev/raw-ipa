@@ -484,7 +484,6 @@ mod tests {
                 BA3::truncate_from(1_u32)
             ];
 
-
             let r = world
                 .semi_honest(input.clone().into_iter(), |ctx, input| async move {
                     let ctx = ctx.set_total_records(input.len());
