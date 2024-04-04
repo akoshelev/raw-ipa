@@ -15,6 +15,7 @@ use futures::{
     stream::{iter, once, Fuse, FusedStream, Iter, Map, Once},
     Stream, StreamExt,
 };
+use futures_util::TryStreamExt;
 use generic_array::GenericArray;
 use pin_project::pin_project;
 use typenum::{Unsigned, U2};
@@ -107,13 +108,19 @@ impl BufDeque {
         })
     }
 
-    /// Deserialize fixed-length items from the buffer.
+    /// Deserialize a single instance of `T` from the buffer with the guarantee that deserialization
+    /// cannot fail, if there is enough bytes in the buffer.
     ///
-    /// Deserializes a single instance of fixed-length-[`Serializable`] type `T` from the stream.
     /// Returns `None` if there is insufficient data available.
-    fn read<T: Serializable<DeserializationError = Infallible>>(&mut self) -> Option<T> {
+    fn read_infallible<T: Serializable<DeserializationError = Infallible>>(&mut self) -> Option<T> {
         self.read_bytes(T::Size::USIZE)
             .map(|bytes| T::deserialize_infallible(GenericArray::from_slice(&bytes)))
+    }
+    /// Attempts to deserialize a single instance of `T` from the buffer.
+    ///
+    /// Returns `None` if there is insufficient data available, and an error if deserialization fails.
+    fn try_read<T: Serializable>(&mut self) -> Option<Result<T, T::DeserializationError>> {
+        self.read_bytes(T::Size::USIZE).map(|bytes| T::deserialize(GenericArray::from_slice(&bytes)))
     }
 
     /// Update the buffer with the result of polling a stream.
@@ -154,12 +161,39 @@ enum ExtendResult {
     Error(io::Error),
 }
 
+pub trait StreamMode {
+    type Output<T: Serializable>;
+
+    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>>;
+}
+
+pub struct SingleRecord;
+pub struct MultipleRecords;
+
+impl StreamMode for SingleRecord {
+    type Output<T: Serializable> = T;
+
+    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
+        buf.try_read()
+    }
+}
+impl StreamMode for MultipleRecords {
+    type Output<T: Serializable> = Vec<T>;
+
+    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
+        let count = max(1, buf.contiguous_len() / T::Size::USIZE);
+        buf.read_multi(count)
+    }
+}
+
+pub type SingleRecordStream<T, S> = RecordsStream<T, S, SingleRecord>;
+
 /// Parse a [`Stream`] of bytes into a stream of records of some
 /// fixed-length-[`Serializable`] type `T`.
 #[pin_project]
-pub struct RecordsStream<T, S, R: AsRef<[u8]> = Bytes>
+pub struct RecordsStream<T, S, M: StreamMode = MultipleRecords>
 where
-    S: BytesStream<R>,
+    S: BytesStream,
     T: Serializable,
 {
     // Our implementation of `poll_next` turns a `None` from the inner stream into `Some(Err(_))` if
@@ -169,12 +203,12 @@ where
     #[pin]
     stream: Fuse<S>,
     buffer: BufDeque,
-    phantom_data: PhantomData<(T, R)>,
+    phantom_data: PhantomData<(T, M)>,
 }
 
-impl<T, S, R: AsRef<[u8]>> RecordsStream<T, S, R>
+impl<T, S, M: StreamMode> RecordsStream<T, S, M>
 where
-    S: BytesStream<R>,
+    S: BytesStream,
     T: Serializable,
 {
     #[must_use]
@@ -187,22 +221,25 @@ where
     }
 }
 
-impl<T, S> Stream for RecordsStream<T, S>
+impl<T, S, M> Stream for RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
+    M: StreamMode
 {
-    type Item = Result<Vec<T>, crate::error::Error>;
+    type Item = Result<M::Output<T>, crate::error::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         loop {
-            let count = max(1, this.buffer.contiguous_len() / T::Size::USIZE);
-            if let Some(items) = this.buffer.read_multi(count) {
-                return Poll::Ready(Some(items.map_err(|e: T::DeserializationError| {
-                    crate::error::Error::ParseError(e.into())
-                })));
+            if let Some(v) = M::read_from(this.buffer) {
+                return Poll::Ready(Some(v.map_err(|e: T::DeserializationError| crate::error::Error::ParseError(e.into()))))
             }
+            // if let Some(items) = this.buffer.read_multi(count) {
+            //     return Poll::Ready(Some(items.map_err(|e: T::DeserializationError| {
+            //         crate::error::Error::ParseError(e.into())
+            //     })));
+            // }
 
             // We need more data, poll the stream
             let Poll::Ready(polled_item) = this.stream.as_mut().poll_next(cx) else {
@@ -335,7 +372,7 @@ where
         let mut items = Vec::new();
         loop {
             if this.pending_len.is_none() {
-                if let Some(len) = this.buffer.read::<Length>().map(Into::into) {
+                if let Some(len) = this.buffer.read_infallible::<Length>().map(Into::into) {
                     *this.pending_len = Some(len);
                     consumed_len += <Length as Serializable>::Size::USIZE;
                 }

@@ -29,7 +29,7 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::{Message, RoleResolvingTransport};
+use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
 use crate::secret_sharing::Sendable;
 
 #[derive(Clone)]
@@ -130,6 +130,10 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner.recv_channel(role)
     }
+
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {
+        self.inner.shard_recv_channel(origin)
+    }
 }
 
 impl<'a, B: ShardBinding> UpgradableContext for Context<'a, B> {
@@ -217,6 +221,10 @@ impl<'a, B: ShardBinding, F: ExtendableField> super::Context for Upgraded<'a, B,
 
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner.recv_channel(role)
+    }
+
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {
+        self.inner.shard_recv_channel(origin)
     }
 }
 

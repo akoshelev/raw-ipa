@@ -7,7 +7,7 @@ mod transport;
 use std::num::NonZeroUsize;
 use crate::sync::{Arc, Mutex};
 
-pub(super) use receive::{MpcReceivingEnd, UR};
+pub(super) use receive::{MpcReceivingEnd, ShardReceivingEnd, UR};
 pub(super) use send::SendingEnd;
 #[cfg(all(test, feature = "shuttle"))]
 use shuttle::future as tokio;
@@ -202,7 +202,7 @@ impl Gateway {
         )
     }
 
-    pub fn get_shard_receiver<M: Sendable>(&self, channel_id: &ShardChannelId) -> receive::ShardReceivingEnd<M> {
+    pub fn get_shard_receiver<M: Message>(&self, channel_id: &ShardChannelId) -> receive::ShardReceivingEnd<M> {
         receive::ShardReceivingEnd {
             channel_id: channel_id.clone(),
             rx: RecordsStream::new(self.inner.shard_receivers.get_or_create(channel_id, || {
@@ -282,7 +282,7 @@ mod tests {
     use std::iter::{repeat, zip};
 
     use futures_util::future::{join, try_join, try_join_all};
-    use futures_util::SinkExt;
+    use futures_util::{SinkExt, StreamExt};
 
     use crate::{
         ff::{Fp31, Fp32BitPrime, Gf2, U128Conversions},
@@ -479,25 +479,37 @@ mod tests {
     fn shards() {
         run(|| async move {
             let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
-            let input = vec![BA3::truncate_from(0_u32), BA3::truncate_from(1_u32)];
+            let input = vec![
+                BA3::truncate_from(0_u32),
+                BA3::truncate_from(1_u32)
+            ];
+
+
             let r = world
                 .semi_honest(input.clone().into_iter(), |ctx, input| async move {
                     let ctx = ctx.set_total_records(input.len());
                     let mut record_id = 0;
+
+                    // Swap shares between shards, works only for 2 shards.
+                    let peer = ctx.peer_shards().next().unwrap();
                     for item in input {
-                        let dest_shard = ctx.peer_shards().next().unwrap();
-                        ctx.shard_send_channel(dest_shard).send(record_id.into(), item).await.unwrap();
+                        ctx.shard_send_channel(peer).send(record_id.into(), item).await.unwrap();
                         record_id += 1;
                     }
 
-                    Vec::<AdditiveShare<BA3>>::new()
+                    let mut r = Vec::<AdditiveShare<BA3>>::new();
+                    while let Some(v) = ctx.shard_recv_channel(peer).next().await {
+                        r.push(v.unwrap());
+                    }
+
+                    r
                 })
                 .await
                 .into_iter()
                 .flat_map(|v| v.reconstruct())
                 .collect::<Vec<_>>();
 
-            assert_eq!(input, r);
+            assert_eq!(input.into_iter().rev().collect::<Vec<_>>(), r);
         })
     }
 

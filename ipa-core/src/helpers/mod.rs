@@ -31,10 +31,10 @@ mod gateway_exports {
 
     pub type Gateway = Observed<InstrumentedGateway>;
     pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;
-    // TODO: alias for helper/shard receiving ends
-    // pub type ReceivingEnd<T, M> = Observed<gateway::ReceivingEnd<T, M>>;
 
     pub type MpcReceivingEnd<M> = Observed<gateway::MpcReceivingEnd<M>>;
+    // TODO: observe state
+    pub type ShardReceivingEnd<M> = gateway::ShardReceivingEnd<M>;
 }
 
 #[cfg(not(feature = "stall-detection"))]
@@ -43,14 +43,15 @@ mod gateway_exports {
 
     pub type Gateway = gateway::Gateway;
     pub type SendingEnd<I, M> = gateway::SendingEnd<I, M>;
-    pub type ReceivingEnd<M> = gateway::MpcReceivingEnd<M>;
+    pub type MpcReceivingEnd<M> = gateway::MpcReceivingEnd<M>;
+    pub type ShardReceivingEnd<M> = gateway::ShardReceivingEnd<M>;
 }
 
 pub use gateway::GatewayConfig;
 // TODO: this type should only be available within infra. Right now several infra modules
 // are exposed at the root level. That makes it impossible to have a proper hierarchy here.
 pub use gateway::{MpcTransportImpl, TransportError, TransportImpl, ShardTransportImpl, RoleResolvingTransport};
-pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd};
+pub use gateway_exports::{Gateway, ShardReceivingEnd, MpcReceivingEnd, SendingEnd};
 pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;

@@ -37,7 +37,7 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::{Message, RoleResolvingTransport};
+use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
 use crate::secret_sharing::Sendable;
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
@@ -93,6 +93,7 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
 
     fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M>;
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M>;
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M>;
 }
 
 pub trait UpgradableContext: Context {
@@ -270,6 +271,12 @@ impl<'a, B: ShardBinding> Context for Base<'a, B> {
         self.inner
             .gateway
             .get_receiver(&ChannelId::new(role, self.gate.clone()))
+    }
+
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {
+        self.inner
+            .gateway
+            .get_shard_receiver(&ChannelId::new(origin, self.gate.clone()))
     }
 }
 

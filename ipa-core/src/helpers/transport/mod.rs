@@ -30,7 +30,7 @@ pub use receive::{LogErrors, ReceiveRecords};
 pub use stream::WrappedAxumBodyStream;
 pub use stream::{
     BodyStream, BytesStream, LengthDelimitedStream, RecordsStream, StreamCollection, StreamKey,
-    WrappedBoxBodyStream,
+    WrappedBoxBodyStream, SingleRecordStream,
 };
 
 use crate::{

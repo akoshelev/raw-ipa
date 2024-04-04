@@ -35,7 +35,7 @@ use crate::{
     sharding::NotSharded,
     sync::Arc,
 };
-use crate::helpers::{Message, RoleResolvingTransport};
+use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
 use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
 
@@ -125,6 +125,10 @@ impl<'a> super::Context for Context<'a> {
 
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner.recv_channel(role)
+    }
+
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {
+        self.inner.shard_recv_channel(origin)
     }
 }
 
@@ -347,6 +351,12 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
         self.inner
             .gateway
             .get_receiver(&ChannelId::new(role, self.gate.clone()))
+    }
+
+    fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {
+        self.inner
+            .gateway
+            .get_shard_receiver(&ChannelId::new(origin, self.gate.clone()))
     }
 }
 

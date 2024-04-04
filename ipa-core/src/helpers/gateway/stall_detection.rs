@@ -81,6 +81,7 @@ mod gateway {
         sync::Arc,
     };
     use crate::helpers::{ChannelId, Message, ShardChannelId};
+    use crate::helpers::gateway::receive::ShardReceivingEnd;
     use crate::helpers::gateway::ShardTransportImpl;
     use crate::helpers::gateway::transport::RoleResolvingTransport;
     use crate::secret_sharing::Sendable;
@@ -179,6 +180,10 @@ mod gateway {
             )
         }
 
+        pub fn get_shard_receiver<M: Message>(&self, channel_id: &ShardChannelId) -> ShardReceivingEnd<M> {
+            self.inner().gateway.get_shard_receiver(channel_id)
+        }
+
         pub fn to_observed(&self) -> Observed<Weak<State>> {
             // todo: inner.inner
             Observed::wrap(
@@ -240,6 +245,8 @@ mod receive {
     };
     use crate::helpers::gateway::receive::UR;
     use crate::helpers::gateway::transport::RoleResolvingTransport;
+    use crate::helpers::gateway::receive::ShardReceivingEnd;
+    use crate::helpers::Message;
 
     impl<M: MpcMessage> Observed<MpcReceivingEnd<M>> {
         delegate::delegate! {

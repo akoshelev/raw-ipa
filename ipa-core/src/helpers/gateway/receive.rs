@@ -16,7 +16,8 @@ use crate::{
     protocol::RecordId,
 };
 use crate::error::BoxError;
-use crate::helpers::{ChannelId, LogErrors, RecordsStream, ShardChannelId, ShardTransportImpl, TransportIdentity};
+use crate::helpers::{ChannelId, LogErrors, Message, RecordsStream, ShardChannelId, ShardTransportImpl, TransportIdentity};
+use crate::helpers::transport::SingleRecordStream;
 use crate::secret_sharing::Sendable;
 use crate::sharding::ShardIndex;
 
@@ -33,9 +34,19 @@ pub struct MpcReceivingEnd<M> {
     _phantom: PhantomData<M>,
 }
 
-pub struct ShardReceivingEnd<M: Sendable> {
+#[pin_project]
+pub struct ShardReceivingEnd<M: Message> {
     pub(super) channel_id: ShardChannelId,
-    pub(super) rx: RecordsStream<M, ShardReceiveStream>
+    #[pin]
+    pub(super) rx: SingleRecordStream<M, ShardReceiveStream>,
+}
+
+impl <M: Message> Stream for ShardReceivingEnd<M> {
+    type Item = Result<M, crate::error::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().rx.poll_next(cx)
+    }
 }
 
 /// Receiving channels, indexed by (role, step).
@@ -95,6 +106,7 @@ impl<M: MpcMessage> MpcReceivingEnd<M> {
             })
     }
 }
+
 
 impl <I: TransportIdentity, S: Clone> GatewayReceivers<I, S> {
     pub fn get_or_create<F: FnOnce() -> S>(&self, channel_id: &ChannelId<I>, ctr: F) -> S {
