@@ -4,7 +4,7 @@
 //! the bit-width of the first (x) operand, then the excess bits of y must be zero. This condition
 //! is abbreviated below as `length(x) >= log2(y)`.
 
-use std::{borrow::Borrow, iter::repeat, ops::Not};
+use std::{borrow::Borrow, iter::repeat};
 
 #[cfg(all(test, unit_test))]
 use ipa_macros::Step;
@@ -15,7 +15,7 @@ use crate::{
     error::Error,
     ff::{ArrayAccessRef, ArrayBuild, ArrayBuilder, Field},
     protocol::{
-        basics::{SecureMul, ShareKnownValue},
+        basics::{BooleanProtocols, SecureMul, ShareKnownValue},
         context::Context,
         step::BitOpStep,
         RecordId,
@@ -52,7 +52,7 @@ where
     F: Field,
     XS: ArrayAccessRef<Element = AdditiveShare<F>> + ArrayBuild<Input = AdditiveShare<F>>,
     YS: ArrayAccessRef<Element = AdditiveShare<F>>,
-    AdditiveShare<F>: SecureMul<C> + Not<Output = AdditiveShare<F>>,
+    AdditiveShare<F>: BooleanProtocols<C, F>,
 {
     // we need to initialize carry to 1 for x>=y,
     let mut carry = AdditiveShare::<F>::share_known_value(&ctx, F::ONE);
@@ -77,7 +77,7 @@ where
     F: Field + FieldSimd<N>,
     XS: ArrayAccessRef<Element = AdditiveShare<F, N>> + ArrayBuild<Input = AdditiveShare<F, N>>,
     YS: ArrayAccessRef<Element = AdditiveShare<F, N>>,
-    AdditiveShare<F, N>: SecureMul<C> + Not<Output = AdditiveShare<F, N>>,
+    AdditiveShare<F, N>: BooleanProtocols<C, F, N>,
 {
     // we need to initialize carry to 0 for x>y
     let mut carry = AdditiveShare::<F, N>::ZERO;
@@ -102,7 +102,7 @@ where
     F: Field,
     XS: ArrayAccessRef<Element = AdditiveShare<F>> + ArrayBuild<Input = AdditiveShare<F>>,
     YS: ArrayAccessRef<Element = AdditiveShare<F>>,
-    AdditiveShare<F>: SecureMul<C> + Not<Output = AdditiveShare<F>>,
+    AdditiveShare<F>: BooleanProtocols<C, F>,
 {
     // we need to initialize carry to 1 for a subtraction
     let mut carry = AdditiveShare::<F>::share_known_value(&ctx, F::ONE);
@@ -127,7 +127,7 @@ where
     S: SharedValue + CustomArray<Element = F>,
     AdditiveShare<S>:
         ArrayAccessRef<Element = AdditiveShare<F>> + ArrayBuild<Input = AdditiveShare<F>>,
-    AdditiveShare<F>: SecureMul<C> + Not<Output = AdditiveShare<F>>,
+    AdditiveShare<F>: BooleanProtocols<C, F>,
     AdditiveShare<S>: From<AdditiveShare<F, N>> + Into<AdditiveShare<F, N>>,
 {
     let mut carry = AdditiveShare::<F>::share_known_value(&ctx, F::ONE);
@@ -170,7 +170,7 @@ where
     F: Field + FieldSimd<N>,
     XS: ArrayAccessRef<Element = AdditiveShare<F, N>> + ArrayBuild<Input = AdditiveShare<F, N>>,
     YS: ArrayAccessRef<Element = AdditiveShare<F, N>>,
-    AdditiveShare<F, N>: SecureMul<C> + Not<Output = AdditiveShare<F, N>>,
+    AdditiveShare<F, N>: BooleanProtocols<C, F, N>,
 {
     let x = x.iter();
     let y = y.iter();
@@ -220,7 +220,7 @@ async fn bit_subtractor<C, F, const N: usize>(
 where
     C: Context,
     F: Field + FieldSimd<N>,
-    AdditiveShare<F, N>: SecureMul<C> + Not<Output = AdditiveShare<F, N>>,
+    AdditiveShare<F, N>: BooleanProtocols<C, F, N>,
 {
     let output = x + !(y + &*carry);
 
@@ -238,7 +238,6 @@ mod test {
     use std::{
         array,
         iter::{repeat, repeat_with, zip},
-        time::Instant,
     };
 
     use futures::stream::iter as stream_iter;
@@ -419,9 +418,10 @@ mod test {
 
             let result = world
                 .semi_honest((x.clone().into_iter(), y), |ctx, (x, y)| async move {
-                    let begin = Instant::now();
+                    #[cfg(not(debug_assertions))]
+                    let begin = std::time::Instant::now();
                     let ctx = ctx.set_total_records(x.len());
-                    let res = seq_join(
+                    let res: Vec<AdditiveShare<Boolean>> = seq_join(
                         ctx.active_work(),
                         stream_iter(x.into_iter().zip(repeat((ctx, y))).enumerate().map(
                             |(i, (x, (ctx, y)))| async move {
@@ -429,9 +429,10 @@ mod test {
                             },
                         )),
                     )
-                    .try_collect::<Vec<AdditiveShare<Boolean>>>()
+                    .try_collect()
                     .await
                     .unwrap();
+                    #[cfg(not(debug_assertions))]
                     tracing::info!("Execution time: {:?}", begin.elapsed());
                     res
                 })
@@ -494,10 +495,10 @@ mod test {
             let xa_iter = xa.clone().into_iter();
             let result = world
                 .semi_honest((xa_iter, ya.clone()), |ctx, (x, y)| async move {
-                    println!("Processing {} records", x.len());
-                    let begin = Instant::now();
+                    #[cfg(not(debug_assertions))]
+                    let begin = std::time::Instant::now();
                     let ctx = ctx.set_total_records(x.len());
-                    let res = seq_join(
+                    let res: Vec<AdditiveShare<Boolean, N>> = seq_join(
                         ctx.active_work(),
                         stream_iter(x.into_iter().zip(repeat((ctx, y))).enumerate().map(
                             |(i, (x, (ctx, y)))| async move {
@@ -505,9 +506,10 @@ mod test {
                             },
                         )),
                     )
-                    .try_collect::<Vec<AdditiveShare<Boolean, N>>>()
+                    .try_collect()
                     .await
                     .unwrap();
+                    #[cfg(not(debug_assertions))]
                     tracing::info!("Execution time: {:?}", begin.elapsed());
                     res
                 })
