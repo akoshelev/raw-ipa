@@ -34,7 +34,7 @@ mod gateway_exports {
 
     pub type MpcReceivingEnd<M> = Observed<gateway::MpcReceivingEnd<M>>;
     // TODO: observe state
-    pub type ShardReceivingEnd<M> = gateway::ShardReceivingEnd<M>;
+    pub type ShardReceivingEnd<M> = Observed<gateway::ShardReceivingEnd<M>>;
 }
 
 #[cfg(not(feature = "stall-detection"))]

@@ -211,7 +211,6 @@ impl Gateway {
         }
     }
 
-
     fn get_sender<I: TransportIdentity, M: Message>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
         State: Senders<I>, Transports: TransportContainer<I> {
         let gateway_senders = self.inner.get_senders();

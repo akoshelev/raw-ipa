@@ -190,6 +190,9 @@ pub type SingleRecordStream<T, S> = RecordsStream<T, S, SingleRecord>;
 
 /// Parse a [`Stream`] of bytes into a stream of records of some
 /// fixed-length-[`Serializable`] type `T`.
+///
+/// Depending on `M`, the provided stream can yield a single record `T` or multiples of `T`. See
+/// [`SingleRecord`], [`MultipleRecords`] and [`StreamMode`].
 #[pin_project]
 pub struct RecordsStream<T, S, M: StreamMode = MultipleRecords>
 where
@@ -235,11 +238,6 @@ where
             if let Some(v) = M::read_from(this.buffer) {
                 return Poll::Ready(Some(v.map_err(|e: T::DeserializationError| crate::error::Error::ParseError(e.into()))))
             }
-            // if let Some(items) = this.buffer.read_multi(count) {
-            //     return Poll::Ready(Some(items.map_err(|e: T::DeserializationError| {
-            //         crate::error::Error::ParseError(e.into())
-            //     })));
-            // }
 
             // We need more data, poll the stream
             let Poll::Ready(polled_item) = this.stream.as_mut().poll_next(cx) else {
