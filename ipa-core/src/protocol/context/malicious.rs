@@ -340,7 +340,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
     fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M> {
         self.inner
             .gateway
-            .get_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
+            .get_mpc_sender(&ChannelId::new(role, self.gate.clone()), self.total_records)
     }
 
     fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
@@ -353,7 +353,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
         self.inner
             .gateway
-            .get_receiver(&ChannelId::new(role, self.gate.clone()))
+            .get_mpc_receiver(&ChannelId::new(role, self.gate.clone()))
     }
 
     fn shard_recv_channel<M: Message>(&self, origin: ShardIndex) -> ShardReceivingEnd<M> {

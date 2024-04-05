@@ -116,7 +116,20 @@ impl Gateway {
         &self.config
     }
 
-    /// Returns a sender suitable for sending data between MPC helpers.
+    /// Returns a sender suitable for sending data between MPC helpers. The data must be approved
+    /// for sending by implementing [`MpcMessage`] trait.
+    ///
+    /// Do not remove the test below, it verifies that we don't allow raw sharings to be sent
+    /// between MPC helpers without using secure reveal.
+    ///
+    /// ```compile_fail
+    /// use ipa_core::helpers::Gateway;
+    /// use ipa_core::secret_sharing::replicated::semi_honest::AdditiveShare;
+    /// use ipa_core::ff::Fp32BitPrime;
+    ///
+    /// let gateway: Gateway = todo!();
+    /// let mpc_channel = gateway.get_mpc_sender::<AdditiveShare<Fp32BitPrime>>(todo!(), todo!());
+    /// ```
     ///
     /// ## Panics
     /// If there is a failure connecting via HTTP
@@ -162,9 +175,8 @@ impl Gateway {
         send::SendingEnd::new(channel, transport.identity())
     }
 
-    // TODO: rename to get_mpc_receiver
     #[must_use]
-    pub fn get_receiver<M: MpcMessage>(
+    pub fn get_mpc_receiver<M: MpcMessage>(
         &self,
         channel_id: &HelperChannelId,
     ) -> receive::MpcReceivingEnd<M> {

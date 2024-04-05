@@ -149,7 +149,7 @@ mod gateway {
         }
 
         #[must_use]
-        pub fn get_sender<M: MpcMessage>(
+        pub fn get_mpc_sender<M: MpcMessage>(
             &self,
             channel_id: &HelperChannelId,
             total_records: TotalRecords,
@@ -176,13 +176,13 @@ mod gateway {
         }
 
         #[must_use]
-        pub fn get_receiver<M: MpcMessage>(
+        pub fn get_mpc_receiver<M: MpcMessage>(
             &self,
             channel_id: &HelperChannelId,
         ) -> MpcReceivingEnd<M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
-                self.inner().gateway.get_receiver(channel_id),
+                self.inner().gateway.get_mpc_receiver(channel_id),
             )
         }
 
