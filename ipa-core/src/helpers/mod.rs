@@ -24,10 +24,10 @@ pub use futures::MaybeFuture;
 
 #[cfg(feature = "stall-detection")]
 mod gateway_exports {
-    use futures::Stream;
-    use crate::helpers::{gateway, gateway::{stall_detection::Observed, InstrumentedGateway}, RoleResolvingTransport, Transport};
-    use crate::helpers::buffers::UnorderedReceiver;
-    use crate::helpers::gateway::UR;
+    
+    use crate::helpers::{gateway, gateway::{stall_detection::Observed, InstrumentedGateway}};
+    
+    
 
     pub type Gateway = Observed<InstrumentedGateway>;
     pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;

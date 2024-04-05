@@ -29,8 +29,8 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
-use crate::secret_sharing::Sendable;
+use crate::helpers::{Message, ShardReceivingEnd};
+
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {

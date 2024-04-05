@@ -37,8 +37,8 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
-use crate::secret_sharing::Sendable;
+use crate::helpers::{Message, ShardReceivingEnd};
+
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
 /// generator and communication channel.

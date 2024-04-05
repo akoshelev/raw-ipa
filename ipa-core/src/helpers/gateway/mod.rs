@@ -21,14 +21,14 @@ use crate::{
         gateway::{
             receive::GatewayReceivers, send::GatewaySenders,
         },
-        transport::routing::RouteId,
         HelperChannelId, MpcMessage, Role, RoleAssignment, TotalRecords, Transport,
     },
     protocol::QueryId,
 };
-use crate::helpers::{ChannelId, HelperIdentity, LogErrors, Message, RecordsStream, ShardChannelId, TransportIdentity};
+use crate::helpers::{HelperIdentity, LogErrors, Message, RecordsStream, ShardChannelId};
 use crate::helpers::gateway::receive::ShardReceiveStream;
-use crate::secret_sharing::Sendable;
+use crate::helpers::gateway::transport::Transports;
+
 use crate::sharding::ShardIndex;
 
 /// Alias for the currently configured transport.
@@ -49,13 +49,12 @@ pub type MpcTransportImpl = TransportImpl;
 #[cfg(feature = "real-world-infra")]
 pub type ShardTransportImpl = crate::net::HttpShardTransport;
 
-
 pub type TransportError = <MpcTransportImpl as Transport>::Error;
 
 /// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
 pub struct Gateway {
     config: GatewayConfig,
-    transports: Transports,
+    transports: Transports<RoleResolvingTransport, ShardTransportImpl>,
     query_id: QueryId,
     #[cfg(feature = "stall-detection")]
     inner: crate::sync::Arc<State>,
@@ -63,32 +62,6 @@ pub struct Gateway {
     inner: State,
 }
 
-/// Set of transports used inside [`Gateway`].
-struct Transports {
-    mpc: RoleResolvingTransport,
-    shard: ShardTransportImpl,
-}
-
-trait TransportContainer<I: TransportIdentity> {
-    fn get(&self) -> impl Transport<Identity=I>;
-}
-
-
-impl TransportContainer<Role> for Transports {
-    fn get(&self) -> impl Transport<Identity=Role> {
-        self.mpc.clone()
-    }
-}
-
-impl TransportContainer<ShardIndex> for Transports {
-    fn get(&self) -> impl Transport<Identity=ShardIndex> {
-        self.shard.clone()
-    }
-}
-
-trait Senders<I: TransportIdentity> {
-    fn get_senders(&self) -> &GatewaySenders<I>;
-}
 
 #[derive(Default)]
 pub struct State {
@@ -97,19 +70,6 @@ pub struct State {
     mpc_receivers: GatewayReceivers<Role, UR>,
     shard_receivers: GatewayReceivers<ShardIndex, ShardReceiveStream>,
 }
-
-impl Senders<Role> for State {
-    fn get_senders(&self) -> &GatewaySenders<Role> {
-        &self.mpc_senders
-    }
-}
-
-impl Senders<ShardIndex> for State {
-    fn get_senders(&self) -> &GatewaySenders<ShardIndex> {
-        &self.shard_senders
-    }
-}
-
 
 #[derive(Clone, Copy, Debug)]
 pub struct GatewayConfig {
@@ -168,7 +128,11 @@ impl Gateway {
         channel_id: &HelperChannelId,
         total_records: TotalRecords,
     ) -> send::SendingEnd<Role, M> {
-        self.get_sender(channel_id, total_records)
+        let transport = &self.transports.mpc;
+        let channel = self.inner.mpc_senders
+            .get::<M, _>(&channel_id, transport, self.config.active_work(), &self.query_id, total_records);
+
+        send::SendingEnd::new(channel, transport.identity())
     }
 
     /// Returns a sender for shard-to-shard traffic. This sender is more relaxed compared to one
@@ -179,7 +143,11 @@ impl Gateway {
     /// between shards as they are known to each helper anyway. Sending them across MPC helper boundary
     /// could lead to information reveal.
     pub fn get_shard_sender<M: Message>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
-        self.get_sender(channel_id, total_records)
+        let transport = &self.transports.shard;
+        let channel = self.inner.shard_senders
+            .get::<M, _>(&channel_id, transport, self.config.active_work(), &self.query_id, total_records);
+
+        send::SendingEnd::new(channel, transport.identity())
     }
 
     // TODO: rename to get_mpc_receiver
@@ -209,35 +177,6 @@ impl Gateway {
                 ShardReceiveStream(Arc::new(Mutex::new(self.transports.shard.receive(channel_id.peer, (self.query_id, channel_id.gate.clone())))))
             })),
         }
-    }
-
-    fn get_sender<I: TransportIdentity, M: Message>(&self, channel_id: &ChannelId<I>, total_records: TotalRecords) -> send::SendingEnd<I, M> where
-        State: Senders<I>, Transports: TransportContainer<I> {
-        let gateway_senders = self.inner.get_senders();
-        let transport = self.transports.get();
-        assert_ne!(transport.identity(), channel_id.peer, "Can't send to itself: {channel_id:?}");
-        let (tx, maybe_stream) = gateway_senders.get_or_create::<M>(
-            channel_id,
-            self.config.active_work(),
-            total_records,
-        );
-        if let Some(stream) = maybe_stream {
-            tokio::spawn({
-                let ChannelId { peer, gate } = channel_id.clone();
-                let query_id = self.query_id;
-                let transport = transport.clone();
-                async move {
-                    // TODO(651): In the HTTP case we probably need more robust error handling here.
-                    transport
-                        .send(peer, (RouteId::Records, query_id, gate),
-                              stream,
-                        )
-                        .await
-                        .expect("{channel_id:?} receiving end should be accepted by transport");
-                }
-            });
-        }
-        send::SendingEnd::new(tx, transport.identity(), &channel_id)
     }
 }
 
@@ -291,7 +230,7 @@ mod tests {
     };
     use crate::ff::boolean_array::BA3;
     use crate::secret_sharing::replicated::semi_honest::AdditiveShare;
-    use crate::sharding::{ShardConfiguration, Sharded};
+    use crate::sharding::{ShardConfiguration};
     use crate::test_executor::run;
     use crate::test_fixture::{Reconstruct, WithShards};
 

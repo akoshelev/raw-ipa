@@ -35,8 +35,8 @@ use crate::{
     sharding::NotSharded,
     sync::Arc,
 };
-use crate::helpers::{Message, RoleResolvingTransport, ShardReceivingEnd};
-use crate::secret_sharing::Sendable;
+use crate::helpers::{Message, ShardReceivingEnd};
+
 use crate::sharding::ShardIndex;
 
 #[derive(Clone)]

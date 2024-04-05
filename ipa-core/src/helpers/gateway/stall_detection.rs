@@ -80,10 +80,10 @@ mod gateway {
         protocol::QueryId,
         sync::Arc,
     };
-    use crate::helpers::{ChannelId, Message, ShardChannelId};
+    use crate::helpers::{Message, ShardChannelId};
     use crate::helpers::gateway::ShardTransportImpl;
-    use crate::helpers::gateway::transport::RoleResolvingTransport;
-    use crate::secret_sharing::Sendable;
+    
+    
     use crate::sharding::ShardIndex;
 
     pub struct InstrumentedGateway {
@@ -253,13 +253,12 @@ mod receive {
     use crate::{
         helpers::{
             error::Error,
-            gateway::{receive::GatewayReceivers, MpcReceivingEnd},
-            HelperChannelId, MpcMessage, Role,
+            gateway::{receive::GatewayReceivers, MpcReceivingEnd}, MpcMessage, Role,
         },
         protocol::RecordId,
     };
     use crate::helpers::gateway::receive::{ShardReceiveStream, UR};
-    use crate::helpers::gateway::transport::RoleResolvingTransport;
+    
     use crate::helpers::gateway::receive::ShardReceivingEnd;
     use crate::helpers::{ChannelId, Message, TransportIdentity};
     use crate::sharding::ShardIndex;
@@ -340,13 +339,12 @@ mod send {
     use crate::{
         helpers::{
             error::Error,
-            gateway::send::{GatewaySender, GatewaySenders},
-            HelperChannelId, MpcMessage, Role, TotalRecords,
+            gateway::send::{GatewaySender, GatewaySenders}, TotalRecords,
         },
         protocol::RecordId,
     };
-    use crate::helpers::{ChannelId, HelperIdentity, Message, TransportIdentity};
-    use crate::secret_sharing::Sendable;
+    use crate::helpers::{ChannelId, Message, TransportIdentity};
+    
 
     impl<I: TransportIdentity, M: Message> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
         delegate::delegate! {

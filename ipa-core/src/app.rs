@@ -7,7 +7,7 @@ use crate::{
         query::{PrepareQuery, QueryConfig, QueryInput},
         routing::{Addr, RouteId},
         ApiError, BodyStream, HandlerBox, HandlerRef, HelperIdentity, HelperResponse,
-        RequestHandler, Transport, TransportImpl,
+        RequestHandler, Transport,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,

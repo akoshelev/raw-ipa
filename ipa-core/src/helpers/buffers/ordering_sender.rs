@@ -14,7 +14,6 @@ use generic_array::GenericArray;
 use typenum::Unsigned;
 
 use crate::{
-    helpers::MpcMessage,
     sync::{
         atomic::{
             AtomicUsize,

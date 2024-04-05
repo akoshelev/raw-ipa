@@ -27,7 +27,6 @@ use crate::{
         TransportIdentity,
     },
     protocol::{step::Gate, QueryId},
-    sharding::ShardIndex,
     sync::{Arc, Weak},
 };
 

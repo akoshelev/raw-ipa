@@ -4,11 +4,12 @@ use futures::Stream;
 use crate::{
     helpers::{
         transport::routing::RouteId, NoResourceIdentifier, QueryIdBinding, Role, RoleAssignment,
-        RouteParams, StepBinding, Transport, TransportImpl,
+        RouteParams, StepBinding, Transport,
     },
     protocol::{step::Gate, QueryId},
 };
 use crate::helpers::MpcTransportImpl;
+use crate::sharding::ShardIndex;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to send to {0:?}: {1:?}")]
@@ -22,6 +23,12 @@ pub struct SendToRoleError(Role, <MpcTransportImpl as Transport>::Error);
 pub struct RoleResolvingTransport {
     pub(super) roles: RoleAssignment,
     pub(super) inner: MpcTransportImpl,
+}
+
+/// Set of transports used inside [`super::Gateway`].
+pub(super) struct Transports<M: Transport<Identity = Role>, S: Transport<Identity = ShardIndex>> {
+    pub mpc: M,
+    pub shard: S,
 }
 
 #[async_trait]
