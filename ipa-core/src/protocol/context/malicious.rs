@@ -10,7 +10,10 @@ use ipa_macros::Step;
 use super::{UpgradeContext, UpgradeToMalicious};
 use crate::{
     error::Error,
-    helpers::{ChannelId, Gateway, MpcMessage, MpcReceivingEnd, Role, SendingEnd, TotalRecords},
+    helpers::{
+        ChannelId, Gateway, Message, MpcMessage, MpcReceivingEnd, Role, SendingEnd,
+        ShardReceivingEnd, TotalRecords,
+    },
     protocol::{
         basics::{
             mul::malicious::Step::RandomnessForValidation, SecureMul, ShareKnownValue,
@@ -32,12 +35,9 @@ use crate::{
         ReplicatedSecretSharing,
     },
     seq_join::SeqJoin,
-    sharding::NotSharded,
+    sharding::{NotSharded, ShardIndex},
     sync::Arc,
 };
-use crate::helpers::{Message, ShardReceivingEnd};
-
-use crate::sharding::ShardIndex;
 
 #[derive(Clone)]
 pub struct Context<'a> {
@@ -344,7 +344,10 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
     }
 
     fn shard_send_channel<M: Message>(&self, dest_shard: ShardIndex) -> SendingEnd<ShardIndex, M> {
-        self.inner.gateway.get_shard_sender(&ChannelId::new(dest_shard, self.gate.clone()), self.total_records)
+        self.inner.gateway.get_shard_sender(
+            &ChannelId::new(dest_shard, self.gate.clone()),
+            self.total_records,
+        )
     }
 
     fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {

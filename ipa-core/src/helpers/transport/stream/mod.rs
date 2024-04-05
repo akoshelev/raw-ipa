@@ -6,7 +6,6 @@ mod input;
 
 use std::pin::Pin;
 
-
 #[cfg(feature = "web-app")]
 pub use axum_body::WrappedAxumBodyStream;
 pub use box_body::WrappedBoxBodyStream;
@@ -32,7 +31,7 @@ pub trait BytesStream: Stream<Item = Result<Bytes, BoxError>> + Send {
     }
 }
 
-impl <S: Stream<Item = Result<Bytes, BoxError>> + Send> BytesStream for S {}
+impl<S: Stream<Item = Result<Bytes, BoxError>> + Send> BytesStream for S {}
 
 pub type BoxBytesStream = Pin<Box<dyn BytesStream>>;
 

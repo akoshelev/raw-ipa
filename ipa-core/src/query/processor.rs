@@ -9,7 +9,8 @@ use crate::{
     error::Error as ProtocolError,
     helpers::{
         query::{PrepareQuery, QueryConfig, QueryInput},
-        Gateway, GatewayConfig, MpcTransportImpl, Role, RoleAssignment, Transport, TransportError,
+        Gateway, GatewayConfig, MpcTransportImpl, Role, RoleAssignment, ShardTransportImpl,
+        Transport, TransportError,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,
@@ -20,7 +21,6 @@ use crate::{
     },
     sync::Arc,
 };
-use crate::helpers::ShardTransportImpl;
 
 /// `Processor` accepts and tracks requests to initiate new queries on this helper party
 /// network. It makes sure queries are coordinated and each party starts processing it when

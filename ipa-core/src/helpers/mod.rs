@@ -21,13 +21,15 @@ use std::ops::{Index, IndexMut};
 pub use buffers::OrderingSender;
 pub use error::Error;
 pub use futures::MaybeFuture;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "stall-detection")]
 mod gateway_exports {
-    
-    use crate::helpers::{gateway, gateway::{stall_detection::Observed, InstrumentedGateway}};
-    
-    
+
+    use crate::helpers::{
+        gateway,
+        gateway::{stall_detection::Observed, InstrumentedGateway},
+    };
 
     pub type Gateway = Observed<InstrumentedGateway>;
     pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;
@@ -50,8 +52,10 @@ mod gateway_exports {
 pub use gateway::GatewayConfig;
 // TODO: this type should only be available within infra. Right now several infra modules
 // are exposed at the root level. That makes it impossible to have a proper hierarchy here.
-pub use gateway::{MpcTransportImpl, TransportError, TransportImpl, ShardTransportImpl, RoleResolvingTransport};
-pub use gateway_exports::{Gateway, ShardReceivingEnd, MpcReceivingEnd, SendingEnd};
+pub use gateway::{
+    MpcTransportImpl, RoleResolvingTransport, ShardTransportImpl, TransportError, TransportImpl,
+};
+pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd, ShardReceivingEnd};
 pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
@@ -74,8 +78,8 @@ use crate::{
     },
     protocol::{step::Gate, RecordId},
     secret_sharing::Sendable,
+    sharding::ShardIndex,
 };
-use crate::sharding::ShardIndex;
 
 // TODO work with ArrayLength only
 pub type MessagePayloadArrayLen = U8;
@@ -86,12 +90,8 @@ pub const MESSAGE_PAYLOAD_SIZE_BYTES: usize = MessagePayloadArrayLen::USIZE;
 /// represents a helper's role within an MPC protocol, which may be different per protocol.
 /// `HelperIdentity` will be established at startup and then never change. Components that want to
 /// resolve this identifier into something (Uri, encryption keys, etc) must consult configuration
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[cfg_attr(
-    feature = "enable-serde",
-    derive(serde::Deserialize),
-    serde(try_from = "usize")
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Deserialize)]
+#[serde(try_from = "usize")]
 pub struct HelperIdentity {
     id: u8,
 }
@@ -224,26 +224,17 @@ impl<T> IndexMut<HelperIdentity> for Vec<T> {
 /// may be `H2` or `H3`.
 /// Each helper instance must be able to take any role, but once the role is assigned, it cannot
 /// be changed for the remainder of the query.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[cfg_attr(
-    feature = "enable-serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(into = "&'static str", try_from = "&str")
-)]
+#[serde(into = "&'static str", try_from = "&str")]
 pub enum Role {
     H1 = 0,
     H2 = 1,
     H3 = 2,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
-#[cfg_attr(
-    feature = "enable-serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
 pub struct RoleAssignment {
     helper_roles: [HelperIdentity; 3],
 }
@@ -448,7 +439,7 @@ pub trait Message: Debug + Send + Serializable + 'static + Sized {}
 pub trait MpcMessage: Message {}
 
 impl<V: Sendable> MpcMessage for V {}
-impl <V: Debug + Send + Serializable + 'static + Sized> Message for V {}
+impl<V: Debug + Send + Serializable + 'static + Sized> Message for V {}
 
 impl Serializable for PublicKey {
     type Size = typenum::U32;

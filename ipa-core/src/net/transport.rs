@@ -6,27 +6,23 @@ use std::{
 };
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::{Stream, TryFutureExt};
 use pin_project::{pin_project, pinned_drop};
 
 use crate::{
     config::{NetworkConfig, ServerConfig},
-    error::BoxError,
     helpers::{
         query::QueryConfig,
         routing::{Addr, RouteId},
-        ApiError, BodyStream, HandlerRef, HelperIdentity, HelperResponse, LogErrors, NoQueryId,
+        ApiError, BodyStream, HandlerRef, HelperIdentity, HelperResponse, NoQueryId,
         NoResourceIdentifier, NoStep, QueryIdBinding, ReceiveRecords, RequestHandler, RouteParams,
         StepBinding, StreamCollection, Transport,
     },
     net::{client::MpcHelperClient, error::Error, MpcHelperServer},
     protocol::{step::Gate, QueryId},
+    sharding::ShardIndex,
     sync::Arc,
 };
-use crate::sharding::ShardIndex;
-
-type LogHttpErrors = LogErrors<BodyStream, Bytes, BoxError>;
 
 /// HTTP transport for IPA helper service.
 /// TODO: rename to MPC
@@ -42,7 +38,6 @@ pub struct HttpTransport {
 /// Future HTTP transport for shard traffic
 #[derive(Clone, Default)]
 pub struct HttpShardTransport;
-
 
 impl RouteParams<RouteId, NoQueryId, NoStep> for QueryConfig {
     type Params = String;
@@ -245,11 +240,28 @@ impl Transport for HttpShardTransport {
         unimplemented!()
     }
 
-    async fn send<D, Q, S, R>(&self, _dest: Self::Identity, _route: R, _data: D) -> Result<(), Self::Error> where Option<QueryId>: From<Q>, Option<Gate>: From<S>, Q: QueryIdBinding, S: StepBinding, R: RouteParams<RouteId, Q, S>, D: Stream<Item=Vec<u8>> + Send + 'static {
+    async fn send<D, Q, S, R>(
+        &self,
+        _dest: Self::Identity,
+        _route: R,
+        _data: D,
+    ) -> Result<(), Self::Error>
+    where
+        Option<QueryId>: From<Q>,
+        Option<Gate>: From<S>,
+        Q: QueryIdBinding,
+        S: StepBinding,
+        R: RouteParams<RouteId, Q, S>,
+        D: Stream<Item = Vec<u8>> + Send + 'static,
+    {
         unimplemented!()
     }
 
-    fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(&self, _from: Self::Identity, _route: R) -> Self::RecordsStream {
+    fn receive<R: RouteParams<NoResourceIdentifier, QueryId, Gate>>(
+        &self,
+        _from: Self::Identity,
+        _route: R,
+    ) -> Self::RecordsStream {
         unimplemented!()
     }
 }

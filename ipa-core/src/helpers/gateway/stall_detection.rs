@@ -73,18 +73,14 @@ mod gateway {
     use super::{receive, send, AtomicUsize, Debug, Formatter, ObserveState, Observed, Weak};
     use crate::{
         helpers::{
-            gateway::{Gateway, State},
-            GatewayConfig, HelperChannelId, MpcMessage, MpcTransportImpl, ShardReceivingEnd, MpcReceivingEnd, Role,
-            RoleAssignment, SendingEnd, TotalRecords,
+            gateway::{Gateway, ShardTransportImpl, State},
+            GatewayConfig, HelperChannelId, Message, MpcMessage, MpcReceivingEnd, MpcTransportImpl,
+            Role, RoleAssignment, SendingEnd, ShardChannelId, ShardReceivingEnd, TotalRecords,
         },
         protocol::QueryId,
+        sharding::ShardIndex,
         sync::Arc,
     };
-    use crate::helpers::{Message, ShardChannelId};
-    use crate::helpers::gateway::ShardTransportImpl;
-    
-    
-    use crate::sharding::ShardIndex;
 
     pub struct InstrumentedGateway {
         gateway: Gateway,
@@ -160,26 +156,40 @@ mod gateway {
         ) -> SendingEnd<Role, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
-                self.inner().gateway.get_mpc_sender(channel_id, total_records),
+                self.inner()
+                    .gateway
+                    .get_mpc_sender(channel_id, total_records),
             )
         }
 
-        pub fn get_shard_sender<M: Message>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> SendingEnd<ShardIndex, M> {
+        pub fn get_shard_sender<M: Message>(
+            &self,
+            channel_id: &ShardChannelId,
+            total_records: TotalRecords,
+        ) -> SendingEnd<ShardIndex, M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
-                self.inner.gateway.get_shard_sender(&channel_id, total_records),
+                self.inner
+                    .gateway
+                    .get_shard_sender(&channel_id, total_records),
             )
         }
 
         #[must_use]
-        pub fn get_receiver<M: MpcMessage>(&self, channel_id: &HelperChannelId) -> MpcReceivingEnd<M> {
+        pub fn get_receiver<M: MpcMessage>(
+            &self,
+            channel_id: &HelperChannelId,
+        ) -> MpcReceivingEnd<M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_receiver(channel_id),
             )
         }
 
-        pub fn get_shard_receiver<M: Message>(&self, channel_id: &ShardChannelId) -> ShardReceivingEnd<M> {
+        pub fn get_shard_receiver<M: Message>(
+            &self,
+            channel_id: &ShardChannelId,
+        ) -> ShardReceivingEnd<M> {
             Observed::wrap(
                 Weak::clone(self.get_sn()),
                 self.inner().gateway.get_shard_receiver(channel_id),
@@ -222,13 +232,28 @@ mod gateway {
     }
 
     impl ObserveState for Weak<State> {
-        type State = GatewayWaitingTasks<send::WaitingTasks<Role>, send::WaitingTasks<ShardIndex>, receive::WaitingTasks<Role>, receive::WaitingTasks<ShardIndex>>;
+        type State = GatewayWaitingTasks<
+            send::WaitingTasks<Role>,
+            send::WaitingTasks<ShardIndex>,
+            receive::WaitingTasks<Role>,
+            receive::WaitingTasks<ShardIndex>,
+        >;
 
         fn get_state(&self) -> Option<Self::State> {
             self.upgrade().and_then(|state| {
-                match (state.mpc_senders.get_state(), state.shard_senders.get_state(), state.mpc_receivers.get_state(), state.shard_receivers.get_state()) {
+                match (
+                    state.mpc_senders.get_state(),
+                    state.shard_senders.get_state(),
+                    state.mpc_receivers.get_state(),
+                    state.shard_receivers.get_state(),
+                ) {
                     (None, None, None, None) => None,
-                    (mpc_senders_state, shard_senders_state, mpc_receivers_state, shard_receivers_state) => Some(Self::State {
+                    (
+                        mpc_senders_state,
+                        shard_senders_state,
+                        mpc_receivers_state,
+                        shard_receivers_state,
+                    ) => Some(Self::State {
                         mpc_senders_state,
                         shard_senders_state,
                         mpc_receivers_state,
@@ -244,24 +269,25 @@ mod receive {
     use std::{
         collections::BTreeMap,
         fmt::{Debug, Formatter},
+        pin::Pin,
+        task::{Context, Poll},
     };
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
+
     use futures::Stream;
 
     use super::{ObserveState, Observed};
     use crate::{
         helpers::{
             error::Error,
-            gateway::{receive::GatewayReceivers, MpcReceivingEnd}, MpcMessage, Role,
+            gateway::{
+                receive::{GatewayReceivers, ShardReceiveStream, ShardReceivingEnd, UR},
+                MpcReceivingEnd,
+            },
+            ChannelId, Message, MpcMessage, Role, TransportIdentity,
         },
         protocol::RecordId,
+        sharding::ShardIndex,
     };
-    use crate::helpers::gateway::receive::{ShardReceiveStream, UR};
-    
-    use crate::helpers::gateway::receive::ShardReceivingEnd;
-    use crate::helpers::{ChannelId, Message, TransportIdentity};
-    use crate::sharding::ShardIndex;
 
     impl<M: MpcMessage> Observed<MpcReceivingEnd<M>> {
         delegate::delegate! {
@@ -283,7 +309,7 @@ mod receive {
 
     pub struct WaitingTasks<I: TransportIdentity>(BTreeMap<ChannelId<I>, Vec<String>>);
 
-    impl <I: TransportIdentity> Debug for WaitingTasks<I> {
+    impl<I: TransportIdentity> Debug for WaitingTasks<I> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             for (channel, records) in &self.0 {
                 write!(
@@ -320,7 +346,10 @@ mod receive {
             let mut map = BTreeMap::default();
             for entry in &self.inner {
                 let channel = entry.key();
-                map.insert(channel.clone(), vec!["Shard receiver state is not implemented yet".to_string()]);
+                map.insert(
+                    channel.clone(),
+                    vec!["Shard receiver state is not implemented yet".to_string()],
+                );
             }
 
             (!map.is_empty()).then_some(WaitingTasks(map))
@@ -339,12 +368,11 @@ mod send {
     use crate::{
         helpers::{
             error::Error,
-            gateway::send::{GatewaySender, GatewaySenders}, TotalRecords,
+            gateway::send::{GatewaySender, GatewaySenders},
+            ChannelId, Message, TotalRecords, TransportIdentity,
         },
         protocol::RecordId,
     };
-    use crate::helpers::{ChannelId, Message, TransportIdentity};
-    
 
     impl<I: TransportIdentity, M: Message> Observed<crate::helpers::gateway::send::SendingEnd<I, M>> {
         delegate::delegate! {
@@ -357,7 +385,7 @@ mod send {
 
     pub struct WaitingTasks<I>(BTreeMap<ChannelId<I>, (TotalRecords, Vec<String>)>);
 
-    impl <I: TransportIdentity> Debug for WaitingTasks<I> {
+    impl<I: TransportIdentity> Debug for WaitingTasks<I> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             for (channel, (total, records)) in &self.0 {
                 write!(
@@ -371,7 +399,7 @@ mod send {
         }
     }
 
-    impl <I: TransportIdentity> ObserveState for GatewaySenders<I> {
+    impl<I: TransportIdentity> ObserveState for GatewaySenders<I> {
         type State = WaitingTasks<I>;
 
         fn get_state(&self) -> Option<Self::State> {
@@ -388,7 +416,7 @@ mod send {
         }
     }
 
-    impl <I: TransportIdentity> ObserveState for GatewaySender<I> {
+    impl<I: TransportIdentity> ObserveState for GatewaySender<I> {
         type State = Vec<String>;
 
         fn get_state(&self) -> Option<Self::State> {

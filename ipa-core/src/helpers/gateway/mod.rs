@@ -5,7 +5,6 @@ pub(super) mod stall_detection;
 mod transport;
 
 use std::num::NonZeroUsize;
-use crate::sync::{Arc, Mutex};
 
 pub(super) use receive::{MpcReceivingEnd, ShardReceivingEnd, UR};
 pub(super) use send::SendingEnd;
@@ -19,17 +18,17 @@ use crate::{
     helpers::{
         buffers::UnorderedReceiver,
         gateway::{
-            receive::GatewayReceivers, send::GatewaySenders,
+            receive::{GatewayReceivers, ShardReceiveStream},
+            send::GatewaySenders,
+            transport::Transports,
         },
-        HelperChannelId, MpcMessage, Role, RoleAssignment, TotalRecords, Transport,
+        HelperChannelId, HelperIdentity, LogErrors, Message, MpcMessage, RecordsStream, Role,
+        RoleAssignment, ShardChannelId, TotalRecords, Transport,
     },
     protocol::QueryId,
+    sharding::ShardIndex,
+    sync::{Arc, Mutex},
 };
-use crate::helpers::{HelperIdentity, LogErrors, Message, RecordsStream, ShardChannelId};
-use crate::helpers::gateway::receive::ShardReceiveStream;
-use crate::helpers::gateway::transport::Transports;
-
-use crate::sharding::ShardIndex;
 
 /// Alias for the currently configured transport.
 ///
@@ -61,7 +60,6 @@ pub struct Gateway {
     #[cfg(not(feature = "stall-detection"))]
     inner: State,
 }
-
 
 #[derive(Default)]
 pub struct State {
@@ -129,8 +127,13 @@ impl Gateway {
         total_records: TotalRecords,
     ) -> send::SendingEnd<Role, M> {
         let transport = &self.transports.mpc;
-        let channel = self.inner.mpc_senders
-            .get::<M, _>(&channel_id, transport, self.config.active_work(), &self.query_id, total_records);
+        let channel = self.inner.mpc_senders.get::<M, _>(
+            &channel_id,
+            transport,
+            self.config.active_work(),
+            &self.query_id,
+            total_records,
+        );
 
         send::SendingEnd::new(channel, transport.identity())
     }
@@ -142,10 +145,19 @@ impl Gateway {
     /// An example of such sensitive data could be secret sharings - it is perfectly fine to send them
     /// between shards as they are known to each helper anyway. Sending them across MPC helper boundary
     /// could lead to information reveal.
-    pub fn get_shard_sender<M: Message>(&self, channel_id: &ShardChannelId, total_records: TotalRecords) -> send::SendingEnd<ShardIndex, M> {
+    pub fn get_shard_sender<M: Message>(
+        &self,
+        channel_id: &ShardChannelId,
+        total_records: TotalRecords,
+    ) -> send::SendingEnd<ShardIndex, M> {
         let transport = &self.transports.shard;
-        let channel = self.inner.shard_senders
-            .get::<M, _>(&channel_id, transport, self.config.active_work(), &self.query_id, total_records);
+        let channel = self.inner.shard_senders.get::<M, _>(
+            &channel_id,
+            transport,
+            self.config.active_work(),
+            &self.query_id,
+            total_records,
+        );
 
         send::SendingEnd::new(channel, transport.identity())
     }
@@ -160,21 +172,28 @@ impl Gateway {
             channel_id.clone(),
             self.inner.mpc_receivers.get_or_create(channel_id, || {
                 UnorderedReceiver::new(
-                    Box::pin(LogErrors::new(
-                        self.transports.mpc
-                            .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
-                    )),
+                    Box::pin(LogErrors::new(self.transports.mpc.receive(
+                        channel_id.peer,
+                        (self.query_id, channel_id.gate.clone()),
+                    ))),
                     self.config.active_work(),
                 )
             }),
         )
     }
 
-    pub fn get_shard_receiver<M: Message>(&self, channel_id: &ShardChannelId) -> receive::ShardReceivingEnd<M> {
+    pub fn get_shard_receiver<M: Message>(
+        &self,
+        channel_id: &ShardChannelId,
+    ) -> receive::ShardReceivingEnd<M> {
         receive::ShardReceivingEnd {
             channel_id: channel_id.clone(),
             rx: RecordsStream::new(self.inner.shard_receivers.get_or_create(channel_id, || {
-                ShardReceiveStream(Arc::new(Mutex::new(self.transports.shard.receive(channel_id.peer, (self.query_id, channel_id.gate.clone())))))
+                ShardReceiveStream(Arc::new(Mutex::new(
+                    self.transports
+                        .shard
+                        .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
+                )))
             })),
         }
     }
@@ -219,20 +238,20 @@ impl GatewayConfig {
 mod tests {
     use std::iter::{repeat, zip};
 
-    use futures_util::future::{join, try_join, try_join_all};
-    use futures_util::{SinkExt, StreamExt};
+    use futures::{
+        future::{join, try_join, try_join_all},
+        stream::StreamExt,
+    };
 
     use crate::{
-        ff::{Fp31, Fp32BitPrime, Gf2, U128Conversions},
+        ff::{boolean_array::BA3, Fp31, Fp32BitPrime, Gf2, U128Conversions},
         helpers::{Direction, GatewayConfig, MpcMessage, Role, SendingEnd},
         protocol::{context::Context, RecordId},
-        test_fixture::{Runner, TestWorld, TestWorldConfig},
+        secret_sharing::replicated::semi_honest::AdditiveShare,
+        sharding::ShardConfiguration,
+        test_executor::run,
+        test_fixture::{Reconstruct, Runner, TestWorld, TestWorldConfig, WithShards},
     };
-    use crate::ff::boolean_array::BA3;
-    use crate::secret_sharing::replicated::semi_honest::AdditiveShare;
-    use crate::sharding::{ShardConfiguration};
-    use crate::test_executor::run;
-    use crate::test_fixture::{Reconstruct, WithShards};
 
     /// Verifies that [`Gateway`] send buffer capacity is adjusted to the message size.
     /// IPA protocol opens many channels to send values from different fields, while message size
@@ -293,8 +312,8 @@ mod tests {
                 channel.send(RecordId::from(1), Fp31::truncate_from(1_u128)),
                 channel.send(RecordId::from(0), Fp31::truncate_from(0_u128)),
             )
-                .await
-                .unwrap();
+            .await
+            .unwrap();
         });
 
         let recv_channel = recv_ctx.recv_channel::<Fp31>(Role::H1);
@@ -302,8 +321,8 @@ mod tests {
             recv_channel.receive(RecordId::from(1)),
             recv_channel.receive(RecordId::from(0)),
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         assert_eq!(
             (Fp31::truncate_from(1u128), Fp31::truncate_from(0u128)),
@@ -351,14 +370,14 @@ mod tests {
                             .unwrap();
                     })
                 }))
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
 
                 receive_handle.await.unwrap();
             })
         }))
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let _world = unsafe { Box::from_raw(world_ptr) };
     }
@@ -403,12 +422,12 @@ mod tests {
                         );
                     })
                 }))
-                    .await
-                    .unwrap();
+                .await
+                .unwrap();
             })
         }))
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let _world = unsafe { Box::from_raw(world_ptr) };
     }
@@ -417,10 +436,7 @@ mod tests {
     fn shards() {
         run(|| async move {
             let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
-            let input = vec![
-                BA3::truncate_from(0_u32),
-                BA3::truncate_from(1_u32)
-            ];
+            let input = vec![BA3::truncate_from(0_u32), BA3::truncate_from(1_u32)];
 
             let r = world
                 .semi_honest(input.clone().into_iter(), |ctx, input| async move {
@@ -430,7 +446,10 @@ mod tests {
                     // Swap shares between shards, works only for 2 shards.
                     let peer = ctx.peer_shards().next().unwrap();
                     for item in input {
-                        ctx.shard_send_channel(peer).send(record_id.into(), item).await.unwrap();
+                        ctx.shard_send_channel(peer)
+                            .send(record_id.into(), item)
+                            .await
+                            .unwrap();
                         record_id += 1;
                     }
 

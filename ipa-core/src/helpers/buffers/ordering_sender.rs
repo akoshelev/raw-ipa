@@ -14,6 +14,7 @@ use generic_array::GenericArray;
 use typenum::Unsigned;
 
 use crate::{
+    helpers::Message,
     sync::{
         atomic::{
             AtomicUsize,
@@ -22,7 +23,6 @@ use crate::{
         Mutex, MutexGuard,
     },
 };
-use crate::helpers::Message;
 
 /// The operating state for an `OrderingSender`.
 struct State {

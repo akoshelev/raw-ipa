@@ -7,14 +7,13 @@ use crate::{
         query::{PrepareQuery, QueryConfig, QueryInput},
         routing::{Addr, RouteId},
         ApiError, BodyStream, HandlerBox, HandlerRef, HelperIdentity, HelperResponse,
-        RequestHandler, Transport,
+        MpcTransportImpl, RequestHandler, ShardTransportImpl, Transport,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,
     query::{NewQueryError, QueryProcessor, QueryStatus},
     sync::Arc,
 };
-use crate::helpers::{MpcTransportImpl, ShardTransportImpl};
 
 pub struct Setup {
     query_processor: QueryProcessor,
@@ -57,11 +56,15 @@ impl Setup {
     }
 
     /// Instantiate [`HelperApp`] by connecting it to the provided transport implementation
-    pub fn connect(self, mpc_transport: MpcTransportImpl, shard_transport: ShardTransportImpl) -> HelperApp {
+    pub fn connect(
+        self,
+        mpc_transport: MpcTransportImpl,
+        shard_transport: ShardTransportImpl,
+    ) -> HelperApp {
         let app = Arc::new(Inner {
             query_processor: self.query_processor,
             mpc_transport,
-            shard_transport
+            shard_transport,
         });
         self.handler.set_handler(
             Arc::downgrade(&app) as Weak<dyn RequestHandler<Identity = HelperIdentity>>
@@ -83,7 +86,10 @@ impl HelperApp {
         Ok(self
             .inner
             .query_processor
-            .new_query(Transport::clone_ref(&self.inner.mpc_transport), query_config)
+            .new_query(
+                Transport::clone_ref(&self.inner.mpc_transport),
+                query_config,
+            )
             .await?
             .query_id)
     }

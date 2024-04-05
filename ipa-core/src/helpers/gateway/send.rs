@@ -9,25 +9,19 @@ use std::{
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
 use typenum::Unsigned;
-use crate::helpers::{Message, Transport};
 
 use crate::{
     helpers::{
-        buffers::OrderingSender, ChannelId, Error, TotalRecords,
-        TransportIdentity,
+        buffers::OrderingSender, routing::RouteId, ChannelId, Error, Message, TotalRecords,
+        Transport, TransportIdentity,
     },
-    protocol::RecordId,
+    protocol::{QueryId, RecordId},
     sync::Arc,
     telemetry::{
         labels::{ROLE, STEP},
         metrics::{BYTES_SENT, RECORDS_SENT},
     },
 };
-use crate::helpers::routing::RouteId;
-
-use crate::protocol::QueryId;
-
-
 
 /// Sending end of the gateway channel.
 pub struct SendingEnd<I: TransportIdentity, M> {
@@ -51,15 +45,15 @@ struct GatewaySendStream<I> {
     inner: Arc<GatewaySender<I>>,
 }
 
-impl <I: TransportIdentity> Default for GatewaySenders<I> {
+impl<I: TransportIdentity> Default for GatewaySenders<I> {
     fn default() -> Self {
         Self {
-            inner: DashMap::default()
+            inner: DashMap::default(),
         }
     }
 }
 
-impl <I: TransportIdentity> GatewaySender<I> {
+impl<I: TransportIdentity> GatewaySender<I> {
     fn new(channel_id: ChannelId<I>, tx: OrderingSender, total_records: TotalRecords) -> Self {
         Self {
             channel_id,
@@ -148,8 +142,7 @@ impl<I: TransportIdentity, M: Message> SendingEnd<I, M> {
     }
 }
 
-impl <I: TransportIdentity> GatewaySenders<I> {
-
+impl<I: TransportIdentity> GatewaySenders<I> {
     /// Returns a communication channel for the given [`ChannelId`]. If it does not exist, it will
     /// be created using the provided [`Transport`] implementation.
     pub fn get<M: Message, T: Transport<Identity = I>>(
@@ -176,13 +169,13 @@ impl <I: TransportIdentity> GatewaySenders<I> {
                     let ChannelId { peer, gate } = channel_id.clone();
                     let query_id = query_id.clone();
                     let transport = transport.clone();
-                    let stream = GatewaySendStream { inner: Arc::clone(&sender) };
+                    let stream = GatewaySendStream {
+                        inner: Arc::clone(&sender),
+                    };
                     async move {
                         // TODO(651): In the HTTP case we probably need more robust error handling here.
                         transport
-                            .send(peer, (RouteId::Records, query_id, gate),
-                                  stream,
-                            )
+                            .send(peer, (RouteId::Records, query_id, gate), stream)
                             .await
                             .expect("{channel_id:?} receiving end should be accepted by transport");
                     }
@@ -193,7 +186,11 @@ impl <I: TransportIdentity> GatewaySenders<I> {
         }
     }
 
-    fn new_sender<M: Message>(capacity: NonZeroUsize, channel_id: ChannelId<I>, total_records: TotalRecords) -> Arc<GatewaySender<I>> {
+    fn new_sender<M: Message>(
+        capacity: NonZeroUsize,
+        channel_id: ChannelId<I>,
+        total_records: TotalRecords,
+    ) -> Arc<GatewaySender<I>> {
         // Spare buffer is not required when messages have uniform size and buffer is a
         // multiple of that size.
         const SPARE: usize = 0;
@@ -223,7 +220,7 @@ impl <I: TransportIdentity> GatewaySenders<I> {
     }
 }
 
-impl <I> Stream for GatewaySendStream<I> {
+impl<I> Stream for GatewaySendStream<I> {
     type Item = Vec<u8>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

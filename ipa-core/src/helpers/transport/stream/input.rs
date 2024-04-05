@@ -15,7 +15,6 @@ use futures::{
     stream::{iter, once, Fuse, FusedStream, Iter, Map, Once},
     Stream, StreamExt,
 };
-use futures_util::TryStreamExt;
 use generic_array::GenericArray;
 use pin_project::pin_project;
 use typenum::{Unsigned, U2};
@@ -120,7 +119,8 @@ impl BufDeque {
     ///
     /// Returns `None` if there is insufficient data available, and an error if deserialization fails.
     fn try_read<T: Serializable>(&mut self) -> Option<Result<T, T::DeserializationError>> {
-        self.read_bytes(T::Size::USIZE).map(|bytes| T::deserialize(GenericArray::from_slice(&bytes)))
+        self.read_bytes(T::Size::USIZE)
+            .map(|bytes| T::deserialize(GenericArray::from_slice(&bytes)))
     }
 
     /// Update the buffer with the result of polling a stream.
@@ -164,7 +164,9 @@ enum ExtendResult {
 pub trait StreamMode {
     type Output<T: Serializable>;
 
-    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>>;
+    fn read_from<T: Serializable>(
+        buf: &mut BufDeque,
+    ) -> Option<Result<Self::Output<T>, T::DeserializationError>>;
 }
 
 pub struct SingleRecord;
@@ -173,14 +175,18 @@ pub struct MultipleRecords;
 impl StreamMode for SingleRecord {
     type Output<T: Serializable> = T;
 
-    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
+    fn read_from<T: Serializable>(
+        buf: &mut BufDeque,
+    ) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
         buf.try_read()
     }
 }
 impl StreamMode for MultipleRecords {
     type Output<T: Serializable> = Vec<T>;
 
-    fn read_from<T: Serializable>(buf: &mut BufDeque) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
+    fn read_from<T: Serializable>(
+        buf: &mut BufDeque,
+    ) -> Option<Result<Self::Output<T>, T::DeserializationError>> {
         let count = max(1, buf.contiguous_len() / T::Size::USIZE);
         buf.read_multi(count)
     }
@@ -228,7 +234,7 @@ impl<T, S, M> Stream for RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
-    M: StreamMode
+    M: StreamMode,
 {
     type Item = Result<M::Output<T>, crate::error::Error>;
 
@@ -236,7 +242,9 @@ where
         let mut this = self.project();
         loop {
             if let Some(v) = M::read_from(this.buffer) {
-                return Poll::Ready(Some(v.map_err(|e: T::DeserializationError| crate::error::Error::ParseError(e.into()))))
+                return Poll::Ready(Some(v.map_err(|e: T::DeserializationError| {
+                    crate::error::Error::ParseError(e.into())
+                })));
             }
 
             // We need more data, poll the stream

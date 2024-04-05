@@ -15,11 +15,10 @@ use ipa_core::{
     config::{hpke_registry, HpkeServerConfig, NetworkConfig, ServerConfig, TlsConfig},
     error::BoxError,
     helpers::HelperIdentity,
-    net::{ClientIdentity, HttpTransport, MpcHelperClient},
+    net::{ClientIdentity, HttpShardTransport, HttpTransport, MpcHelperClient},
     AppSetup,
 };
 use tracing::{error, info};
-use ipa_core::net::HttpShardTransport;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]

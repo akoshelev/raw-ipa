@@ -7,7 +7,7 @@ use crate::{
     ff::Serializable,
     helpers::{
         query::{QueryConfig, QueryInput},
-        ApiError, InMemoryMpcNetwork,
+        ApiError, InMemoryMpcNetwork, InMemoryShardNetwork, Transport,
     },
     protocol::QueryId,
     query::QueryStatus,
@@ -15,7 +15,6 @@ use crate::{
     test_fixture::try_join3_array,
     AppSetup, HelperApp,
 };
-use crate::helpers::{InMemoryShardNetwork, Transport};
 
 pub trait IntoBuf {
     fn into_buf(self) -> Vec<u8>;
@@ -75,7 +74,11 @@ impl Default for TestApp {
             .ok()
             .unwrap();
 
-        Self { drivers, mpc_network, shard_network }
+        Self {
+            drivers,
+            mpc_network,
+            shard_network,
+        }
     }
 }
 

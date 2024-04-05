@@ -5,9 +5,8 @@ use std::{
 
 use bytes::Bytes;
 use futures::{stream::StreamExt, Stream};
-use crate::helpers::BytesStream;
 
-use crate::helpers::transport::stream::BoxBytesStream;
+use crate::helpers::{transport::stream::BoxBytesStream, BytesStream};
 
 pub struct WrappedBoxBodyStream(BoxBytesStream);
 

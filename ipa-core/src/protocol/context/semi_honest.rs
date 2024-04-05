@@ -11,7 +11,10 @@ use ipa_macros::Step;
 use super::{Context as SuperContext, UpgradeContext, UpgradeToMalicious};
 use crate::{
     error::Error,
-    helpers::{Gateway, MpcMessage, MpcReceivingEnd, Role, SendingEnd, TotalRecords},
+    helpers::{
+        Gateway, Message, MpcMessage, MpcReceivingEnd, Role, SendingEnd, ShardReceivingEnd,
+        TotalRecords,
+    },
     protocol::{
         basics::{ShareKnownValue, ZeroPositions},
         context::{
@@ -29,8 +32,6 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::helpers::{Message, ShardReceivingEnd};
-
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {

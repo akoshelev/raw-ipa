@@ -1,4 +1,3 @@
-mod routing;
 mod sharding;
 mod transport;
 

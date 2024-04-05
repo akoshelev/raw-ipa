@@ -228,7 +228,10 @@ where
 
     /// Poll for the next record.  This should only be invoked when
     /// the future for the next message is polled.
-    fn poll_next<M: MpcMessage>(&mut self, cx: &mut Context<'_>) -> Poll<Result<M, ReceiveError<M>>> {
+    fn poll_next<M: MpcMessage>(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<M, ReceiveError<M>>> {
         self.max_polled_idx = std::cmp::max(self.max_polled_idx, self.next);
         if let Some(m) = self.spare.read() {
             self.wake_next();

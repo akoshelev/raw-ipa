@@ -12,10 +12,9 @@ use crate::{
     error::BoxError,
     helpers::{
         transport::stream::{StreamCollection, StreamKey},
-        TransportIdentity,
+        BytesStream, TransportIdentity,
     },
 };
-use crate::helpers::BytesStream;
 
 /// Adapt a stream of `Result<T: Into<Vec<u8>>, Error>` to a stream of `Vec<u8>`.
 ///
@@ -85,8 +84,7 @@ impl<I, S> ReceiveRecords<I, S> {
     }
 }
 
-impl <I: TransportIdentity, S: BytesStream> ReceiveRecords<I, S> {
-
+impl<I: TransportIdentity, S: BytesStream> ReceiveRecords<I, S> {
     /// Converts this into a stream that yields owned byte chunks.
     ///
     /// ## Panics
