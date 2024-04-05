@@ -140,6 +140,7 @@ impl<const SHARDS: usize> WithShards<SHARDS> {
     /// for a single shard.
     ///
     /// It uses Round-robin strategy to distribute [`A`] across [`SHARDS`]
+    #[must_use]
     pub fn shard<A>(input: Vec<A>) -> [Vec<A>; SHARDS] {
         let mut r: [_; SHARDS] = from_fn(|_| Vec::new());
         for (i, share) in input.into_iter().enumerate() {

@@ -462,7 +462,7 @@ mod tests {
                 .send(to, (RouteId::Records, QueryId, gate.clone()), stream)
                 .await
                 .unwrap();
-            stream_tx.send(vec![1, 2, 3].into()).await.unwrap();
+            stream_tx.send(vec![1, 2, 3]).await.unwrap();
             assert_eq!(vec![1, 2, 3], recv.next().await.unwrap());
             assert!(matches!(
                 poll_immediate(&mut recv).next().await,

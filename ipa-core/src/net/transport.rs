@@ -270,6 +270,7 @@ impl Transport for HttpShardTransport {
 mod tests {
     use std::{iter::zip, net::TcpListener, task::Poll};
 
+    use bytes::Bytes;
     use futures::stream::{poll_immediate, StreamExt};
     use futures_util::future::{join_all, try_join_all};
     use generic_array::GenericArray;
@@ -310,8 +311,9 @@ mod tests {
         Arc::clone(&transport).receive_stream(QueryId, STEP.clone(), HelperIdentity::TWO, body);
 
         // Request step data reception (normally called by protocol)
-        let mut stream =
-            Arc::clone(&transport).receive(HelperIdentity::TWO, (QueryId, STEP.clone()));
+        let mut stream = Arc::clone(&transport)
+            .receive(HelperIdentity::TWO, (QueryId, STEP.clone()))
+            .into_bytes_stream();
 
         // make sure it is not ready as it hasn't received any data yet.
         assert!(matches!(
@@ -363,7 +365,7 @@ mod tests {
                     );
                     server.start_on(Some(socket), ()).await;
 
-                    setup.connect(transport, HttpShardTransport::default())
+                    setup.connect(transport, HttpShardTransport)
                 },
             ),
         )

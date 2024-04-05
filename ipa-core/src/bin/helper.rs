@@ -158,7 +158,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
         Some(handler),
     );
 
-    let _app = setup.connect(transport.clone(), HttpShardTransport::default());
+    let _app = setup.connect(transport.clone(), HttpShardTransport);
 
     let listener = args.server_socket_fd
         .map(|fd| {

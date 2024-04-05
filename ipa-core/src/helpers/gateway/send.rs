@@ -8,6 +8,8 @@ use std::{
 
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::Stream;
+#[cfg(all(test, feature = "shuttle"))]
+use shuttle::future as tokio;
 use typenum::Unsigned;
 
 use crate::{
@@ -150,7 +152,7 @@ impl<I: TransportIdentity> GatewaySenders<I> {
         channel_id: &ChannelId<I>,
         transport: &T,
         capacity: NonZeroUsize,
-        query_id: &QueryId,
+        query_id: QueryId,
         total_records: TotalRecords, // TODO track children for indeterminate senders
     ) -> Arc<GatewaySender<I>> {
         assert!(
@@ -167,7 +169,6 @@ impl<I: TransportIdentity> GatewaySenders<I> {
 
                 tokio::spawn({
                     let ChannelId { peer, gate } = channel_id.clone();
-                    let query_id = query_id.clone();
                     let transport = transport.clone();
                     let stream = GatewaySendStream {
                         inner: Arc::clone(&sender),
@@ -210,13 +211,11 @@ impl<I: TransportIdentity> GatewaySenders<I> {
                 .expect("capacity should not overflow")
         };
 
-        let sender = Arc::new(GatewaySender::new(
+        Arc::new(GatewaySender::new(
             channel_id,
             OrderingSender::new(write_size, SPARE),
             total_records,
-        ));
-
-        sender
+        ))
     }
 }
 

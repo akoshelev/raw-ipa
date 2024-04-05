@@ -8,8 +8,6 @@ use std::num::NonZeroUsize;
 
 pub(super) use receive::{MpcReceivingEnd, ShardReceivingEnd, UR};
 pub(super) use send::SendingEnd;
-#[cfg(all(test, feature = "shuttle"))]
-use shuttle::future as tokio;
 #[cfg(feature = "stall-detection")]
 pub(super) use stall_detection::InstrumentedGateway;
 pub use transport::RoleResolvingTransport;
@@ -22,8 +20,8 @@ use crate::{
             send::GatewaySenders,
             transport::Transports,
         },
-        HelperChannelId, HelperIdentity, LogErrors, Message, MpcMessage, RecordsStream, Role,
-        RoleAssignment, ShardChannelId, TotalRecords, Transport,
+        HelperChannelId, LogErrors, Message, MpcMessage, RecordsStream, Role, RoleAssignment,
+        ShardChannelId, TotalRecords, Transport,
     },
     protocol::QueryId,
     sharding::ShardIndex,
@@ -37,7 +35,7 @@ use crate::{
 #[cfg(feature = "in-memory-infra")]
 pub type TransportImpl<I> = super::transport::InMemoryTransport<I>;
 #[cfg(feature = "in-memory-infra")]
-pub type MpcTransportImpl = TransportImpl<HelperIdentity>;
+pub type MpcTransportImpl = TransportImpl<crate::helpers::HelperIdentity>;
 #[cfg(feature = "in-memory-infra")]
 pub type ShardTransportImpl = TransportImpl<ShardIndex>;
 
@@ -141,10 +139,10 @@ impl Gateway {
     ) -> send::SendingEnd<Role, M> {
         let transport = &self.transports.mpc;
         let channel = self.inner.mpc_senders.get::<M, _>(
-            &channel_id,
+            channel_id,
             transport,
             self.config.active_work(),
-            &self.query_id,
+            self.query_id,
             total_records,
         );
 
@@ -165,10 +163,10 @@ impl Gateway {
     ) -> send::SendingEnd<ShardIndex, M> {
         let transport = &self.transports.shard;
         let channel = self.inner.shard_senders.get::<M, _>(
-            &channel_id,
+            channel_id,
             transport,
             self.config.active_work(),
-            &self.query_id,
+            self.query_id,
             total_records,
         );
 
@@ -453,16 +451,13 @@ mod tests {
             let r = world
                 .semi_honest(input.clone().into_iter(), |ctx, input| async move {
                     let ctx = ctx.set_total_records(input.len());
-                    let mut record_id = 0;
-
                     // Swap shares between shards, works only for 2 shards.
                     let peer = ctx.peer_shards().next().unwrap();
-                    for item in input {
+                    for (record_id, item) in input.into_iter().enumerate() {
                         ctx.shard_send_channel(peer)
                             .send(record_id.into(), item)
                             .await
                             .unwrap();
-                        record_id += 1;
                     }
 
                     let mut r = Vec::<AdditiveShare<BA3>>::new();
@@ -478,7 +473,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(input.into_iter().rev().collect::<Vec<_>>(), r);
-        })
+        });
     }
 
     fn make_world() -> (&'static TestWorld, *mut TestWorld) {
