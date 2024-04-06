@@ -161,7 +161,7 @@ enum ExtendResult {
     Error(io::Error),
 }
 
-pub trait StreamMode {
+pub trait Mode {
     type Output<T: Serializable>;
 
     fn read_from<T: Serializable>(
@@ -169,10 +169,13 @@ pub trait StreamMode {
     ) -> Option<Result<Self::Output<T>, T::DeserializationError>>;
 }
 
-pub struct SingleRecord;
-pub struct MultipleRecords;
+/// Makes [`RecordsStream`] return one record per poll.
+pub struct Single;
 
-impl StreamMode for SingleRecord {
+/// Makes [`RecordsStream`] return a vector of elements per poll.
+pub struct Batch;
+
+impl Mode for Single {
     type Output<T: Serializable> = T;
 
     fn read_from<T: Serializable>(
@@ -181,7 +184,7 @@ impl StreamMode for SingleRecord {
         buf.try_read()
     }
 }
-impl StreamMode for MultipleRecords {
+impl Mode for Batch {
     type Output<T: Serializable> = Vec<T>;
 
     fn read_from<T: Serializable>(
@@ -192,15 +195,13 @@ impl StreamMode for MultipleRecords {
     }
 }
 
-pub type SingleRecordStream<T, S> = RecordsStream<T, S, SingleRecord>;
-
 /// Parse a [`Stream`] of bytes into a stream of records of some
 /// fixed-length-[`Serializable`] type `T`.
 ///
 /// Depending on `M`, the provided stream can yield a single record `T` or multiples of `T`. See
-/// [`SingleRecord`], [`MultipleRecords`] and [`StreamMode`].
+/// [`Single`], [`Batch`] and [`Mode`]
 #[pin_project]
-pub struct RecordsStream<T, S, M: StreamMode = MultipleRecords>
+pub struct RecordsStream<T, S, M: Mode = Batch>
 where
     S: BytesStream,
     T: Serializable,
@@ -215,7 +216,9 @@ where
     phantom_data: PhantomData<(T, M)>,
 }
 
-impl<T, S, M: StreamMode> RecordsStream<T, S, M>
+pub type SingleRecordStream<T, S> = RecordsStream<T, S, Single>;
+
+impl<T, S, M: Mode> RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
@@ -234,7 +237,7 @@ impl<T, S, M> Stream for RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
-    M: StreamMode,
+    M: Mode,
 {
     type Item = Result<M::Output<T>, crate::error::Error>;
 
@@ -261,20 +264,22 @@ where
     }
 }
 
-impl<T, S> FusedStream for RecordsStream<T, S>
+impl<T, S, M> FusedStream for RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
+    M: Mode,
 {
     fn is_terminated(&self) -> bool {
         self.stream.is_terminated()
     }
 }
 
-impl<T, S> Debug for RecordsStream<T, S>
+impl<T, S, M> Debug for RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
+    M: Mode,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -291,13 +296,14 @@ impl<T: Serializable> From<Vec<u8>> for RecordsStream<T, Once<Ready<Result<Bytes
     }
 }
 
-impl<T, Buf, I> From<I>
-    for RecordsStream<T, Map<Iter<I::IntoIter>, fn(Buf) -> Result<Bytes, BoxError>>>
+impl<T, Buf, I, M> From<I>
+    for RecordsStream<T, Map<Iter<I::IntoIter>, fn(Buf) -> Result<Bytes, BoxError>>, M>
 where
     T: Serializable,
     Buf: Into<Bytes>,
     I: IntoIterator<Item = Buf>,
     <I as IntoIterator>::IntoIter: Send,
+    M: Mode,
 {
     fn from(value: I) -> Self {
         RecordsStream::new(iter(value).map(|buf| Ok(buf.into())))
@@ -641,6 +647,41 @@ mod test {
         }
     }
 
+    mod single_record {
+        use std::iter;
+
+        use bytes::Bytes;
+        use futures_util::{FutureExt, StreamExt, TryStreamExt};
+
+        use crate::{
+            ff::{Fp31, Fp32BitPrime},
+            helpers::{transport::stream::input::Single, RecordsStream},
+            secret_sharing::SharedValue,
+        };
+
+        #[tokio::test]
+        async fn fp31() {
+            let vec = vec![3; 10];
+            let stream = RecordsStream::<Fp31, _, Single>::from(iter::once(Bytes::from(vec)));
+            let collected = stream.try_collect::<Vec<Fp31>>().await.unwrap();
+
+            assert_eq!(collected, vec![Fp31::try_from(3).unwrap(); 10]);
+        }
+
+        #[tokio::test]
+        #[should_panic(expected = "stream terminated with 3 extra bytes")]
+        async fn fp32_bit() {
+            let vec = vec![0; 7];
+            let mut stream =
+                RecordsStream::<Fp32BitPrime, _, Single>::from(iter::once(Bytes::from(vec)));
+            assert_eq!(
+                Fp32BitPrime::ZERO,
+                stream.next().now_or_never().flatten().unwrap().unwrap()
+            );
+            stream.next().now_or_never().flatten().unwrap().unwrap();
+        }
+    }
+
     mod delimited {
         use futures::TryStreamExt;
 
@@ -762,13 +803,27 @@ mod test {
 
         proptest::proptest! {
             #[test]
-            fn test_records_stream_works_with_any_chunks(
+            fn batch_test_records_stream_works_with_any_chunks(
                 (expected_bytes, chunked_bytes, _seed) in arb_expected_and_chunked_body(100)
             ) {
                 tokio::runtime::Runtime::new().unwrap().block_on(async {
                     // flatten the chunks to compare with expected
                     let collected_bytes = RecordsStream::<TestField, _>::from(chunked_bytes)
                         .try_concat()
+                        .await
+                        .unwrap();
+
+                    assert_eq!(collected_bytes, expected_bytes);
+                });
+            }
+
+            #[test]
+            fn single_test_records_stream_works_with_any_chunks(
+                (expected_bytes, chunked_bytes, _seed) in arb_expected_and_chunked_body(100)
+            ) {
+                tokio::runtime::Runtime::new().unwrap().block_on(async {
+                    let collected_bytes = RecordsStream::<TestField, _, Single>::from(chunked_bytes)
+                        .try_collect::<Vec<_>>()
                         .await
                         .unwrap();
 
