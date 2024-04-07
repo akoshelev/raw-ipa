@@ -39,25 +39,9 @@ pub struct ShardReceivingEnd<M: Message> {
     pub(super) rx: SingleRecordStream<M, ShardReceiveStream>,
 }
 
-impl<M: Message> Stream for ShardReceivingEnd<M> {
-    type Item = Result<M, crate::error::Error>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().rx.poll_next(cx)
-    }
-}
-
 /// Receiving channels, indexed by (role, step).
 pub(super) struct GatewayReceivers<I, S> {
     pub(super) inner: DashMap<ChannelId<I>, S>,
-}
-
-impl<I: TransportIdentity, S> Default for GatewayReceivers<I, S> {
-    fn default() -> Self {
-        Self {
-            inner: DashMap::default(),
-        }
-    }
 }
 
 pub type UR = UnorderedReceiver<
@@ -65,18 +49,11 @@ pub type UR = UnorderedReceiver<
     Vec<u8>,
 >;
 
+/// Stream of records received from a peer shard.
 #[derive(Clone)]
 pub struct ShardReceiveStream(
     pub(super) Arc<Mutex<<ShardTransportImpl as Transport>::RecordsStream>>,
 );
-
-impl Stream for ShardReceiveStream {
-    type Item = <<ShardTransportImpl as Transport>::RecordsStream as Stream>::Item;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(self.0.lock().unwrap()).as_mut().poll_next(cx)
-    }
-}
 
 impl<M: MpcMessage> MpcReceivingEnd<M> {
     pub(super) fn new(channel_id: HelperChannelId, rx: UR) -> Self {
@@ -109,6 +86,22 @@ impl<M: MpcMessage> MpcReceivingEnd<M> {
     }
 }
 
+impl<M: Message> Stream for ShardReceivingEnd<M> {
+    type Item = Result<M, crate::error::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().rx.poll_next(cx)
+    }
+}
+
+impl<I: TransportIdentity, S> Default for GatewayReceivers<I, S> {
+    fn default() -> Self {
+        Self {
+            inner: DashMap::default(),
+        }
+    }
+}
+
 impl<I: TransportIdentity, S: Clone> GatewayReceivers<I, S> {
     pub fn get_or_create<F: FnOnce() -> S>(&self, channel_id: &ChannelId<I>, ctr: F) -> S {
         // TODO: raw entry API if it becomes available to avoid cloning the key
@@ -121,5 +114,13 @@ impl<I: TransportIdentity, S: Clone> GatewayReceivers<I, S> {
                 stream
             }
         }
+    }
+}
+
+impl Stream for ShardReceiveStream {
+    type Item = <<ShardTransportImpl as Transport>::RecordsStream as Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(self.0.lock().unwrap()).as_mut().poll_next(cx)
     }
 }

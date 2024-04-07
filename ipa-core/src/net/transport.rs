@@ -35,7 +35,7 @@ pub struct HttpTransport {
     handler: Option<HandlerRef>,
 }
 
-/// Future HTTP transport for shard traffic
+/// A stub for HTTP transport implementation, suitable for serviing inter-shard traffic
 #[derive(Clone, Default)]
 pub struct HttpShardTransport;
 

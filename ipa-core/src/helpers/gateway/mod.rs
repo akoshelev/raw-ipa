@@ -6,7 +6,7 @@ mod transport;
 
 use std::num::NonZeroUsize;
 
-pub(super) use receive::{MpcReceivingEnd, ShardReceivingEnd, UR};
+pub(super) use receive::{MpcReceivingEnd, ShardReceivingEnd};
 pub(super) use send::SendingEnd;
 #[cfg(feature = "stall-detection")]
 pub(super) use stall_detection::InstrumentedGateway;
@@ -16,7 +16,7 @@ use crate::{
     helpers::{
         buffers::UnorderedReceiver,
         gateway::{
-            receive::{GatewayReceivers, ShardReceiveStream},
+            receive::{GatewayReceivers, ShardReceiveStream, UR},
             send::GatewaySenders,
             transport::Transports,
         },
@@ -33,20 +33,20 @@ use crate::{
 /// To avoid proliferation of type parameters, most code references this concrete type alias, rather
 /// than a type parameter `T: Transport`.
 #[cfg(feature = "in-memory-infra")]
-pub type TransportImpl<I> = super::transport::InMemoryTransport<I>;
+type TransportImpl<I> = super::transport::InMemoryTransport<I>;
 #[cfg(feature = "in-memory-infra")]
 pub type MpcTransportImpl = TransportImpl<crate::helpers::HelperIdentity>;
 #[cfg(feature = "in-memory-infra")]
 pub type ShardTransportImpl = TransportImpl<ShardIndex>;
 
 #[cfg(feature = "real-world-infra")]
-pub type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
+type TransportImpl = crate::sync::Arc<crate::net::HttpTransport>;
 #[cfg(feature = "real-world-infra")]
 pub type MpcTransportImpl = TransportImpl;
 #[cfg(feature = "real-world-infra")]
 pub type ShardTransportImpl = crate::net::HttpShardTransport;
 
-pub type TransportError = <MpcTransportImpl as Transport>::Error;
+pub type MpcTransportError = <MpcTransportImpl as Transport>::Error;
 
 /// Gateway into IPA Network infrastructure. It allows helpers send and receive messages.
 pub struct Gateway {
@@ -62,8 +62,8 @@ pub struct Gateway {
 #[derive(Default)]
 pub struct State {
     mpc_senders: GatewaySenders<Role>,
-    shard_senders: GatewaySenders<ShardIndex>,
     mpc_receivers: GatewayReceivers<Role, UR>,
+    shard_senders: GatewaySenders<ShardIndex>,
     shard_receivers: GatewayReceivers<ShardIndex, ShardReceiveStream>,
 }
 
@@ -192,19 +192,30 @@ impl Gateway {
         )
     }
 
+    /// Requests a stream of records to be received from the given shard. In contrast with
+    /// [`Self::get_mpc_receiver`] stream, items in this stream are available in FIFO order only.
     pub fn get_shard_receiver<M: Message>(
         &self,
         channel_id: &ShardChannelId,
     ) -> receive::ShardReceivingEnd<M> {
+        let mut called_before = true;
+        let rx = self.inner.shard_receivers.get_or_create(channel_id, || {
+            called_before = false;
+            ShardReceiveStream(Arc::new(Mutex::new(
+                self.transports
+                    .shard
+                    .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
+            )))
+        });
+
+        assert!(
+            !called_before,
+            "Shard receiver {channel_id:?} can only be created once"
+        );
+
         receive::ShardReceivingEnd {
             channel_id: channel_id.clone(),
-            rx: RecordsStream::new(self.inner.shard_receivers.get_or_create(channel_id, || {
-                ShardReceiveStream(Arc::new(Mutex::new(
-                    self.transports
-                        .shard
-                        .receive(channel_id.peer, (self.query_id, channel_id.gate.clone())),
-                )))
-            })),
+            rx: RecordsStream::new(rx),
         }
     }
 }
@@ -451,11 +462,21 @@ mod tests {
     }
 
     #[test]
-    fn shards_twice() {
+    #[should_panic(
+        expected = "Shard receiver channel[ShardIndex(1),\"protocol/iter0\"] can only be created once"
+    )]
+    fn shards_receive_twice() {
         run(|| async move {
             let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
-            shard_comms_test(&world).await;
-            shard_comms_test(&world).await;
+            world
+                .semi_honest(Vec::<()>::new().into_iter(), |ctx, _| async move {
+                    let peer = ctx.peer_shards().next().unwrap();
+                    let recv1 = ctx.shard_recv_channel::<BA3>(peer);
+                    let recv2 = ctx.shard_recv_channel::<BA3>(peer);
+                    drop(recv1);
+                    drop(recv2);
+                })
+                .await;
         });
     }
 
@@ -475,7 +496,8 @@ mod tests {
                 }
 
                 let mut r = Vec::<AdditiveShare<BA3>>::new();
-                while let Some(v) = ctx.shard_recv_channel(peer).next().await {
+                let mut recv_channel = ctx.shard_recv_channel(peer);
+                while let Some(v) = recv_channel.next().await {
                     r.push(v.unwrap());
                 }
 
@@ -486,7 +508,8 @@ mod tests {
             .flat_map(|v| v.reconstruct())
             .collect::<Vec<_>>();
 
-        assert_eq!(input.into_iter().rev().collect::<Vec<_>>(), r);
+        let reverse_input = input.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(reverse_input, r);
     }
 
     fn make_world() -> (&'static TestWorld, *mut TestWorld) {

@@ -205,23 +205,23 @@ mod gateway {
         }
     }
 
-    pub struct GatewayWaitingTasks<MS, SS, MR, SR> {
+    pub struct GatewayWaitingTasks<MS, MR, SS, SR> {
         mpc_send: Option<MS>,
-        shard_send: Option<SS>,
         mpc_recv: Option<MR>,
+        shard_send: Option<SS>,
         shard_recv: Option<SR>,
     }
 
-    impl<MS: Debug, SS: Debug, MR: Debug, SR: Debug> Debug for GatewayWaitingTasks<MS, SS, MR, SR> {
+    impl<MS: Debug, MR: Debug, SS: Debug, SR: Debug> Debug for GatewayWaitingTasks<MS, MR, SS, SR> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             if let Some(senders_state) = &self.mpc_send {
                 write!(f, "\n{{{senders_state:?}\n}}")?;
             }
-            if let Some(senders_state) = &self.shard_send {
-                write!(f, "\n{{{senders_state:?}\n}}")?;
-            }
             if let Some(receivers_state) = &self.mpc_recv {
                 write!(f, "\n{{{receivers_state:?}\n}}")?;
+            }
+            if let Some(senders_state) = &self.shard_send {
+                write!(f, "\n{{{senders_state:?}\n}}")?;
             }
             if let Some(receivers_state) = &self.shard_recv {
                 write!(f, "\n{{{receivers_state:?}\n}}")?;
@@ -234,8 +234,8 @@ mod gateway {
     impl ObserveState for Weak<State> {
         type State = GatewayWaitingTasks<
             send::WaitingTasks<Role>,
-            send::WaitingTasks<ShardIndex>,
             receive::WaitingTasks<Role>,
+            send::WaitingTasks<ShardIndex>,
             receive::WaitingTasks<ShardIndex>,
         >;
 
@@ -243,15 +243,15 @@ mod gateway {
             self.upgrade().and_then(|state| {
                 match (
                     state.mpc_senders.get_state(),
-                    state.shard_senders.get_state(),
                     state.mpc_receivers.get_state(),
+                    state.shard_senders.get_state(),
                     state.shard_receivers.get_state(),
                 ) {
                     (None, None, None, None) => None,
-                    (mpc_send, shard_send, mpc_recv, shard_recv) => Some(Self::State {
+                    (mpc_send, mpc_recv, shard_send, shard_recv) => Some(Self::State {
                         mpc_send,
-                        shard_send,
                         mpc_recv,
+                        shard_send,
                         shard_recv,
                     }),
                 }

@@ -201,10 +201,11 @@ impl Mode for Batch {
 /// Depending on `M`, the provided stream can yield a single record `T` or multiples of `T`. See
 /// [`Single`], [`Batch`] and [`Mode`]
 #[pin_project]
-pub struct RecordsStream<T, S, M: Mode = Batch>
+pub struct RecordsStream<T, S, M = Batch>
 where
     S: BytesStream,
     T: Serializable,
+    M: Mode,
 {
     // Our implementation of `poll_next` turns a `None` from the inner stream into `Some(Err(_))` if
     // there is extra trailing data. We do not expect to be polled again after that happens, but
@@ -218,10 +219,11 @@ where
 
 pub type SingleRecordStream<T, S> = RecordsStream<T, S, Single>;
 
-impl<T, S, M: Mode> RecordsStream<T, S, M>
+impl<T, S, M> RecordsStream<T, S, M>
 where
     S: BytesStream,
     T: Serializable,
+    M: Mode,
 {
     #[must_use]
     pub fn new(stream: S) -> Self {

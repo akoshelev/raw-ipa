@@ -9,8 +9,8 @@ use crate::{
     error::Error as ProtocolError,
     helpers::{
         query::{PrepareQuery, QueryConfig, QueryInput},
-        Gateway, GatewayConfig, MpcTransportImpl, Role, RoleAssignment, ShardTransportImpl,
-        Transport, TransportError,
+        Gateway, GatewayConfig, MpcTransportError, MpcTransportImpl, Role, RoleAssignment,
+        ShardTransportImpl, Transport,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::QueryId,
@@ -58,7 +58,7 @@ pub enum NewQueryError {
     #[error(transparent)]
     State(#[from] StateError),
     #[error(transparent)]
-    Transport(#[from] TransportError),
+    MpcTransport(#[from] MpcTransportError),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -159,7 +159,7 @@ impl Processor {
             transport.send(right, prepare_request.clone(), stream::empty()),
         )
         .await
-        .map_err(NewQueryError::Transport)?;
+        .map_err(NewQueryError::MpcTransport)?;
 
         handle.set_state(QueryState::AwaitingInputs(query_id, req, roles))?;
 
@@ -446,7 +446,7 @@ mod tests {
 
         assert!(matches!(
             p0.new_query(t0, request).await.unwrap_err(),
-            NewQueryError::Transport(_)
+            NewQueryError::MpcTransport(_)
         ));
     }
 
@@ -468,7 +468,7 @@ mod tests {
 
         assert!(matches!(
             p0.new_query(t0, request).await.unwrap_err(),
-            NewQueryError::Transport(_)
+            NewQueryError::MpcTransport(_)
         ));
     }
 

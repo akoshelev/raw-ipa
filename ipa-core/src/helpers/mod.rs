@@ -21,7 +21,7 @@ use std::ops::{Index, IndexMut};
 pub use buffers::OrderingSender;
 pub use error::Error;
 pub use futures::MaybeFuture;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 #[cfg(feature = "stall-detection")]
 mod gateway_exports {
@@ -35,7 +35,6 @@ mod gateway_exports {
     pub type SendingEnd<I, M> = Observed<gateway::SendingEnd<I, M>>;
 
     pub type MpcReceivingEnd<M> = Observed<gateway::MpcReceivingEnd<M>>;
-    // TODO: observe state
     pub type ShardReceivingEnd<M> = Observed<gateway::ShardReceivingEnd<M>>;
 }
 
@@ -53,7 +52,7 @@ pub use gateway::GatewayConfig;
 // TODO: this type should only be available within infra. Right now several infra modules
 // are exposed at the root level. That makes it impossible to have a proper hierarchy here.
 pub use gateway::{
-    MpcTransportImpl, RoleResolvingTransport, ShardTransportImpl, TransportError, TransportImpl,
+    MpcTransportError, MpcTransportImpl, RoleResolvingTransport, ShardTransportImpl,
 };
 pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd, ShardReceivingEnd};
 pub use prss_protocol::negotiate as negotiate_prss;
@@ -98,10 +97,10 @@ pub struct HelperIdentity {
 
 // Serialize as `serde(transparent)` would. Don't see how to enable that
 // for only one of (de)serialization.
-impl serde::Serialize for HelperIdentity {
+impl Serialize for HelperIdentity {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         self.id.serialize(serializer)
     }
@@ -429,13 +428,17 @@ impl<I: transport::Identity> Debug for ChannelId<I> {
     }
 }
 
-/// Anything that can be sent between MPC helpers, can also be sent across shards. Shards can also
-/// send/receive data that is private to the current helper and this trait is implemented for it.
-pub trait Message: Debug + Send + Serializable + 'static + Sized {}
+/// Trait for messages that can be communicated over the network.
+pub trait Message: Debug + Send + Serializable + 'static {}
 
-/// Trait for messages sent between helpers. Everything needs to be serializable and safe to send.
+/// Trait for messages that may be sent between MPC helpers. Sending raw field values may be OK,
+/// sending secret shares is most definitely not OK.
 ///
-/// Infrastructure's `Message` trait corresponds to IPA's `Sendable` trait.
+/// This trait is not implemented for [`SecretShares`] types and there is a doctest inside [`Gateway`]
+/// module that ensures compile errors are generated in this case.
+///
+/// [`SecretShares`]: crate::secret_sharing::replicated::ReplicatedSecretSharing
+/// [`Gateway`]: crate::helpers::gateway::Gateway::get_mpc_sender
 pub trait MpcMessage: Message {}
 
 impl<V: Sendable> MpcMessage for V {}
