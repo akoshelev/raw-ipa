@@ -446,34 +446,47 @@ mod tests {
     fn shards() {
         run(|| async move {
             let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
-            let input = vec![BA3::truncate_from(0_u32), BA3::truncate_from(1_u32)];
-
-            let r = world
-                .semi_honest(input.clone().into_iter(), |ctx, input| async move {
-                    let ctx = ctx.set_total_records(input.len());
-                    // Swap shares between shards, works only for 2 shards.
-                    let peer = ctx.peer_shards().next().unwrap();
-                    for (record_id, item) in input.into_iter().enumerate() {
-                        ctx.shard_send_channel(peer)
-                            .send(record_id.into(), item)
-                            .await
-                            .unwrap();
-                    }
-
-                    let mut r = Vec::<AdditiveShare<BA3>>::new();
-                    while let Some(v) = ctx.shard_recv_channel(peer).next().await {
-                        r.push(v.unwrap());
-                    }
-
-                    r
-                })
-                .await
-                .into_iter()
-                .flat_map(|v| v.reconstruct())
-                .collect::<Vec<_>>();
-
-            assert_eq!(input.into_iter().rev().collect::<Vec<_>>(), r);
+            shard_comms_test(&world).await;
         });
+    }
+
+    #[test]
+    fn shards_twice() {
+        run(|| async move {
+            let world = TestWorld::<WithShards<2>>::with_shards(TestWorldConfig::default());
+            shard_comms_test(&world).await;
+            shard_comms_test(&world).await;
+        });
+    }
+
+    async fn shard_comms_test(test_world: &TestWorld<WithShards<2>>) {
+        let input = vec![BA3::truncate_from(0_u32), BA3::truncate_from(1_u32)];
+
+        let r = test_world
+            .semi_honest(input.clone().into_iter(), |ctx, input| async move {
+                let ctx = ctx.set_total_records(input.len());
+                // Swap shares between shards, works only for 2 shards.
+                let peer = ctx.peer_shards().next().unwrap();
+                for (record_id, item) in input.into_iter().enumerate() {
+                    ctx.shard_send_channel(peer)
+                        .send(record_id.into(), item)
+                        .await
+                        .unwrap();
+                }
+
+                let mut r = Vec::<AdditiveShare<BA3>>::new();
+                while let Some(v) = ctx.shard_recv_channel(peer).next().await {
+                    r.push(v.unwrap());
+                }
+
+                r
+            })
+            .await
+            .into_iter()
+            .flat_map(|v| v.reconstruct())
+            .collect::<Vec<_>>();
+
+        assert_eq!(input.into_iter().rev().collect::<Vec<_>>(), r);
     }
 
     fn make_world() -> (&'static TestWorld, *mut TestWorld) {

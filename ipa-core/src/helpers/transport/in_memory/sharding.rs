@@ -82,6 +82,7 @@ mod tests {
     use tokio_stream::wrappers::ReceiverStream;
 
     use crate::{
+        cli::test_setup,
         helpers::{
             transport::{in_memory::InMemoryShardNetwork, routing::RouteId},
             HelperIdentity, Transport,
@@ -156,5 +157,30 @@ mod tests {
             assert!(h2.upgrade().is_none());
             assert!(h3.upgrade().is_none());
         });
+    }
+
+    #[test]
+    fn reset() {
+        async fn test_send(network: &InMemoryShardNetwork) {
+            let (tx, rx) = mpsc::channel(1);
+            let src_shard = ShardIndex::FIRST;
+            let dst_shard = ShardIndex::from(1);
+            network
+                .transport(HelperIdentity::ONE, src_shard)
+                .send(
+                    dst_shard,
+                    (RouteId::Records, QueryId, Gate::default()),
+                    ReceiverStream::new(rx),
+                )
+                .await
+                .unwrap();
+        }
+
+        run(|| async {
+            let shard_network = InMemoryShardNetwork::with_shards(2);
+            test_send(&shard_network).await;
+            shard_network.reset();
+            test_send(&shard_network).await;
+        })
     }
 }
