@@ -1,3 +1,6 @@
+//! This file implements key exchange protocol using MPC communication channels that must
+//! be established between each pair of helpers.
+
 use futures_util::future::try_join4;
 use rand_core::{CryptoRng, RngCore};
 use x25519_dalek::PublicKey;
@@ -21,10 +24,10 @@ impl AsRef<str> for PrssExchangeStep {
 
 impl Step for PrssExchangeStep {}
 
-/// establish the prss endpoint by exchanging public keys with the other helpers
+/// Establish the prss endpoint by exchanging public keys with the other helpers
 /// # Errors
 /// if communication with other helpers fails
-pub async fn negotiate<R: RngCore + CryptoRng>(
+pub async fn diffie_hellman<R: RngCore + CryptoRng>(
     gateway: &Gateway,
     gate: &Gate,
     rng: &mut R,

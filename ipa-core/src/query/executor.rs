@@ -18,14 +18,13 @@ use crate::{ff::Fp32BitPrime, query::runner::execute_test_multiply};
 use crate::{
     ff::{boolean_array::BA16, FieldType, Serializable},
     helpers::{
-        negotiate_prss,
         query::{QueryConfig, QueryType},
         BodyStream, Gateway,
     },
     hpke::{KeyPair, KeyRegistry},
     protocol::{
         context::SemiHonestContext,
-        prss::Endpoint as PrssEndpoint,
+        prss::{key_exchange, Endpoint as PrssEndpoint},
         step::{Gate, StepNarrow},
     },
     query::{
@@ -133,9 +132,9 @@ where
     let join_handle = tokio::spawn(async move {
         // TODO: make it a generic argument for this function
         let mut rng = StdRng::from_entropy();
-        // Negotiate PRSS first
         let step = Gate::default().narrow(&config.query_type);
-        let prss = negotiate_prss(&gateway, &step, &mut rng).await.unwrap();
+        // PRSS must be set up before everything else
+        let prss = key_exchange(&gateway, &step, &mut rng).await.unwrap();
 
         tx.send(query_impl(&prss, &gateway, &config, input_stream).await)
             .unwrap();

@@ -1,4 +1,6 @@
 mod crypto;
+mod key_exchange;
+
 #[cfg(debug_assertions)]
 use std::collections::HashSet;
 use std::{
@@ -12,6 +14,7 @@ pub use crypto::{
     SharedRandomness,
 };
 use generic_array::{sequence::GenericSequence, ArrayLength, GenericArray};
+pub use key_exchange::diffie_hellman as key_exchange;
 use x25519_dalek::PublicKey;
 
 use super::step::Gate;

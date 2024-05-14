@@ -16,7 +16,6 @@ mod error;
 mod futures;
 mod gateway;
 pub mod hashing;
-pub(crate) mod prss_protocol;
 pub mod stream;
 mod transport;
 
@@ -61,7 +60,6 @@ pub use gateway::{
     MpcTransportError, MpcTransportImpl, RoleResolvingTransport, ShardTransportImpl,
 };
 pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd, ShardReceivingEnd};
-pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
 pub use transport::{
