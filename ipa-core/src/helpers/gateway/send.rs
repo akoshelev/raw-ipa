@@ -13,18 +13,14 @@ use futures::Stream;
 use shuttle::future as tokio;
 use typenum::Unsigned;
 
-use crate::{
-    helpers::{
-        buffers::OrderingSender, routing::RouteId, ChannelId, Error, Message, TotalRecords,
-        Transport, TransportIdentity,
-    },
-    protocol::{QueryId, RecordId},
-    sync::Arc,
-    telemetry::{
-        labels::{ROLE, STEP},
-        metrics::{BYTES_SENT, RECORDS_SENT},
-    },
-};
+use crate::{const_assert, helpers::{
+    buffers::OrderingSender, routing::RouteId, ChannelId, Error, Message, TotalRecords,
+    Transport, TransportIdentity,
+}, protocol::{QueryId, RecordId}, sync::Arc, telemetry::{
+    labels::{ROLE, STEP},
+    metrics::{BYTES_SENT, RECORDS_SENT},
+}};
+use crate::helpers::GatewayConfig;
 
 /// Sending end of the gateway channel.
 pub struct SendingEnd<I: TransportIdentity, M> {
@@ -48,6 +44,36 @@ pub(super) struct GatewaySender<I> {
 struct GatewaySendStream<I> {
     inner: Arc<GatewaySender<I>>,
 }
+
+/// todo: explain all in bytes
+struct SendChannelConfig {
+    total_capacity: NonZeroUsize,
+    record_size: NonZeroUsize,
+    batch_capacity: NonZeroUsize,
+    total_records: TotalRecords,
+}
+
+impl SendChannelConfig {
+    fn new<M: Message>(gateway_config: GatewayConfig, total_records: TotalRecords) -> Self {
+        debug_assert!(M::Size::USIZE > 0, "Message size cannot be 0");
+
+        let record_size = M::Size::USIZE;
+        let total_capacity = gateway_config.active_work().get() * record_size;
+        Self {
+            total_capacity: total_capacity.try_into().unwrap(),
+            record_size: record_size.try_into().unwrap(),
+            batch_capacity: if total_records.is_indeterminate() || gateway_config.max_batch_size_bytes.get() <= record_size {
+                record_size
+            } else {
+                // closest multiple of record_size to max_batch_size_bytes
+                std::cmp::min(total_capacity, (gateway_config.max_batch_size_bytes.get() / record_size * record_size))
+            }.try_into().unwrap(),
+            total_records,
+        }
+    }
+}
+
+
 
 impl<I: TransportIdentity> Default for GatewaySenders<I> {
     fn default() -> Self {
@@ -173,7 +199,7 @@ impl<I: TransportIdentity> GatewaySenders<I> {
         &self,
         channel_id: &ChannelId<I>,
         transport: &T,
-        capacity: NonZeroUsize,
+        config: GatewayConfig,
         query_id: QueryId,
         total_records: TotalRecords, // TODO track children for indeterminate senders
     ) -> Arc<GatewaySender<I>> {
@@ -186,7 +212,7 @@ impl<I: TransportIdentity> GatewaySenders<I> {
         match self.inner.entry(channel_id.clone()) {
             Entry::Occupied(entry) => Arc::clone(entry.get()),
             Entry::Vacant(entry) => {
-                let sender = Self::new_sender::<M>(capacity, channel_id.clone(), total_records);
+                let sender = Self::new_sender(SendChannelConfig::new::<M>(config, total_records), channel_id.clone());
                 entry.insert(Arc::clone(&sender));
 
                 tokio::spawn({
@@ -209,34 +235,34 @@ impl<I: TransportIdentity> GatewaySenders<I> {
         }
     }
 
-    fn new_sender<M: Message>(
-        capacity: NonZeroUsize,
+    fn new_sender(
+        channel_config: SendChannelConfig,
         channel_id: ChannelId<I>,
-        total_records: TotalRecords,
     ) -> Arc<GatewaySender<I>> {
-        // Spare buffer is not required when messages have uniform size and buffer is a
-        // multiple of that size.
-        const SPARE: usize = 0;
-        // a little trick - if number of records is indeterminate, set the capacity to one
-        // message.  Any send will wake the stream reader then, effectively disabling
-        // buffering.  This mode is clearly inefficient, so avoid using this mode.
-        let write_size = if total_records.is_indeterminate() {
-            NonZeroUsize::new(M::Size::USIZE).unwrap()
-        } else {
-            // capacity is defined in terms of number of elements, while sender wants bytes
-            // so perform the conversion here
-            capacity
-                .checked_mul(
-                    NonZeroUsize::new(M::Size::USIZE)
-                        .expect("Message size should be greater than 0"),
-                )
-                .expect("capacity should not overflow")
-        };
+        // let record_size: NonZeroUsize = NonZeroUsize::new(M::Size::USIZE).unwrap();
+        // // a little trick - if number of records is indeterminate, set the capacity to one
+        // // message.  Any send will wake the stream reader then, effectively disabling
+        // // buffering.  This mode is clearly inefficient, so avoid using this mode.
+        // let write_size = if total_records.is_indeterminate() {
+        //     record_size
+        // } else {
+        //     // capacity is defined in terms of number of elements, while sender wants bytes
+        //     // so perform the conversion here
+        //     capacity
+        //         .checked_mul(
+        //             NonZeroUsize::new(M::Size::USIZE)
+        //                 .expect("Message size should be greater than 0"),
+        //         )
+        //         .expect("capacity should not overflow")
+        // };
+        // // todo: config
+        // let read_size = std::cmp::min(write_size, NonZeroUsize::new(512/record_size.get()*record_size.get()).unwrap());
 
         Arc::new(GatewaySender::new(
             channel_id,
-            OrderingSender::new(write_size, SPARE),
-            total_records,
+            // todo: orderingsenderconfig? or no because of total records
+            OrderingSender::new(channel_config.total_capacity, channel_config.record_size, channel_config.batch_capacity),
+            channel_config.total_records,
         ))
     }
 }

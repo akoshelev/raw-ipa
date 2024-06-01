@@ -69,6 +69,7 @@ pub async fn arithmetic<F, const N: usize>(
     width: u32,
     depth: u16,
     active_work: usize,
+    max_batch: usize,
     input_data: [Vec<Inputs<F, N>>; 3],
 ) where
     F: Field + FieldSimd<N> + U128Conversions,
@@ -77,7 +78,11 @@ pub async fn arithmetic<F, const N: usize>(
     Standard: Distribution<F>,
 {
     let config = TestWorldConfig {
-        gateway_config: GatewayConfig::new(active_work),
+        gateway_config: GatewayConfig {
+            active: active_work.try_into().unwrap(),
+            max_batch_size_bytes: max_batch.try_into().unwrap(),
+            ..Default::default()
+        },
         initial_gate: Some(Gate::default().narrow(&ProtocolStep::Test(0))),
         ..Default::default()
     };

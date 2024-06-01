@@ -23,17 +23,12 @@ use crate::{
         Mutex, MutexGuard,
     },
 };
+use crate::helpers::buffers::circular::CircularBuf;
 
 /// The operating state for an `OrderingSender`.
 struct State {
     /// A store of bytes to write into.
-    buf: Vec<u8>,
-    /// The portion of the buffer that is marked "spare". Once `written + spare` is greater than
-    /// the buffer capacity, data is available to the stream. May be zero if messages are uniformly
-    /// sized and that size divides the buffer capacity.
-    spare: usize,
-    /// How many bytes have been written and are available.
-    written: usize,
+    buf: CircularBuf,
     /// The sender is closed.
     closed: bool,
     /// An entity to wake when the buffer is read from.
@@ -43,11 +38,9 @@ struct State {
 }
 
 impl State {
-    fn new(capacity: NonZeroUsize, spare: usize) -> Self {
+    fn new(capacity: usize, write_size: usize, read_threshold: usize) -> Self {
         Self {
-            buf: vec![0; capacity.get() + spare],
-            spare,
-            written: 0,
+            buf: CircularBuf::new(capacity, write_size, read_threshold),
             closed: false,
             write_ready: None,
             stream_ready: None,
@@ -79,44 +72,50 @@ impl State {
     // sent will be the same size, so we settle for a less strict check that should at least
     // prevent reaching a deadlock.
     fn write<M: Message>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
-        debug_assert!(
-            self.spare != 0 || self.buf.capacity() % M::Size::USIZE == 0,
-            "invalid spare capacity for OrderingSender (see docs)",
-        );
-
-        if !self.accept_writes() {
+        if self.buf.free() < M::Size::USIZE {
             Self::save_waker(&mut self.write_ready, cx);
             return Poll::Pending;
         }
 
-        let b = &mut self.buf[self.written..];
-        assert!(
-            M::Size::USIZE <= b.len(),
-            "expect message size {:?} to fit in available buffer; only {:?} of {:?} available",
-            M::Size::USIZE,
-            self.buf.capacity() - self.written,
-            self.buf.capacity(),
-        );
-        self.written += M::Size::USIZE;
-        m.serialize(GenericArray::from_mut_slice(&mut b[..M::Size::USIZE]));
+        assert_eq!(M::Size::USIZE, self.buf.write_size(), "Expect to keep messages of size {}, got {}", self.buf.write_size(), M::Size::USIZE);
+        m.serialize(GenericArray::from_mut_slice(self.buf.write_slice()));
 
-        if !self.accept_writes() {
+        // todo: test tht it is not in_full call
+        if self.buf.can_read() {
             Self::wake(&mut self.stream_ready);
         }
+
         Poll::Ready(())
     }
 
     fn take(&mut self, cx: &Context<'_>) -> Poll<Vec<u8>> {
-        if self.written > 0 && (self.written + self.spare >= self.buf.len() || self.closed) {
-            let v = self.buf[..self.written].to_vec();
-            self.written = 0;
+        let cr = self.buf.can_read();
+        let l = self.buf.len();
+        if self.buf.can_read() || (self.closed && self.buf.len() > 0) {
+            let was_full = self.buf.free() < self.buf.write_size();
+            let v = self.buf.take();
 
-            Self::wake(&mut self.write_ready);
+            if was_full && !self.closed {
+                Self::wake(&mut self.write_ready);
+            }
+
             Poll::Ready(v)
         } else {
             Self::save_waker(&mut self.stream_ready, cx);
             Poll::Pending
         }
+
+
+        // if self.written > 0 && (self.written + self.spare >= self.buf.len() || self.closed) {
+        //     let v = self.buf[..self.written].to_vec();
+        //     self.written = 0;
+        //
+        //     Self::wake(&mut self.write_ready);
+        //     Poll::Ready(v)
+        // } else {
+        //     Self::save_waker(&mut self.stream_ready, cx);
+        //     Poll::Pending
+        // }
     }
 
     fn close(&mut self) {
@@ -125,14 +124,14 @@ impl State {
         Self::wake(&mut self.stream_ready);
     }
 
-    /// Returns `true` if more writes can be accepted by this sender.
-    /// If message size exceeds the remaining capacity, [`write`] may
-    /// still return `Poll::Pending` even if sender is open for writes.
-    ///
-    /// [`write`]: Self::write
-    fn accept_writes(&self) -> bool {
-        self.written + self.spare < self.buf.len()
-    }
+    // /// Returns `true` if more writes can be accepted by this sender.
+    // /// If message size exceeds the remaining capacity, [`write`] may
+    // /// still return `Poll::Pending` even if sender is open for writes.
+    // ///
+    // /// [`write`]: Self::write
+    // fn accept_writes(&self) -> bool {
+    //     self.written + self.spare < self.buf.len()
+    // }
 }
 
 /// An saved waker for a given index.
@@ -305,10 +304,13 @@ pub struct OrderingSender {
 impl OrderingSender {
     /// Make an `OrderingSender` with a capacity of `capacity` (in bytes).
     #[must_use]
-    pub fn new(write_size: NonZeroUsize, spare: usize) -> Self {
+    pub fn new(capacity: NonZeroUsize, write_size: NonZeroUsize, read_threshold: NonZeroUsize) -> Self {
+        assert_eq!(read_threshold.get() % write_size.get(), 0, "read threshold {read_threshold} must be divisible by write size {write_size}");
+        assert_eq!(capacity.get() % write_size.get(), 0, "capacity {capacity} must be a factor of {write_size}");
+
         Self {
             next: AtomicUsize::new(0),
-            state: Mutex::new(State::new(write_size, spare)),
+            state: Mutex::new(State::new(capacity.get(), write_size.get(), read_threshold.get())),
             waiting: Waiting::default(),
         }
     }
@@ -550,9 +552,17 @@ mod test {
         sync::Arc,
         test_executor::run,
     };
+    use crate::ff::PrimeField;
 
-    fn sender() -> Arc<OrderingSender> {
-        Arc::new(OrderingSender::new(NonZeroUsize::new(6).unwrap(), 5))
+    fn sender<F: PrimeField>() -> Arc<OrderingSender> {
+        let capacity = NonZeroUsize::new(6 * F::Size::USIZE).unwrap();
+        Arc::new(
+            OrderingSender::new(
+                capacity,
+                NonZeroUsize::new(F::Size::USIZE).unwrap(),
+                capacity,
+            )
+        )
     }
 
     /// Writing a single value cannot be read until the stream closes.
@@ -560,7 +570,7 @@ mod test {
     fn send_recv() {
         run(|| async {
             let input = Fp31::truncate_from(7_u128);
-            let sender = sender();
+            let sender = sender::<Fp31>();
             sender.send(0, input).await;
             assert!(sender.as_stream().next().now_or_never().is_none());
         });
@@ -571,7 +581,7 @@ mod test {
     fn send_close_recv() {
         run(|| async {
             let input = Fp31::truncate_from(7_u128);
-            let sender = sender();
+            let sender = sender::<Fp31>();
             let send = sender.send(0, input);
             let stream = sender.as_stream();
             let close = sender.close(1);
@@ -588,7 +598,7 @@ mod test {
     fn close_send_recv() {
         run(|| async {
             let input = Fp31::truncate_from(7_u128);
-            let sender = sender();
+            let sender = sender::<Fp31>();
             let close = sender.close(1);
             let send = sender.send(0, input);
             let close_send = join(close, send);
@@ -603,7 +613,7 @@ mod test {
     #[should_panic(expected = "attempt to write/close at index 2 twice")]
     fn double_send() {
         run(|| async {
-            let sender = sender();
+            let sender = sender::<Fp31>();
             let send_many =
                 join_all((0..3_u8).map(|i| sender.send(usize::from(i), Fp31::truncate_from(i))));
             let send_again = sender.send(2, Fp31::truncate_from(2_u128));
@@ -615,7 +625,7 @@ mod test {
     #[should_panic(expected = "attempt to write/close at index 2 twice")]
     fn close_over_send() {
         run(|| async {
-            let sender = sender();
+            let sender = sender::<Fp31>();
             let send_many =
                 join_all((0..3_u8).map(|i| sender.send(usize::from(i), Fp31::truncate_from(i))));
             let close_it = sender.close(2);
@@ -627,7 +637,7 @@ mod test {
     #[should_panic(expected = "writing on a closed stream")]
     fn send_after_close() {
         run(|| async {
-            let sender = sender();
+            let sender = sender::<Fp31>();
             // We can't use `join()` here because the close task won't bother to
             // wake the send task if the send is polled first.
             sender.close(0).await;
@@ -652,14 +662,13 @@ mod test {
     }
 
     #[test]
-    fn spare_config() {
+    fn full_read_open() {
         const SZ: usize = <<Fp32BitPrime as Serializable>::Size as Unsigned>::USIZE;
         run(|| async {
             const COUNT: usize = 4;
             const CAPACITY: usize = COUNT * SZ;
 
-            // Case 1: Sending equal sized records with no spare capacity
-            let sender = OrderingSender::new(CAPACITY.try_into().unwrap(), 0);
+            let sender = OrderingSender::new(CAPACITY.try_into().unwrap(), SZ.try_into().unwrap(), CAPACITY.try_into().unwrap());
 
             for i in 0..COUNT {
                 sender
@@ -685,44 +694,15 @@ mod test {
                     .await;
             }
 
-            // spare has enough capacity, but buffer is considered full.
-            let mut f = pin!(sender.send(2 * COUNT, Fp32BitPrime::truncate_from(2_u128)));
-            assert_eq!(None, poll_immediate(&mut f).await);
-
-            // Case 2: Sending unequal sized records with sufficient spare capacity
-            let sender = OrderingSender::new(CAPACITY.try_into().unwrap(), 4);
-
-            let mut messages = vec![
-                send_fn(Fp32BitPrime::truncate_from(400_u128)),
-                send_fn(Fp32BitPrime::truncate_from(401_u128)),
-                send_fn(Gf20Bit::truncate_from(302_u128)),
-                send_fn(Gf20Bit::truncate_from(303_u128)),
-                send_fn(Gf9Bit::truncate_from(204_u128)),
-            ];
-            messages.shuffle(&mut thread_rng());
-
-            let mut i = 0;
-            for send_fn in messages {
-                (send_fn)(&sender, &mut i).await;
-            }
-
-            // spare has enough capacity, but buffer is considered full.
-            let mut f = pin!(sender.send(i, Fp32BitPrime::truncate_from(2_u128)));
-            assert_eq!(None, poll_immediate(&mut f).await);
-
-            drop(poll_fn(|ctx| sender.take_next(ctx)).await);
-            assert_eq!(Some(()), poll_immediate(f).await);
         });
     }
 
     #[test]
-    #[should_panic(
-        expected = "expect message size 4 to fit in available buffer; only 2 of 16 available"
-    )]
-    fn invalid_no_spare() {
+    #[should_panic(expected = "Expect to keep messages of size 4, got 2")]
+    fn invalid_uneven_size() {
         run(|| async {
-            // Sending unequal size messages with no spare capacity is invalid.
-            let sender = OrderingSender::new(16.try_into().unwrap(), 0);
+            // Sending unequal size messages is invalid.
+            let sender = OrderingSender::new(16.try_into().unwrap(), 4.try_into().unwrap(), 16.try_into().unwrap());
 
             let messages = vec![
                 send_fn(Fp32BitPrime::truncate_from(400_u128)),
@@ -741,59 +721,35 @@ mod test {
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "invalid spare capacity for OrderingSender (see docs)")]
-    fn invalid_no_spare_assertion() {
+    #[should_panic(expected = "Expect to keep messages of size 4, got 3")]
+    fn invalid_write_size_assertion() {
         run(|| async {
-            // When there is no spare capacity, the message size must divide the capacity.
-            let sender = OrderingSender::new(16.try_into().unwrap(), 0);
+            // The message size must divide the capacity.
+            let sender = OrderingSender::new(16.try_into().unwrap(), 4.try_into().unwrap(), 16.try_into().unwrap());
             sender.send(0, Gf20Bit::truncate_from(0_u128)).await;
         });
     }
 
-    #[test]
-    #[should_panic(
-        expected = "expect message size 4 to fit in available buffer; only 3 of 18 available"
-    )]
-    fn insufficient_spare() {
-        run(|| async {
-            // When messages sizes are not uniform, the spare capacity must fit the largest message.
-            let sender = OrderingSender::new(16.try_into().unwrap(), 2);
-
-            let messages = vec![
-                send_fn(Fp32BitPrime::truncate_from(400_u128)),
-                send_fn(Gf20Bit::truncate_from(301_u128)),
-                send_fn(Fp32BitPrime::truncate_from(402_u128)),
-                send_fn(Fp32BitPrime::truncate_from(403_u128)),
-                send_fn(Fp32BitPrime::truncate_from(404_u128)),
-            ];
-
-            let mut i = 0;
-            for send_fn in messages {
-                (send_fn)(&sender, &mut i).await;
-            }
-        });
-    }
-
-    /// Messages can be any size.  The sender doesn't care.
-    #[test]
-    fn mixed_size() {
-        run(|| async {
-            let small = Fp31::truncate_from(7_u128);
-            let large = Fp32BitPrime::truncate_from(5_108_u128);
-            let sender = sender();
-            let send_small = sender.send(0, small);
-            let send_large = sender.send(1, large);
-            let close = sender.close(2);
-            let close_send = join3(send_small, send_large, close);
-            let (_, taken) = join(close_send, sender.as_stream().collect::<Vec<_>>()).await;
-            let flat = taken.into_iter().flatten().collect::<Vec<_>>();
-            let small_out = Fp31::deserialize_unchecked(GenericArray::from_slice(&flat[..1]));
-            assert_eq!(small_out, small);
-            let large_out =
-                Fp32BitPrime::deserialize_unchecked(GenericArray::from_slice(&flat[1..]));
-            assert_eq!(large_out, large);
-        });
-    }
+    // /// Messages can be any size.  The sender doesn't care.
+    // #[test]
+    // fn mixed_size() {
+    //     run(|| async {
+    //         let small = Fp31::truncate_from(7_u128);
+    //         let large = Fp32BitPrime::truncate_from(5_108_u128);
+    //         let sender = sender::<Fp32BitPrime>();
+    //         let send_small = sender.send(0, small);
+    //         let send_large = sender.send(1, large);
+    //         let close = sender.close(2);
+    //         let close_send = join3(send_small, send_large, close);
+    //         let (_, taken) = join(close_send, sender.as_stream().collect::<Vec<_>>()).await;
+    //         let flat = taken.into_iter().flatten().collect::<Vec<_>>();
+    //         let small_out = Fp31::deserialize_unchecked(GenericArray::from_slice(&flat[..1]));
+    //         assert_eq!(small_out, small);
+    //         let large_out =
+    //             Fp32BitPrime::deserialize_unchecked(GenericArray::from_slice(&flat[1..]));
+    //         assert_eq!(large_out, large);
+    //     });
+    // }
 
     #[test]
     fn random_fp32bit() {
@@ -805,7 +761,10 @@ mod test {
             let mut values = Vec::with_capacity(COUNT);
             values.resize_with(COUNT, || rng.gen::<Fp32BitPrime>());
 
-            let sender = sender();
+            let sender = OrderingSender::new((COUNT * SZ / 2).try_into().unwrap(),
+                                             SZ.try_into().unwrap(),
+                                             (COUNT * SZ / 4).try_into().unwrap()
+            );
             let (_, (), output) = join3(
                 join_all(values.iter().enumerate().map(|(i, &v)| sender.send(i, v))),
                 sender.close(values.len()),
@@ -842,7 +801,7 @@ mod test {
             values.resize_with(COUNT, || rng.gen::<Fp31>());
             let indices = shuffle_indices(COUNT);
 
-            let sender = sender();
+            let sender = sender::<Fp31>();
             let (_, (), output) = join3(
                 join_all(indices.into_iter().map(|i| sender.send(i, values[i]))),
                 sender.close(values.len()),
@@ -863,9 +822,12 @@ mod test {
         const PARALLELISM: usize = 100;
 
         run(|| async {
+            let capacity =
+            NonZeroUsize::new(PARALLELISM * <Fp31 as Serializable>::Size::USIZE).unwrap();
             let sender = Arc::new(OrderingSender::new(
-                NonZeroUsize::new(PARALLELISM * <Fp31 as Serializable>::Size::USIZE).unwrap(),
-                5,
+                capacity,
+                <Fp31 as Serializable>::Size::USIZE.try_into().unwrap(),
+                capacity,
             ));
 
             try_join_all((0..PARALLELISM).map(|i| {
@@ -895,11 +857,10 @@ mod test {
     /// [`issue`]: https://github.com/private-attribution/ipa/issues/843
     #[test]
     fn reader_blocks_writers() {
-        const SZ: usize = <<Fp32BitPrime as Serializable>::Size as Unsigned>::USIZE;
+        const SZ: usize = <Fp32BitPrime as Serializable>::Size::USIZE;
         run(|| async {
-            const CAPACITY: usize = SZ + 1;
-            const SPARE: usize = 2 * SZ;
-            let sender = OrderingSender::new(CAPACITY.try_into().unwrap(), SPARE);
+            const CAPACITY: usize = 2*SZ + 1;
+            let sender = OrderingSender::new(CAPACITY.try_into().unwrap(), SZ.try_into().unwrap(), CAPACITY.try_into().unwrap());
 
             // enough bytes in the buffer to hold 2 items
             for i in 0..2 {

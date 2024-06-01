@@ -1,3 +1,4 @@
+use std::num::Wrapping;
 use std::ops::{Range, RangeBounds, RangeInclusive};
 use std::task::Poll;
 
@@ -16,7 +17,7 @@ use std::task::Poll;
 /// decided to implement something I am familiar with.
 ///
 /// [`BipBuffer`]: <https://www.codeproject.com/Articles/3479/The-Bip-Buffer-The-Circular-Buffer-with-a-Twist>
-struct Buf {
+pub struct CircularBuf {
     write: usize,
     read: usize,
     read_size: usize,
@@ -24,49 +25,10 @@ struct Buf {
     data: Vec<u8>,
 }
 
-// size_t read;
-// size_t write;
-//
-// mask(val)  { return val % array.capacity; }
-// wrap(val)  { return val % (array.capacity * 2); }
-// inc(index) { return wrap(index + 1); }
-// push(val)  { assert(!full()); array[mask(write)] = val; write = inc(write); }
-// shift()    { assert(!empty()); ret = array[mask(read)]; read = inc(read); return ret; }
-// empty()    { return read == write; }
-// full()     { return size() == array.capacity; }
-// size()     { return wrap(write - read); }
-// free()     { return array.capacity - size(); }
-//
-// // Additional operations
-//
-// read(data_out, count) {
-//   count = min(count, size());
-//
-//   run = min(count, array.capacity - mask(read));
-//   rem = count - run;
-//
-//   memcpy(data_out, array + mask(read), run);
-//   memcpy(data_out + run, array, rem);
-//   read = wrap(read + count);
-//
-//   return count;
-// }
-//
-// write(data, count) {
-//   count = min(count, array.capacity - size());
-//
-//   run = min(count, array.capacity - mask(write));
-//   rem = count - run;
-//
-//   memcpy(array + mask(write), data, run);
-//   memcpy(array, data + run, rem);
-//   write = wrap(write + count);
-//
-//   return count;
-
-impl Buf {
-    fn new(capacity: usize, write_unit: usize, read_size: usize) -> Self {
-        debug_assert!(capacity > 0); // enforced at the level above, so debug_assert is fine
+impl CircularBuf {
+    pub fn new(capacity: usize, write_unit: usize, read_size: usize) -> Self {
+        debug_assert!(capacity > 0 && write_unit > 0 && read_size > 0); // enforced at the level above, so debug_assert is fine
+        debug_assert_eq!(capacity % write_unit, 0, "{} must divide capacity {}",write_unit, capacity);
         Self {
             write: 0,
             read: 0,
@@ -92,20 +54,32 @@ impl Buf {
         self.mask(ptr)..=self.mask(ptr + unit - 1)
     }
 
-    fn push<R: AsRef<[u8]>>(&mut self, val: R) {
-        let val = val.as_ref();
-        debug_assert!(!self.is_full());
-        debug_assert_eq!(self.write_unit, val.len());
-
-        let range = self.range(self.write, self.write_unit);
-        self.data[range].copy_from_slice(val);
-        self.write = self.inc(self.write, self.write_unit);
+    pub fn write_size(&self) -> usize {
+        self.write_unit
     }
 
-    fn take(&mut self) -> Vec<u8> {
-        debug_assert!(self.can_read());
-        let mut ret = Vec::with_capacity(self.read_size);
-        let range = self.range(self.read, self.read_size);
+    pub fn write_slice(&mut self) -> &mut [u8] {
+        debug_assert!(!self.is_full());
+        let range = self.range(self.write, self.write_unit);
+        // todo: explain in the docs what happens if this slice is not written into.
+        self.write = self.inc(self.write, self.write_unit);
+
+        &mut self.data[range]
+    }
+
+    fn push<R: AsRef<[u8]>>(&mut self, val: R) {
+        let val = val.as_ref();
+        debug_assert_eq!(self.write_unit, val.len());
+        self.write_slice().copy_from_slice(val);
+    }
+
+    pub fn take(&mut self) -> Vec<u8> {
+        debug_assert!(!self.is_empty());
+        // todo: test for delta
+        let delta = std::cmp::min(self.read_size, self.len());
+        // todo: explain if can_read is not checked, then this may yield chunks of smaller size
+        let mut ret = Vec::with_capacity(delta);
+        let mut range = self.range(self.read, delta);
 
         // If the read range wraps around, we need to split it
         if range.end() < range.start() {
@@ -115,29 +89,44 @@ impl Buf {
             ret.extend_from_slice(&self.data[range]);
         }
 
-        self.read = self.inc(self.read, self.read_size);
+        self.read = self.inc(self.read, delta);
 
         ret
     }
 
-    fn write_len(&self) -> usize {
+    pub fn write_len(&self) -> usize {
         self.len() / self.write_unit
     }
 
-    fn len(&self) -> usize {
-        self.wrap(self.write - self.read)
+    pub fn len(&self) -> usize {
+        // self.mask(self.write.abs_diff(self.read))
+        // self.wrap(self.write.wrapping_sub(self.read))
+        if self.write >= self.read {
+            self.wrap(self.write - self.read)
+        } else {
+            self.capacity() + self.mask(self.write) - self.mask(self.read)
+        }
+        // return N - (a - b);
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn free(&self) -> usize {
+        self.capacity() - self.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
         self.read == self.write
     }
 
-    fn is_full(&self) -> bool {
+    pub fn is_full(&self) -> bool {
         self.len() == self.data.len()
     }
 
-    fn can_read(&self) -> bool {
+    pub fn can_read(&self) -> bool {
         self.len() >= self.read_size
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.data.len()
     }
 
 
@@ -159,10 +148,10 @@ mod test {
     use std::fmt::{Debug, Formatter};
     use std::task::Poll;
     use serde::Serializer;
-    use super::Buf;
+    use super::CircularBuf;
 
-    fn new_buf<B: BufSetup>() -> Buf {
-        Buf::new(B::CAPACITY * B::UNIT_SIZE, B::UNIT_SIZE, B::READ_SIZE * B::UNIT_SIZE)
+    fn new_buf<B: BufSetup>() -> CircularBuf {
+        CircularBuf::new(B::CAPACITY * B::UNIT_SIZE, B::UNIT_SIZE, B::READ_SIZE * B::UNIT_SIZE)
     }
 
     trait BufSetup {
@@ -172,13 +161,13 @@ mod test {
         /// Number of units written before buffer opens for reads, in units of [`UNIT_SIZE`].
         const READ_SIZE: usize;
 
-        fn fill(buf: &mut Buf) where Self: for <'a> From<&'a usize> + AsRef<[u8]> {
+        fn fill(buf: &mut CircularBuf) where Self: for <'a> From<&'a usize> + AsRef<[u8]> {
             for i in 0..Self::CAPACITY {
                 buf.push(&Self::from(&i).as_ref());
             }
         }
 
-        fn read_once(buf: &mut Buf) -> Vec<Self> where Self: for <'a> From<&'a [u8]> {
+        fn read_once(buf: &mut CircularBuf) -> Vec<Self> where Self: for <'a> From<&'a [u8]> {
             assert!(buf.can_read(), "Buffer is not open for reads");
             // let Poll::Ready(bytes) = buf.re() else { unreachable!() };
             buf.take().chunks(Self::UNIT_SIZE).map(|chunk| Self::from(chunk)).collect()
