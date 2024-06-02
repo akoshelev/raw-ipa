@@ -234,7 +234,7 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             active: 65536.try_into().unwrap(),
-            max_batch_size_bytes: 2048.try_into().unwrap(),
+            max_batch_size_bytes: 1024.try_into().unwrap(),
             #[cfg(feature = "stall-detection")]
             progress_check_interval: std::time::Duration::from_secs(if cfg!(test) {
                 5
