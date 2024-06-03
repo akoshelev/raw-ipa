@@ -233,8 +233,12 @@ impl Gateway {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            active: 32768.try_into().unwrap(),
+            active: 16384.try_into().unwrap(),
             max_batch_size_bytes: 2048.try_into().unwrap(),
+            // In-memory tests are fast, so progress check intervals can be lower.
+            // Real world scenarios currently over-report stalls because of inefficiencies inside
+            // infrastructure and actual networking issues. This check is only valuable to report
+            // bugs, so keeping it large enough to avoid false positives.
             #[cfg(feature = "stall-detection")]
             progress_check_interval: std::time::Duration::from_secs(if cfg!(test) {
                 5
@@ -244,28 +248,7 @@ impl Default for GatewayConfig {
 }
 
 impl GatewayConfig {
-    // /// Generate a new configuration with the given active limit.
-    // ///
-    // /// ## Panics
-    // /// If `active` is 0.
-    // #[must_use]
-    // pub fn new(active: usize, max_bytes: usize) -> Self {
-    //     // In-memory tests are fast, so progress check intervals can be lower.
-    //     // Real world scenarios currently over-report stalls because of inefficiencies inside
-    //     // infrastructure and actual networking issues. This check is only valuable to report
-    //     // bugs, so keeping it large enough to avoid false positives.
-    //     Self {
-    //         active: NonZeroUsize::new(active).unwrap(),
-    //         max_batch_size_bytes: NonZeroUsize::new(max_bytes).unwrap(),
-    //         #[cfg(feature = "stall-detection")]
-    //         progress_check_interval: std::time::Duration::from_secs(if cfg!(test) {
-    //             5
-    //         } else {
-    //             30
-    //         }),
-    //     }
-    // }
-    //
+
     /// The configured amount of active work.
     #[must_use]
     pub fn active_work(&self) -> NonZeroUsize {
