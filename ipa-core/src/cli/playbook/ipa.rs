@@ -113,6 +113,7 @@ where
     AdditiveShare<HV>: Serializable,
 {
     let mpc_time = Instant::now();
+    tracing::info!("submitting inputs to MPC helpers");
     try_join_all(
         inputs
             .into_iter()
@@ -129,6 +130,7 @@ where
     .unwrap();
 
     let mut delay = Duration::from_millis(125);
+    tracing::info!("Starting polling MPC helpers for query status");
     loop {
         if try_join_all(clients.iter().enumerate().map(|(i, client)| client
             .query_status(query_id).map(move |v| v.map_err(|e| format!("Failed to get query status from helper {i}: {e}")))))
