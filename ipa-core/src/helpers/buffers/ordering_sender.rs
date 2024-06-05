@@ -72,13 +72,12 @@ impl State {
     // sent will be the same size, so we settle for a less strict check that should at least
     // prevent reaching a deadlock.
     fn write<M: Message>(&mut self, m: &M, cx: &Context<'_>) -> Poll<()> {
-        if self.buf.free() < M::Size::USIZE {
+        if !self.buf.can_write() {
             Self::save_waker(&mut self.write_ready, cx);
             return Poll::Pending;
         }
 
-        assert_eq!(M::Size::USIZE, self.buf.write_size(), "Expect to keep messages of size {}, got {}", self.buf.write_size(), M::Size::USIZE);
-        m.serialize(GenericArray::from_mut_slice(self.buf.write_slice()));
+        self.buf.next().write(m);
 
         // todo: test tht it is not in_full call
         if self.buf.can_read() {
@@ -89,13 +88,11 @@ impl State {
     }
 
     fn take(&mut self, cx: &Context<'_>) -> Poll<Vec<u8>> {
-        let cr = self.buf.can_read();
-        let l = self.buf.len();
         if self.buf.can_read() || (self.closed && self.buf.len() > 0) {
-            let was_full = self.buf.free() < self.buf.write_size();
+            let could_write = self.buf.can_write();
             let v = self.buf.take();
 
-            if was_full && !self.closed {
+            if !could_write && !self.closed {
                 Self::wake(&mut self.write_ready);
             }
 
