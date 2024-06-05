@@ -233,8 +233,8 @@ impl Gateway {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            active: 1024.try_into().unwrap(),
-            max_batch_size_bytes: 2048.try_into().unwrap(),
+            active: 32.try_into().unwrap(),
+            max_batch_size_bytes: 1024.try_into().unwrap(),
             // In-memory tests are fast, so progress check intervals can be lower.
             // Real world scenarios currently over-report stalls because of inefficiencies inside
             // infrastructure and actual networking issues. This check is only valuable to report
