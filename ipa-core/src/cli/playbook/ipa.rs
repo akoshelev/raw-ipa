@@ -130,7 +130,8 @@ where
 
     let mut delay = Duration::from_millis(125);
     loop {
-        if try_join_all(clients.iter().map(|client| client.query_status(query_id)))
+        if try_join_all(clients.iter().enumerate().map(|(i, client)| client
+            .query_status(query_id).map(move |v| v.map_err(|e| format!("Failed to get query status from helper {i}: {e}")))))
             .await
             .unwrap()
             .into_iter()
