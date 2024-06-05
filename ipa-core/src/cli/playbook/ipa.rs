@@ -5,7 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::future::try_join_all;
+use futures::future::try_join_all;
+use futures::future::FutureExt;
 use generic_array::GenericArray;
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -115,12 +116,13 @@ where
     try_join_all(
         inputs
             .into_iter()
+            .enumerate()
             .zip(clients)
-            .map(|(input_stream, client)| {
+            .map(|((i, input_stream), client)| {
                 client.query_input(QueryInput {
                     query_id,
                     input_stream,
-                })
+                }).map(move |v| v.map_err(|e| format!("Failed to submit query inputs to helper {i}: {e}")))
             }),
     )
     .await
