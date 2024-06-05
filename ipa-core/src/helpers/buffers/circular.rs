@@ -1,82 +1,158 @@
 use std::borrow::Borrow;
-use std::num::Wrapping;
-use std::ops::{Range, RangeBounds, RangeInclusive};
-use std::task::Poll;
+use std::ops::{ RangeBounds, RangeInclusive};
 use bytes::Buf;
 use generic_array::GenericArray;
 use typenum::Unsigned;
 use crate::ff::Serializable;
 use crate::helpers::Message;
 
-/// This is a specialized version of circular buffer, tailored to the needs of [`OrderingSender`].
-/// It behaves mostly like regular ring buffer, with a few notable differences
-/// * Until it accumulates enough data as specified by `read_threshold` parameter
-/// it stays closed for reads, meaning [`read`] method returns `Poll::Pending`
-/// * All writes must be aligned to `read_threshold` to operate on a single heap allocation.
+/// This is a specialized version of circular buffer implementation,
+/// tailored to what [`OrderingSender`] needs.
 ///
-/// Internally, it is built over a [`Vec`] with two extra pointers that indicate the place to read
-/// from, and to write to. When read happens, it moves the read pointer until it meets the write
-/// pointer. When read points to the same location at write, this buffer is considered empty.
+/// This construction requires one extra parameter, compared to
+/// traditional ring buffers: `read_size` that specifies the smallest
+/// continuous block of bytes that can be read off this buffer. It
+/// also requires the total `capacity` and the size of one write
+/// `write_size` to be provided at construction time. This allows it
+/// to use a single allocation.
+///
+/// For example: if buffer capacity is set to 32k and `read_size` is
+/// 4k, then buffer can only be read in blocks of 4k. `write_size` can
+/// be any value, aligned with 4k `read_size`.
+///
+/// The capacity of this buffer does not need to be a power of two, although
+/// you may want to have exactly that for performance of modulo operations
+/// widely used internally.
+///
+/// This allows using this buffer in scenarios where the working window
+/// is wide. If readers want smaller chunks of data, but can operate on
+/// them fast enough, then writers experience less interruptions hitting
+/// the capacity limit, because it can be set large enough.
+///
+/// This buffer can also be closed, using [`close`] method. After it is
+/// closed, it allows reads of any size, ubt it guarantees that all of them
+/// will be aligned with `write_size`.
+///
+/// ## Implementation notes
+/// This buffer is built over a [`Vec`] with two extra pointers that indicate
+/// the place to read from, and to write next chunk to. When read happens,
+/// it moves the read pointer until it meets the write pointer.
+/// When read points to the same location as write, this buffer is considered
+/// empty.
+///
+/// Both pointers operate within the range `[0, 2*capacity)` and clamped into
+/// the working range when used as index into the internal buffer. The reason
+/// is to be able to distinguish empty and full buffers.
+///
+/// This implementation does not perform checks in optimized builds,
+/// relying on [`OrderingSender`] to enforce correctness. If taken away,
+/// necessary adjustments need to be made to avoid data corruption.
 ///
 /// ## Alternative implementations
-/// If alignment to `read_threshold` is too much, a [`BipBuffer`] can be used instead. I just
-/// decided to implement something I am familiar with.
-///
+/// If alignment to `read_size` is too much, a [`BipBuffer`] can be used instead.
 ///
 /// ## Future improvements
-/// [`OrderingSender`] currently synchronizes reader and writers, but it does not have to if this
-/// implementation is made thread-safe. There exists a well-known lock-free FIFO implementation
-/// for a single producer, single consumer that uses atomics for read and write pointers.
-/// We can't make use of it as is because there are more than one writer. However, [`OrderingSender`]
-/// already knows now to allow only one write at a time, so it could be possible to make the entire
+/// [`OrderingSender`] currently synchronizes reader and writers, but it does not
+/// have to if this implementation is made thread-safe. There exists a well-known
+/// lock-free FIFO implementation for a single producer, single consumer that uses
+/// atomics for read and write pointers. We can't make use of it as is because there
+/// are more than one writer. However, [`OrderingSender`] already knows now to allow
+/// only one write at a time, so it could be possible to make the entire
 /// implementation lock-free.
 ///
 /// [`BipBuffer`]: <https://www.codeproject.com/Articles/3479/The-Bip-Buffer-The-Circular-Buffer-with-a-Twist>
 /// [`OrderingSender`]: crate::helpers::buffers::OrderingSender
+/// [`can_read`]: CircularBuf::can_read
+/// [`close`]: CircularBuf::close
 pub struct CircularBuf {
     write: usize,
     read: usize,
     read_size: usize,
     write_size: usize,
+    closed: bool,
     data: Vec<u8>,
 }
 
 impl CircularBuf {
+
+    /// Constructs a new instance of [`CircularBuf`] with reserved `capacity` bytes and specified
+    /// `write_size` and `read_size` bytes.
+    ///
+    /// ## Panics
+    /// If any of the following conditions are met:
+    /// * Any provided value is 0
+    /// * `write_size` is not a multiple of `capacity`
+    /// * `read_size` is not a multiple of `write_size`
+    /// * `read_size` is smaller than `write_size`
+    /// * `read_size` is larger than `capacity`
     pub fn new(capacity: usize, write_size: usize, read_size: usize) -> Self {
         debug_assert!(capacity > 0 && write_size > 0 && read_size > 0,
                       "Capacity \"{capacity}\", write \"{write_size}\" and read size \"{read_size}\" must all be greater than zero"); // enforced at the level above, so debug_assert is fine
-        debug_assert!(capacity % write_size == 0, "\"{}\" write size must divide capacity \"{}\"", write_size, capacity);
+        debug_assert!(capacity % write_size == 0, "\"{write_size}\" write size must divide capacity \"{capacity}\"");
+        debug_assert!(read_size % write_size == 0, "\"{write_size}\" write size must divide read_size \"{read_size}\"");
+        debug_assert!(read_size <= capacity, "read size \"{read_size}\" must be less than or equal to capacity \"{capacity}\"");
         Self {
             write: 0,
             read: 0,
             write_size,
             read_size,
+            closed: false,
             data: vec![0; capacity],
         }
     }
 
-    /// todo: explain why you need to check can_write
+    /// Closes this buffer, making it read-only. After it is closed, it allows reads of any size,
+    /// but it guarantees that all of them will be aligned with `write_size`.
+    ///
+    /// No writes will be accepted.
+    ///
+    /// ## Panics
+    /// if this buffer is already closed.
+    pub fn close(&mut self) {
+        debug_assert!(!self.closed, "Already closed");
+        self.closed = true;
+    }
+
+    /// Returns a handle that allows to perform a single write to the buffer. Write must be exactly
+    /// `write_size` bytes long and buffer must be open for writes and have sufficient capacity
+    /// to fit it. [`can_write`] can be used to check all of these conditions.
+    ///
+    /// ## Panics
+    /// If buffer is closed for writes or does not have enough capacity.
+    ///
+    /// [`can_write`]: Self::can_write
     pub fn next(&mut self) -> Next<'_> {
+        debug_assert!(!self.closed, "Writing to a closed buffer");
         debug_assert!(self.can_write(),
             "Not enough space for the next write: only {av} bytes available, but at least {req} is required",
             av = self.free(),
             req = self.write_size
         );
 
-        let range = self.range(self.write, self.write_size);
-
         Next {
+            range: self.range(self.write, self.write_size),
             buf: self,
-            range,
         }
     }
 
+    /// Performs a read off this buffer. if [`can_read`] is false before reading,
+    /// this method will not panic, but will return an empty vector instead.
+    ///
+    /// if [`can_read`] is true before reading, this method is guaranteed to return
+    /// a non-empty vector. The length of it depends on whether this buffer is
+    /// closed or no. For closed buffers, the valid len will be in `[1, read_size]`
+    /// range, but always aligned with `write_size`. For open buffers, len
+    /// is always equal to `read_size`.
+    ///
+    /// [`can_read`]: Self::can_read
     pub fn take(&mut self) -> Vec<u8> {
-        debug_assert!(!self.is_empty(), "Buffer is empty");
+        if !self.can_read() {
+            return Vec::new()
+        }
 
-        // todo: explain why it works - capacity is always a multiple of write_size and read_size too.
+        // Capacity is always a multiple of write_size, so delta is always aligned.
         let delta = std::cmp::min(self.read_size, self.len());
-        // todo: explain if can_read is not checked, then this may yield chunks of smaller size
+
         let mut ret = Vec::with_capacity(delta);
         let range = self.range(self.read, delta);
 
@@ -93,7 +169,13 @@ impl CircularBuf {
         ret
     }
 
+    /// Returns the number of bytes in this buffer.
     pub fn len(&self) -> usize {
+        // Modulo arithmetic and wrapping/overflow rules in Rust
+        // make it difficult to write `(self.write - self.read) % 2*N`.
+        // It works well for power-of-two sizes, but for arbitrary
+        // buffer capacity, it is easier to use N - (a - b) because
+        // write is always ahead of read.
         if self.write >= self.read {
             self.wrap(self.write - self.read)
         } else {
@@ -101,12 +183,19 @@ impl CircularBuf {
         }
     }
 
+    /// Returns `true` if this buffer can be read from.
     pub fn can_read(&self) -> bool {
-        self.len() >= self.read_size
+        (self.closed && !self.is_empty()) || self.len() >= self.read_size
     }
 
+    /// Returns `true` if this buffer can be written into.
     pub fn can_write(&self) -> bool {
-        self.free() >= self.write_size
+        !self.closed && self.free() >= self.write_size
+    }
+
+    /// Indicates whether this buffer is closed for writes.
+    pub fn is_closed(&self) -> bool {
+        self.closed
     }
 
     fn capacity(&self) -> usize {
@@ -133,18 +222,19 @@ impl CircularBuf {
         self.wrap(val + delta)
     }
 
-    // TODO: explain why inclusive
+    /// Returns an inclusive range for the next `read` or `write` operation.
+    /// Inclusive ranges make it easier to deal with wrap around % N. Specifically,
+    /// when the write cursor points to the end of the buffer.
     fn range(&self, ptr: usize, unit: usize) -> RangeInclusive<usize> {
         self.mask(ptr)..=self.mask(ptr + unit - 1)
     }
-
 }
 
 /// A handle to write chunks of data directly inside [`CircularBuf`] using [`CircularBuf::next`]
 /// method.
 pub struct Next<'a> {
+    range: RangeInclusive<usize>,
     buf: &'a mut CircularBuf,
-    range: RangeInclusive<usize>
 }
 
 impl Next<'_> {
@@ -161,9 +251,14 @@ impl Next<'_> {
     }
 }
 
+/// A trait that allows to write data into a [`CircularBuf`] using [`Next`] handle.
+/// It all exists to bring [`Serializable`] and slice interfaces together.
 trait BufWriteable {
+    /// Returns the size of the writeable.
     fn size(&self) -> usize;
 
+    /// Writes self into `data`. This method does not need to do bounds check, it is performed
+    /// by the caller of it.
     fn write(&self, data: &mut [u8]);
 }
 
@@ -233,7 +328,6 @@ mod test {
         }
 
         fn read_once(buf: &mut CircularBuf) -> Vec<usize> where usize: From<Self::Item> {
-            assert!(!buf.is_empty(), "Buffer is empty");
             buf.take().chunks(Self::UNIT_SIZE)
                 .map(|chunk| Self::Item::deserialize(GenericArray::from_slice(chunk)).unwrap())
                 .map(usize::from)
@@ -391,6 +485,8 @@ mod test {
         output.extend(Six::read_once(&mut buf).into_iter().map(usize::from));
         buf.next().write(&TwoBytes::from(&6));
         buf.next().write(&TwoBytes::from(&7));
+        buf.close();
+
         output.extend(Six::read_once(&mut buf).into_iter().map(usize::from));
 
         assert_eq!((0..8).collect::<Vec<_>>(), output);
@@ -420,6 +516,22 @@ mod test {
     }
 
     #[test]
+    fn panic_on_bad_read_size() {
+        let capacity = 6;
+        let write_size = 2;
+        let read_size = 3;
+
+        assert_eq!(
+            format!("\"{write_size}\" write size must divide read_size \"{read_size}\""),
+            unwind_panic_to_str(|| CircularBuf::new(capacity, write_size, read_size))
+        );
+        assert_eq!(
+           format!("\"{read_size}\" write size must divide read_size \"{write_size}\""),
+           unwind_panic_to_str(|| CircularBuf::new(capacity, read_size, write_size))
+        );
+    }
+
+    #[test]
     fn take() {
         type CircularBuf = FiveElements<TwoBytes>;
         // take is greedy and when called is going to get whatever is available
@@ -429,8 +541,28 @@ mod test {
         assert_eq!(vec![0, 1], CircularBuf::read_once(&mut buf));
         assert_eq!(vec![2, 3], CircularBuf::read_once(&mut buf));
 
-        // the last item is available on demand
+        // the last item is available only after buffer is closed
+        assert_eq!(Vec::<usize>::new(), CircularBuf::read_once(&mut buf));
+
+        buf.close();
+        assert!(!buf.can_write());
         assert_eq!(vec![4], CircularBuf::read_once(&mut buf));
+    }
+
+    #[test]
+    #[should_panic(expected = "Already closed")]
+    fn close_twice() {
+        let mut buf = new_buf::<FiveElements>();
+        buf.close();
+        buf.close();
+    }
+
+    #[test]
+    #[should_panic(expected = "Writing to a closed buffer")]
+    fn no_writes_after_close() {
+        let mut buf = new_buf::<FiveElements>();
+        buf.close();
+        buf.next().write(&TwoBytes::from(&0));
     }
 
     fn test_one<T: BufSetup>() where usize: From<T::Item> {
@@ -479,20 +611,13 @@ mod test {
 
     #[test]
     #[should_panic(expected = "Not enough space for the next write: only 0 bytes available, but at least 2 is required")]
-    fn next_cannot_write() {
+    fn not_enough_space() {
         type CircularBuf = FiveElements<TwoBytes>;
 
         let mut buf = new_buf::<CircularBuf>();
         CircularBuf::fill(&mut buf);
 
         let _ = buf.next();
-    }
-
-    #[test]
-    #[should_panic(expected = "Buffer is empty")]
-    fn take_cannot_read() {
-        let mut buf = new_buf::<FiveElements>();
-        let _ = buf.take();
     }
 
     #[test]

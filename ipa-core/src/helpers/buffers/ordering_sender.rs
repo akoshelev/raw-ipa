@@ -29,8 +29,6 @@ use crate::helpers::buffers::circular::CircularBuf;
 struct State {
     /// A store of bytes to write into.
     buf: CircularBuf,
-    /// The sender is closed.
-    closed: bool,
     /// An entity to wake when the buffer is read from.
     write_ready: Option<Waker>,
     /// Another entity to wake when the buffer is read from.
@@ -41,7 +39,6 @@ impl State {
     fn new(capacity: usize, write_size: usize, read_threshold: usize) -> Self {
         Self {
             buf: CircularBuf::new(capacity, write_size, read_threshold),
-            closed: false,
             write_ready: None,
             stream_ready: None,
         }
@@ -88,47 +85,28 @@ impl State {
     }
 
     fn take(&mut self, cx: &Context<'_>) -> Poll<Vec<u8>> {
-        if self.buf.can_read() || (self.closed && self.buf.len() > 0) {
-            let could_write = self.buf.can_write();
-            let v = self.buf.take();
-
-            if !could_write && !self.closed {
+        if self.buf.can_read() {
+            if !self.buf.can_write() {
+                // We are ready to unblock writers by taking some data that we know is there off
+                // the buffer
                 Self::wake(&mut self.write_ready);
             }
 
-            Poll::Ready(v)
+            Poll::Ready(self.buf.take())
         } else {
             Self::save_waker(&mut self.stream_ready, cx);
             Poll::Pending
         }
-
-
-        // if self.written > 0 && (self.written + self.spare >= self.buf.len() || self.closed) {
-        //     let v = self.buf[..self.written].to_vec();
-        //     self.written = 0;
-        //
-        //     Self::wake(&mut self.write_ready);
-        //     Poll::Ready(v)
-        // } else {
-        //     Self::save_waker(&mut self.stream_ready, cx);
-        //     Poll::Pending
-        // }
     }
 
     fn close(&mut self) {
-        debug_assert!(!self.closed);
-        self.closed = true;
+        self.buf.close();
         Self::wake(&mut self.stream_ready);
     }
 
-    // /// Returns `true` if more writes can be accepted by this sender.
-    // /// If message size exceeds the remaining capacity, [`write`] may
-    // /// still return `Poll::Pending` even if sender is open for writes.
-    // ///
-    // /// [`write`]: Self::write
-    // fn accept_writes(&self) -> bool {
-    //     self.written + self.spare < self.buf.len()
-    // }
+    fn is_closed(&self) -> bool {
+        self.buf.is_closed()
+    }
 }
 
 /// An saved waker for a given index.
@@ -347,7 +325,7 @@ impl OrderingSender {
     /// ## Panics
     /// If the underlying mutex is poisoned or locked by the same thread.
     pub fn is_closed(&self) -> bool {
-        self.state.lock().unwrap().closed
+        self.state.lock().unwrap().is_closed()
     }
 
     /// Perform the next `send` or `close` operation.
@@ -409,14 +387,14 @@ impl OrderingSender {
         if let Poll::Ready(v) = b.take(cx) {
             let next = self.next.load(Acquire);
             tracing::trace!(
-                closed = b.closed,
+                closed = b.is_closed(),
                 next = next,
                 len = v.len(),
                 "take_next ready"
             );
             self.waiting.wake(next);
             Poll::Ready(Some(v))
-        } else if b.closed {
+        } else if b.is_closed() {
             Poll::Ready(None)
         } else {
             // `b.take()` will have tracked the waker
@@ -472,7 +450,7 @@ impl<'a, M: Message, B: Borrow<M> + 'a> Future for Send<'a, M, B> {
         let this = self.as_mut();
 
         let res = this.sender.next_op(this.i, cx, |b| {
-            assert!(!b.closed, "writing on a closed stream");
+            assert!(!b.is_closed(), "writing on a closed stream");
             b.write(this.m.borrow(), cx)
         });
         // A successful write: wake the next in line.
