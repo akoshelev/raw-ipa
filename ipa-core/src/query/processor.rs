@@ -228,6 +228,7 @@ impl Processor {
                         mpc_transport,
                         shard_transport,
                     );
+                    tracing::info!("receive inputs: starting new query");
                     queries.insert(
                         input.query_id,
                         QueryState::Running(executor::execute(
@@ -237,6 +238,7 @@ impl Processor {
                             input.input_stream,
                         )),
                     );
+                    tracing::info!("receive inputs: query started");
                     Ok(())
                 } else {
                     let error = StateError::InvalidState {
@@ -259,7 +261,9 @@ impl Processor {
     /// ## Panics
     /// If the query collection mutex is poisoned.
     pub fn query_status(&self, query_id: QueryId) -> Result<QueryStatus, QueryStatusError> {
+        tracing::info!("query_status: waiting for lock");
         let mut queries = self.queries.inner.lock().unwrap();
+        tracing::info!("query_status: got the lock");
         let Some(mut state) = queries.remove(&query_id) else {
             return Err(QueryStatusError::NoSuchQuery(query_id));
         };
