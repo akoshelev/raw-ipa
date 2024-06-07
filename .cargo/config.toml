@@ -1,2 +1,5 @@
 [target.aarch64-apple-darwin]
-rustflags = ["--cfg", "aes_armv8"]
+rustflags = ["--cfg", "aes_armv8", "--cfg", "tokio_unstable"]
+
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

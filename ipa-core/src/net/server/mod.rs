@@ -191,7 +191,9 @@ impl MpcHelperServer {
             .expect("Failed to bind server to a port");
         #[cfg(not(test))] // reduce spam in test output
         tracing::info!(
-            "server listening on {}://{}",
+            "{:?}({:?}), server listening on {}://{}",
+            ::tokio::runtime::Handle::current().id(),
+            ::tokio::runtime::Handle::current().runtime_flavor(),
             if self.config.disable_https {
                 "http"
             } else {
