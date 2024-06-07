@@ -34,6 +34,7 @@ impl Verbosity {
         let filter_layer = self.log_filter();
         let fmt_layer = fmt::layer()
             .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+            .with_thread_ids(true)
             .with_ansi(std::io::stderr().is_terminal())
             .with_writer(stderr);
 
