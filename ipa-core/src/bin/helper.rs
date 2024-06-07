@@ -224,6 +224,12 @@ fn main() {
         .on_thread_stop(move || {
             tracing::info!("thread {:?} stopped", std::thread::current().id());
         })
+        .on_thread_park(move || {
+            tracing::info!("thread {:?} parked", std::thread::current().id());
+        })
+        .on_thread_unpark(move || {
+            tracing::info!("thread {:?} UNparked", std::thread::current().id());
+        })
         .build()
         .unwrap();
     let _guard = rt.enter();
