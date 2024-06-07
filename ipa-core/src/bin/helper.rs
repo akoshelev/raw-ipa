@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process,
 };
+use std::thread::Thread;
 
 use clap::{self, Parser, Subcommand};
 use hyper::http::uri::Scheme;
@@ -192,8 +193,7 @@ async fn server(args: ServerArgs) -> Result<(), BoxError> {
     Ok(())
 }
 
-#[tokio::main]
-pub async fn main() {
+async fn run() {
     let args = Args::parse();
     let _handle = args.logging.setup_logging();
 
@@ -209,3 +209,44 @@ pub async fn main() {
         process::exit(1);
     }
 }
+
+fn main() {
+    // let next_core = AtomicUsize::default();
+    let rt = ::tokio::runtime::Builder::new_multi_thread()
+        // .worker_threads(args.threads)
+        .enable_all()
+        .on_thread_start(move || {
+            tracing::info!("thread {:?} started", std::thread::current().id());
+            // let mut core_ids = core_affinity::get_core_ids().unwrap();
+            // let random_core = next_core.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % core_ids.len();
+            // core_affinity::set_for_current(core_ids[random_core]);
+        })
+        .on_thread_stop(move || {
+            tracing::info!("thread {:?} stopped", std::thread::current().id());
+        })
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    let task = rt.spawn(run());
+    rt.block_on(task).unwrap();
+}
+
+// pub fn main() {
+//     let args = Args::parse();
+//     let _handle = args.logging.setup_logging();
+//
+//     let res = match args.command {
+//         None => {
+//
+//             server(args.server).await
+//         },
+//         Some(HelperCommand::Keygen(args)) => keygen(&args),
+//         Some(HelperCommand::TestSetup(args)) => test_setup(args),
+//         Some(HelperCommand::Confgen(args)) => client_config_setup(args),
+//     };
+//
+//     if let Err(e) = res {
+//         error!("{e}");
+//         process::exit(1);
+//     }
+// }
