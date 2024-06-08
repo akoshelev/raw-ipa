@@ -222,16 +222,16 @@ fn main() {
     let task = rt.spawn(run());
 
     let rt_handle = rt.handle().clone();
-    let monitorer = std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            // std::thread::sleep(std::time::Duration::from_millis(100));
-            // ::tokio::task::block_in_place(|| {
-            //
-            // })
-            rt_handle.block_on(std::future::ready(()));
-        }
-    });
+    // let monitorer = std::thread::spawn(move || {
+    //     loop {
+    //         std::thread::sleep(std::time::Duration::from_secs(1));
+    //         // std::thread::sleep(std::time::Duration::from_millis(100));
+    //         // ::tokio::task::block_in_place(|| {
+    //         //
+    //         // })
+    //         rt_handle.block_on(std::future::ready(()));
+    //     }
+    // });
 
     let r = rt.block_on(task);
     r.unwrap();
