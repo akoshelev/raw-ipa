@@ -215,6 +215,7 @@ fn main() {
     let rt = ::tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(args.threads)
         .enable_all()
+        .disable_lifo_slot()
         .build()
         .unwrap();
     let _guard = rt.enter();
