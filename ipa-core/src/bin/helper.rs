@@ -215,26 +215,21 @@ fn main() {
     let rt = ::tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(args.threads)
         .enable_all()
-        .on_thread_start(move || {
-            tracing::info!("thread {:?} started", std::thread::current().id());
-            // let mut core_ids = core_affinity::get_core_ids().unwrap();
-            // let random_core = next_core.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % core_ids.len();
-            // core_affinity::set_for_current(core_ids[random_core]);
-        })
-        .on_thread_stop(move || {
-            tracing::info!("thread {:?} stopped", std::thread::current().id());
-        })
-        .on_thread_park(move || {
-            tracing::info!("thread {:?} parked", std::thread::current().id());
-        })
-        .on_thread_unpark(move || {
-            tracing::info!("thread {:?} UNparked", std::thread::current().id());
-        })
         .build()
         .unwrap();
     let _guard = rt.enter();
     let task = rt.spawn(run());
-    rt.block_on(task).unwrap();
+
+    let rt_handle = rt.handle().clone();
+    let monitorer = std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            rt_handle.spawn(std::future::ready(()));
+        }
+    });
+
+    let r = rt.block_on(task);
+    r.unwrap();
 }
 
 // pub fn main() {
