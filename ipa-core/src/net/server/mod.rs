@@ -201,12 +201,12 @@ impl MpcHelperServer {
             },
             bound_addr,
         );
-        tokio::spawn(async move {
-            loop {
-                ::tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                tracing::info!("observer works")
-            }
-        });
+        // tokio::spawn(async move {
+        //     loop {
+        //         ::tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        //         tracing::info!("observer works")
+        //     }
+        // });
         (bound_addr, task_handle)
     }
 

@@ -261,7 +261,6 @@ impl Processor {
     /// ## Panics
     /// If the query collection mutex is poisoned.
     pub fn query_status(&self, query_id: QueryId) -> Result<QueryStatus, QueryStatusError> {
-        tracing::info!("query_status request");
         let mut queries = self.queries.inner.lock().unwrap();
         let Some(mut state) = queries.remove(&query_id) else {
             return Err(QueryStatusError::NoSuchQuery(query_id));

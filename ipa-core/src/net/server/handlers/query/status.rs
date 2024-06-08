@@ -16,7 +16,6 @@ async fn handler(
     transport: Extension<Arc<HttpTransport>>,
     Path(query_id): Path<QueryId>,
 ) -> Result<Json<status::ResponseBody>, Error> {
-    tracing::info!("query status handler");
     let req = Request { query_id };
     let transport = Transport::clone_ref(&*transport);
     match transport.dispatch(req, BodyStream::empty()).await {
