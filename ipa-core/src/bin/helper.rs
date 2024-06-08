@@ -225,14 +225,11 @@ fn main() {
     let monitorer = std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
+            // std::thread::sleep(std::time::Duration::from_millis(100));
             // ::tokio::task::block_in_place(|| {
             //
             // })
-            // rt_handle.block_on(std::future::ready(()));
-            rt_handle.spawn(async move {
-                tokio::task::block_in_place(|| {});
-                std::future::ready(()).await;
-            });
+            rt_handle.block_on(std::future::ready(()));
         }
     });
 

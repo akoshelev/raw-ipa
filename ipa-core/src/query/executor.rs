@@ -134,9 +134,14 @@ where
         let prss = negotiate_prss(&gateway, &prss_gate(), &mut rng)
             .await
             .unwrap();
+        let t = ::tokio::task::block_in_place(move || {
+            let v = ::tokio::runtime::Handle::current().block_on(async {
+                query_impl(&prss, &gateway, &config, input_stream).await
+            });
+            tx.send(v)
+                .unwrap();
+        });
 
-        tx.send(query_impl(&prss, &gateway, &config, input_stream).await)
-            .unwrap();
     });
 
     RunningQuery {
