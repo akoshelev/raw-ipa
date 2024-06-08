@@ -33,8 +33,11 @@ pub fn router(transport: Arc<HttpTransport>) -> Router {
 
 #[cfg(all(test, unit_test))]
 mod tests {
-    use axum::http::uri::{Authority, Scheme};
-    use hyper::{Body, StatusCode};
+    use axum::{
+        body::Body,
+        http::uri::{Authority, Scheme},
+    };
+    use hyper::StatusCode;
 
     use crate::{
         helpers::{
@@ -83,7 +86,7 @@ mod tests {
                 http_serde::query::BASE_AXUM_PATH,
                 val.query_id
             );
-            hyper::Request::get(uri).body(hyper::Body::empty()).unwrap()
+            hyper::Request::get(uri).body(Body::empty()).unwrap()
         }
     }
 

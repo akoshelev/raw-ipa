@@ -9,7 +9,7 @@ use typenum::{U14, U2, U32, U8};
 
 use crate::{
     error::LengthError,
-    ff::{boolean::Boolean, ArrayAccess, Field, Serializable, U128Conversions},
+    ff::{boolean::Boolean, ArrayAccess, Expand, Field, Serializable, U128Conversions},
     protocol::prss::{FromRandom, FromRandomU128},
     secret_sharing::{Block, SharedValue, StdArray, Vectorizable},
 };
@@ -29,6 +29,19 @@ macro_rules! store_impl {
             type Size = $arraylength;
         }
     };
+}
+
+pub trait BooleanArray:
+    SharedValue + ArrayAccess<Output = Boolean> + Expand<Input = Boolean> + FromIterator<Boolean>
+{
+}
+
+impl<A> BooleanArray for A where
+    A: SharedValue
+        + ArrayAccess<Output = Boolean>
+        + Expand<Input = Boolean>
+        + FromIterator<Boolean>
+{
 }
 
 /// Iterator returned by `.iter()` on Boolean arrays
@@ -80,7 +93,7 @@ where
     }
 }
 
-// Macro for boolean arrays <= 128 bits.
+// Macro for boolean arrays ≤ 128 bits.
 macro_rules! boolean_array_impl_small {
     ($modname:ident, $name:ident, $bits:tt, $deser_type:tt) => {
         boolean_array_impl!($modname, $name, $bits, $deser_type);
@@ -256,7 +269,7 @@ macro_rules! boolean_array_impl {
                 ff::{boolean::Boolean, ArrayAccess, Expand, Serializable},
                 impl_shared_value_common,
                 secret_sharing::{
-                    replicated::semi_honest::{ASIterator, AdditiveShare},
+                    replicated::semi_honest::{BAASIterator, AdditiveShare},
                     FieldArray, SharedValue, SharedValueArray,
                 },
             };
@@ -532,7 +545,7 @@ macro_rules! boolean_array_impl {
             #[allow(clippy::into_iter_without_iter)]
             impl<'a> IntoIterator for &'a AdditiveShare<$name> {
                 type Item = AdditiveShare<Boolean>;
-                type IntoIter = ASIterator<'a, $name, Boolean>;
+                type IntoIter = BAASIterator<'a, $name>;
 
                 fn into_iter(self) -> Self::IntoIter {
                     self.iter()
@@ -758,6 +771,8 @@ macro_rules! boolean_array_impl {
     };
 }
 
+// Other store impls can be found in `galois_field.rs`. Each storage type must have only one impl.
+
 //impl store for U8
 store_impl!(U8, 64);
 
@@ -766,6 +781,14 @@ store_impl!(U14, 112);
 
 //impl store for U32
 store_impl!(U32, 256);
+
+// These macro invocations define the supported boolean array sizes. Sizes ≤ 128 should use
+// `boolean_array_impl_small!` to get `u128` conversions and helpers. Larger sizes must
+// use `boolean_array_impl!`. At any size, you may need to add `store_impl!`, and for large
+// sizes, additional manual impls may be necessary (see manual `BA256` impls below).
+//
+// If you also want support `AdditiveShare<Boolean, N>` vectorization, that needs to be added to
+// `secret_sharing::vector::impls`.
 
 //impl BA3
 boolean_array_impl_small!(boolean_array_3, BA3, 3, fallible);

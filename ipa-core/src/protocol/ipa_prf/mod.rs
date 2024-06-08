@@ -1,6 +1,11 @@
-use std::{array, convert::Infallible, iter, num::NonZeroU32, ops::Add};
+use std::{
+    convert::Infallible,
+    iter::{self, zip},
+    num::NonZeroU32,
+    ops::Add,
+};
 
-use futures_util::TryStreamExt;
+use futures::{stream, StreamExt, TryStreamExt};
 use generic_array::{ArrayLength, GenericArray};
 use typenum::{Unsigned, U18};
 
@@ -9,11 +14,11 @@ use crate::{
     error::{Error, LengthError, UnwrapInfallible},
     ff::{
         boolean::Boolean,
-        boolean_array::{BA5, BA64, BA8},
+        boolean_array::{BooleanArray, BA5, BA64, BA8},
         ec_prime_field::Fp25519,
-        CustomArray, Serializable, U128Conversions,
+        Serializable, U128Conversions,
     },
-    helpers::stream::{process_slice_by_chunks, ChunkData, TryFlattenItersExt},
+    helpers::stream::{process_slice_by_chunks, Chunk, ChunkData, TryFlattenItersExt},
     protocol::{
         basics::{BooleanArrayMul, BooleanProtocols, SecureMul},
         context::{
@@ -40,6 +45,7 @@ use crate::{
 
 pub(crate) mod aggregation;
 pub mod boolean_ops;
+pub mod oprf_padding;
 pub mod prf_eval;
 pub mod prf_sharding;
 
@@ -48,6 +54,8 @@ mod malicious_security;
 mod quicksort;
 pub(crate) mod shuffle;
 pub(crate) mod step;
+#[cfg(all(test, unit_test))]
+pub mod validation_protocol;
 
 /// Match key type
 pub type MatchKey = BA64;
@@ -67,15 +75,15 @@ pub const MK_BITS: usize = BA64::BITS as usize;
 // supplying an associated constant `<BK as BreakdownKey>::MAX_BREAKDOWNS` as the value of a const
 // parameter.) Structured the way we have it, it probably doesn't make sense to use the
 // `BreakdownKey` trait in places where the `B` const parameter is not already available.
-pub trait BreakdownKey<const MAX_BREAKDOWNS: usize>:
-    SharedValue + U128Conversions + CustomArray<Element = Boolean>
-{
-}
+pub trait BreakdownKey<const MAX_BREAKDOWNS: usize>: BooleanArray + U128Conversions {}
 impl BreakdownKey<32> for BA5 {}
 impl BreakdownKey<256> for BA8 {}
 
+/// Vectorization dimension for share conversion
+pub const CONV_CHUNK: usize = 256;
+
 /// Vectorization dimension for PRF
-pub const PRF_CHUNK: usize = 64;
+pub const PRF_CHUNK: usize = 16;
 
 /// Vectorization dimension for aggregation.
 pub const AGG_CHUNK: usize = 256;
@@ -211,9 +219,9 @@ pub async fn oprf_ipa<'ctx, BK, TV, HV, TS, const SS_BITS: usize, const B: usize
 ) -> Result<Vec<Replicated<HV>>, Error>
 where
     BK: BreakdownKey<B>,
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    HV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TV: BooleanArray + U128Conversions,
+    HV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
     Boolean: FieldSimd<B>,
     Replicated<Boolean, B>:
         BooleanProtocols<UpgradedSemiHonestContext<'ctx, NotSharded, Boolean>, B>,
@@ -263,62 +271,36 @@ async fn compute_prf_for_inputs<C, BK, TV, TS>(
 where
     C: UpgradableContext,
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
-    BK: SharedValue + CustomArray<Element = Boolean>,
-    TV: SharedValue + CustomArray<Element = Boolean>,
-    TS: SharedValue + CustomArray<Element = Boolean>,
-    Replicated<Boolean, PRF_CHUNK>: BooleanProtocols<C, PRF_CHUNK>,
+    BK: BooleanArray,
+    TV: BooleanArray,
+    TS: BooleanArray,
+    Replicated<Boolean, CONV_CHUNK>: BooleanProtocols<C, CONV_CHUNK>,
     Replicated<Fp25519, PRF_CHUNK>: SecureMul<C> + FromPrss,
 {
-    let ctx = ctx.set_total_records((input_rows.len() + PRF_CHUNK - 1) / PRF_CHUNK);
-    let convert_ctx = ctx.narrow(&Step::ConvertFp25519);
-    let eval_ctx = ctx.narrow(&Step::EvalPrf);
+    let convert_ctx = ctx
+        .narrow(&Step::ConvertFp25519)
+        .set_total_records((input_rows.len() + CONV_CHUNK - 1) / CONV_CHUNK);
+    let eval_ctx = ctx
+        .narrow(&Step::EvalPrf)
+        .set_total_records((input_rows.len() + PRF_CHUNK - 1) / PRF_CHUNK);
 
     let prf_key = gen_prf_key(&eval_ctx);
 
-    seq_join(
+    let curve_pts = seq_join(
         ctx.active_work(),
         process_slice_by_chunks(
             input_rows,
-            move |idx, records: ChunkData<_, PRF_CHUNK>| {
+            move |idx, records: ChunkData<_, CONV_CHUNK>| {
+                let record_id = RecordId::from(idx);
                 let convert_ctx = convert_ctx.clone();
-                let eval_ctx = eval_ctx.clone();
-                let prf_key = prf_key.clone();
-
-                async move {
-                    let record_id = RecordId::from(idx);
-                    let input_match_keys: &dyn Fn(usize) -> Replicated<MatchKey> =
-                        &|i| records[i].match_key.clone();
-                    let mut match_keys = BitDecomposed::new(iter::empty());
-                    match_keys
-                        .transpose_from(input_match_keys)
-                        .unwrap_infallible();
-                    let curve_pts =
-                        convert_to_fp25519::<_, PRF_CHUNK>(convert_ctx, record_id, match_keys)
-                            .await?;
-
-                    let prf_of_match_keys =
-                        eval_dy_prf::<_, PRF_CHUNK>(eval_ctx, record_id, &prf_key, curve_pts)
-                            .await?;
-
-                    Ok(array::from_fn(|i| {
-                        let OPRFIPAInputRow {
-                            match_key: _,
-                            is_trigger,
-                            breakdown_key,
-                            trigger_value,
-                            timestamp,
-                        } = &records[i];
-
-                        PrfShardedIpaInputRow {
-                            prf_of_match_key: prf_of_match_keys[i],
-                            is_trigger_bit: is_trigger.clone(),
-                            breakdown_key: breakdown_key.clone(),
-                            trigger_value: trigger_value.clone(),
-                            timestamp: timestamp.clone(),
-                            sort_key: Replicated::ZERO,
-                        }
-                    }))
-                }
+                let input_match_keys: &dyn Fn(usize) -> Replicated<MatchKey> =
+                    &|i| records[i].match_key.clone();
+                let mut match_keys: BitDecomposed<Replicated<Boolean, 256>> =
+                    BitDecomposed::new(iter::empty());
+                match_keys
+                    .transpose_from(input_match_keys)
+                    .unwrap_infallible();
+                convert_to_fp25519::<_, CONV_CHUNK, PRF_CHUNK>(convert_ctx, record_id, match_keys)
             },
             || OPRFIPAInputRow {
                 match_key: Replicated::<MatchKey>::ZERO,
@@ -329,9 +311,44 @@ where
             },
         ),
     )
+    .map_ok(Chunk::unpack::<PRF_CHUNK>)
     .try_flatten_iters()
-    .try_collect()
-    .await
+    .try_collect::<Vec<_>>()
+    .await?;
+
+    let prf_of_match_keys = seq_join(
+        ctx.active_work(),
+        stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
+            let record_id = RecordId::from(i);
+            let eval_ctx = eval_ctx.clone();
+            let prf_key = &prf_key;
+            curve_pts
+                .then(move |pts| eval_dy_prf::<_, PRF_CHUNK>(eval_ctx, record_id, prf_key, pts))
+        }),
+    )
+    .try_collect::<Vec<_>>()
+    .await?;
+
+    Ok(zip(input_rows, prf_of_match_keys.into_iter().flatten())
+        .map(|(input, prf_of_match_key)| {
+            let OPRFIPAInputRow {
+                match_key: _,
+                is_trigger,
+                breakdown_key,
+                trigger_value,
+                timestamp,
+            } = &input;
+
+            PrfShardedIpaInputRow {
+                prf_of_match_key,
+                is_trigger_bit: is_trigger.clone(),
+                breakdown_key: breakdown_key.clone(),
+                trigger_value: trigger_value.clone(),
+                timestamp: timestamp.clone(),
+                sort_key: Replicated::ZERO,
+            }
+        })
+        .collect())
 }
 
 #[cfg(all(test, any(unit_test, feature = "shuttle")))]

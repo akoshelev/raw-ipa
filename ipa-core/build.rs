@@ -23,6 +23,7 @@ track_steps!(
             aggregation::step,
             step,
         },
+        dp::step,
         step,
     },
     test_fixture::step

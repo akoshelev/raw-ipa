@@ -15,8 +15,8 @@ use crate::{
     error::{Error, LengthError},
     ff::{
         boolean::Boolean,
-        boolean_array::{BA32, BA7},
-        ArrayAccess, CustomArray, Expand, Field, U128Conversions,
+        boolean_array::{BooleanArray, BA32, BA7},
+        ArrayAccess, Field, U128Conversions,
     },
     helpers::{repeat_n, stream::TryFlattenItersExt},
     protocol::{
@@ -27,7 +27,8 @@ use crate::{
             NBitStep,
         },
         context::{
-            Context, SemiHonestContext, UpgradableContext, UpgradedSemiHonestContext, Validator,
+            semi_honest::Upgraded, Context, SemiHonestContext, UpgradableContext,
+            UpgradedSemiHonestContext, Validator,
         },
         ipa_prf::{
             aggregation::aggregate_contributions,
@@ -46,7 +47,10 @@ use crate::{
         RecordId,
     },
     secret_sharing::{
-        replicated::{semi_honest::AdditiveShare as Replicated, ReplicatedSecretSharing},
+        replicated::{
+            semi_honest::{AdditiveShare as Replicated, AdditiveShare},
+            ReplicatedSecretSharing,
+        },
         BitDecomposed, FieldSimd, SharedValue, TransposeFrom,
     },
     seq_join::{seq_join, SeqJoin},
@@ -68,7 +72,7 @@ pub struct PrfShardedIpaInputRow<BK: SharedValue, TV: SharedValue, TS: SharedVal
 
 impl<BK: SharedValue, TS, TV: SharedValue> PrfShardedIpaInputRow<BK, TV, TS>
 where
-    TS: SharedValue + ArrayAccess<Output = Boolean> + Expand<Input = Boolean>,
+    TS: BooleanArray,
 {
     /// This function defines the sort key.
     /// The order of sorting is `timestamp`, `is_trigger_bit`, `counter`.
@@ -113,9 +117,9 @@ struct InputsRequiredFromPrevRow<BK: SharedValue, TV: SharedValue, TS: SharedVal
 
 impl<BK, TV, TS> InputsRequiredFromPrevRow<BK, TV, TS>
 where
-    BK: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    BK: BooleanArray + U128Conversions,
+    TV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
 {
     ///
     /// This function contains the main logic for the per-user attribution circuit.
@@ -279,6 +283,9 @@ pub struct AttributionOutputs<BK, TV> {
     pub capped_attributed_trigger_value: TV,
 }
 
+pub type SecretSharedAttributionOutputs<BK, TV> =
+    AttributionOutputs<AdditiveShare<BK>, AdditiveShare<TV>>;
+
 pub trait GroupingKey {
     fn get_grouping_key(&self) -> u64;
 }
@@ -292,9 +299,9 @@ pub fn histograms_ranges_sortkeys<BK, TV, TS>(
     input: &mut [PrfShardedIpaInputRow<BK, TV, TS>],
 ) -> (Vec<usize>, Vec<Range<usize>>)
 where
-    BK: SharedValue,
-    TV: SharedValue,
-    TS: SharedValue + ArrayAccess<Output = Boolean> + Expand<Input = Boolean>,
+    BK: BooleanArray,
+    TV: BooleanArray,
+    TS: BooleanArray,
 {
     let mut histogram = vec![];
     let mut last_prf = 0;
@@ -384,9 +391,7 @@ where
 /// This circuit expects to receive records from multiple users,
 /// but with all of the records from a given user adjacent to one another, and in time order.
 ///
-/// This circuit will compute attribution, and per-user capping.
-///
-/// The output of this circuit is the input to the next stage: Aggregation.
+/// This circuit will compute attribution, per-user capping and aggregation.
 ///
 /// # Errors
 /// Propagates errors from multiplications
@@ -401,9 +406,9 @@ pub async fn attribute_cap_aggregate<'ctx, BK, TV, HV, TS, const SS_BITS: usize,
 ) -> Result<Vec<Replicated<HV>>, Error>
 where
     BK: BreakdownKey<B>,
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    HV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TV: BooleanArray + U128Conversions,
+    HV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
     Boolean: FieldSimd<B>,
     Replicated<Boolean, B>:
         BooleanProtocols<UpgradedSemiHonestContext<'ctx, NotSharded, Boolean>, B>,
@@ -439,27 +444,8 @@ where
     let mut collected = rows_chunked_by_user.collect::<Vec<_>>().await;
     collected.sort_by(|a, b| std::cmp::Ord::cmp(&b.len(), &a.len()));
 
-    let chunked_user_results =
-        collected
-            .into_iter()
-            .enumerate()
-            .map(|(record_id, rows_for_user)| {
-                let num_user_rows = rows_for_user.len();
-                let contexts = ctx_for_row_number[..num_user_rows - 1].to_owned();
-
-                evaluate_per_user_attribution_circuit::<BK, TV, TS, SS_BITS>(
-                    contexts,
-                    RecordId::from(record_id),
-                    rows_for_user,
-                    attribution_window_seconds,
-                )
-            });
-
-    // Execute all of the async futures (sequentially), and flatten the result
-    let flattened_user_results: Vec<_> =
-        seq_join(sh_ctx.active_work(), stream::iter(chunked_user_results))
-            .try_flatten_iters()
-            .collect()
+    let flattened_user_results =
+        attribute::<_, _, _, SS_BITS, B>(ctx_for_row_number, collected, attribution_window_seconds)
             .await;
 
     let attribution_validator = sh_ctx.narrow(&Step::Aggregate).validator::<Boolean>();
@@ -472,16 +458,57 @@ where
     .await
 }
 
+#[tracing::instrument(name = "attribute_cap", skip_all, fields(unique_match_keys = input.len()))]
+async fn attribute<BK, TV, TS, const SS_BITS: usize, const B: usize>(
+    contexts: Vec<Upgraded<'_, NotSharded, Boolean>>,
+    input: Vec<Vec<PrfShardedIpaInputRow<BK, TV, TS>>>,
+    attribution_window_seconds: Option<NonZeroU32>,
+) -> Vec<Result<SecretSharedAttributionOutputs<BK, TV>, Error>>
+where
+    BK: BreakdownKey<B>,
+    TV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
+    for<'a> Replicated<BK>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
+    for<'a> Replicated<TS>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
+    for<'a> Replicated<TV>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
+{
+    let active_work = contexts
+        .first()
+        .expect("Attribution circuit is called on an non-empty input")
+        .active_work();
+    let chunked_user_results = input
+        .into_iter()
+        .enumerate()
+        .map(|(record_id, rows_for_user)| {
+            let num_user_rows = rows_for_user.len();
+            let contexts = contexts[..num_user_rows - 1].to_owned();
+
+            evaluate_per_user_attribution_circuit::<BK, TV, TS, SS_BITS>(
+                contexts,
+                RecordId::from(record_id),
+                rows_for_user,
+                attribution_window_seconds,
+            )
+        });
+
+    // Execute all of the async futures (sequentially), and flatten the result
+    seq_join(active_work, stream::iter(chunked_user_results))
+        .try_flatten_iters()
+        .collect()
+        .await
+}
+
+#[tracing::instrument(level = "debug", name = "per_user", skip_all, fields(rows = rows_for_user.len()))]
 async fn evaluate_per_user_attribution_circuit<BK, TV, TS, const SS_BITS: usize>(
     ctx_for_row_number: Vec<UpgradedSemiHonestContext<'_, NotSharded, Boolean>>,
     record_id: RecordId,
     rows_for_user: Vec<PrfShardedIpaInputRow<BK, TV, TS>>,
     attribution_window_seconds: Option<NonZeroU32>,
-) -> Result<Vec<AttributionOutputs<Replicated<BK>, Replicated<TV>>>, Error>
+) -> Result<Vec<SecretSharedAttributionOutputs<BK, TV>>, Error>
 where
-    BK: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    BK: BooleanArray + U128Conversions,
+    TV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
     for<'a> Replicated<BK>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
     for<'a> Replicated<TS>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
     for<'a> Replicated<TV>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
@@ -545,7 +572,7 @@ async fn breakdown_key_of_most_recent_source_event<C, BK>(
 ) -> Result<Replicated<BK>, Error>
 where
     C: Context,
-    BK: SharedValue + CustomArray<Element = Boolean>,
+    BK: BooleanArray,
     Replicated<BK>: BooleanArrayMul<C>,
 {
     select(
@@ -570,7 +597,7 @@ async fn timestamp_of_most_recent_source_event<C, TS>(
 ) -> Result<Replicated<TS>, Error>
 where
     C: Context,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TS: BooleanArray + U128Conversions,
     Replicated<TS>: BooleanArrayMul<C>,
 {
     match attribution_window_seconds {
@@ -609,8 +636,8 @@ async fn zero_out_trigger_value_unless_attributed<'a, TV, TS>(
     source_event_timestamp: &Replicated<TS>,
 ) -> Result<Replicated<TV>, Error>
 where
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TV: BooleanArray + U128Conversions,
+    TS: BooleanArray + U128Conversions,
     Replicated<TV>: BooleanArrayMul<UpgradedSemiHonestContext<'a, NotSharded, Boolean>>,
 {
     let (did_trigger_get_attributed, is_trigger_within_window) = try_join(
@@ -662,7 +689,7 @@ async fn is_trigger_event_within_attribution_window<C, TS>(
 ) -> Result<Replicated<Boolean>, Error>
 where
     C: Context,
-    TS: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TS: BooleanArray + U128Conversions,
     Replicated<Boolean>: BooleanProtocols<C>,
 {
     if let Some(attribution_window_seconds) = attribution_window_seconds {
@@ -728,7 +755,7 @@ async fn compute_capped_trigger_value<C, TV>(
 ) -> Result<Replicated<TV>, Error>
 where
     C: Context,
-    TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+    TV: BooleanArray + U128Conversions,
     Replicated<TV>: BooleanArrayMul<C>,
 {
     let narrowed_ctx1 =
@@ -763,8 +790,8 @@ pub mod tests {
     use crate::{
         ff::{
             boolean::Boolean,
-            boolean_array::{BA16, BA20, BA3, BA5, BA8},
-            CustomArray, Field, U128Conversions,
+            boolean_array::{BooleanArray, BA16, BA20, BA3, BA5, BA8},
+            Field, U128Conversions,
         },
         protocol::ipa_prf::prf_sharding::attribute_cap_aggregate,
         rand::Rng,
@@ -886,8 +913,8 @@ pub mod tests {
     impl<BK, TV> Reconstruct<PreAggregationTestOutputInDecimal>
         for [&AttributionOutputs<Replicated<BK>, Replicated<TV>>; 3]
     where
-        BK: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
-        TV: SharedValue + U128Conversions + CustomArray<Element = Boolean>,
+        BK: BooleanArray + U128Conversions,
+        TV: BooleanArray + U128Conversions,
     {
         fn reconstruct(&self) -> PreAggregationTestOutputInDecimal {
             let [s0, s1, s2] = self;
