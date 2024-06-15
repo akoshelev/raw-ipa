@@ -131,7 +131,6 @@ where
 
     let mut delay = Duration::from_millis(125);
     loop {
-        tracing::info!("Poll helpers for MPC status");
         if try_join_all(clients.iter().enumerate().map(|(i, client)| client
             .query_status(query_id).map(move |v| v.map_err(|e| format!("Failed to get query status from helper {i}: {e}")))))
             .await
@@ -141,7 +140,6 @@ where
         {
             break;
         }
-        tracing::info!("Poll helpers for MPC status complete");
 
         sleep(delay).await;
         delay = min(Duration::from_secs(5), delay * 2);
