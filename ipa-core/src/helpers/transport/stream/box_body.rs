@@ -31,6 +31,19 @@ impl WrappedBoxBodyStream {
     pub fn empty() -> Self {
         WrappedBoxBodyStream(Box::pin(futures::stream::empty()))
     }
+
+    pub fn from_byte_vec(buf: Vec<u8>) -> Self {
+        const MAX_CHUNK_SIZE: usize = 1 << 16; // 64 KiB
+        let mut segment = Bytes::from(buf);
+        let mut segments = Vec::with_capacity(segment.len() / MAX_CHUNK_SIZE);
+        while segment.len() > MAX_CHUNK_SIZE {
+            segments.push(Ok(segment.split_to(MAX_CHUNK_SIZE)));
+        }
+        segments.push(Ok(segment));
+
+        tracing::info!("[in-memory-infra] created body with {} chunks, each does not exceed {} size", segments.len(), MAX_CHUNK_SIZE);
+        Self::from_bytes_stream(futures::stream::iter(segments))
+    }
 }
 
 impl Stream for WrappedBoxBodyStream {
