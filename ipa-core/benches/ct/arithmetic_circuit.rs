@@ -1,3 +1,5 @@
+mod prss;
+
 use criterion::{
     black_box, criterion_group, criterion_main, measurement::Measurement, BatchSize,
     BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, Throughput,
