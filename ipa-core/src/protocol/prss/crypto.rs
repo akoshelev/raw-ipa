@@ -1,3 +1,5 @@
+use std::iter::{zip, Zip};
+
 use aes::{
     cipher::{BlockEncrypt, KeyInit},
     Aes256,
@@ -11,6 +13,7 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
     ff::Field,
+    helpers::Direction,
     protocol::prss::{PrssIndex, PrssIndex128},
     secret_sharing::{
         replicated::{semi_honest::AdditiveShare, ReplicatedSecretSharing},
@@ -139,11 +142,16 @@ impl<T: FromRandom + SharedValue> FromPrss<usize> for AdditiveShare<T> {
 }
 
 pub trait SharedRandomness {
-    type ChunksIter<'a, Z: ArrayLength>: Iterator<
-        Item = (GenericArray<u128, Z>, GenericArray<u128, Z>),
-    >
+    type ChunkIter<'a, Z: ArrayLength>: Iterator<Item = GenericArray<u128, Z>>
     where
         Self: 'a;
+
+    #[must_use]
+    fn generate_chunk_iter<I: Into<PrssIndex>, Z: ArrayLength>(
+        &self,
+        index: I,
+        direction: Direction,
+    ) -> Self::ChunkIter<'_, Z>;
 
     /// Return an iterator over chunks of generated randomness.
     ///
@@ -155,7 +163,13 @@ pub trait SharedRandomness {
     fn generate_chunks_iter<I: Into<PrssIndex>, Z: ArrayLength>(
         &self,
         index: I,
-    ) -> Self::ChunksIter<'_, Z>;
+    ) -> Zip<Self::ChunkIter<'_, Z>, Self::ChunkIter<'_, Z>> {
+        let index = index.into();
+        zip(
+            self.generate_chunk_iter(index, Direction::Left),
+            self.generate_chunk_iter(index, Direction::Right),
+        )
+    }
 
     /// Generate two random values, one that is known to the left helper
     /// and one that is known to the right helper.
@@ -191,6 +205,19 @@ pub trait SharedRandomness {
     #[must_use]
     fn generate<T: FromPrss, I: Into<PrssIndex>>(&self, index: I) -> T {
         T::from_prss(self, index)
+    }
+
+    fn generate_one_side<T: FromRandom, I: Into<PrssIndex>>(
+        &self,
+        index: I,
+        direction: Direction,
+    ) -> T {
+        let index = index.into();
+        T::from_random(
+            self.generate_chunk_iter(index, direction)
+                .next()
+                .unwrap_or_else(|| panic!("Can generate randomness for index {index:?}")),
+        )
     }
 
     /// Generate something that implements the `FromPrss` trait, passing parameters.

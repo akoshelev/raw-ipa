@@ -14,6 +14,9 @@ pub mod metrics {
     pub const REQUESTS_RECEIVED: &str = "requests.received";
     pub const RECORDS_SENT: &str = "records.sent";
     pub const BYTES_SENT: &str = "bytes.sent";
+    /// This measures the number of PRSS invocations per helper pair. That is,
+    /// if H1 invokes PRSS once to generate a pair (F, F), this will be incremented
+    /// twice
     pub const INDEXED_PRSS_GENERATED: &str = "i.prss.gen";
     pub const SEQUENTIAL_PRSS_GENERATED: &str = "s.prss.gen";
     pub use ::ipa_step::descriptive::labels::STEP_NARROWED;

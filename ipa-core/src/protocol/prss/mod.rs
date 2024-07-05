@@ -15,6 +15,7 @@ use generic_array::{sequence::GenericSequence, ArrayLength, GenericArray};
 use x25519_dalek::PublicKey;
 
 use crate::{
+    helpers::Direction,
     protocol::{Gate, RecordId},
     rand::{CryptoRng, RngCore},
     sync::{Arc, Mutex},
@@ -79,7 +80,7 @@ impl TryFrom<u128> for PrssIndex128 {
 /// PRSS indexes are used to ensure that distinct pseudo-randomness is generated for every value
 /// output by PRSS. It is often sufficient to use record IDs as PRSS indexes, and
 /// `impl From<RecordId> for PrssIndex` is provided for that purpose.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub struct PrssIndex(u32);
 
 impl From<u32> for PrssIndex {
@@ -136,42 +137,56 @@ pub struct IndexedSharedRandomness {
 }
 
 impl SharedRandomness for IndexedSharedRandomness {
-    type ChunksIter<'a, Z: ArrayLength> = ChunksIter<'a, Z>;
+    type ChunkIter<'a, Z: ArrayLength> = ChunkIter<'a, Z>;
 
-    fn generate_chunks_iter<I: Into<PrssIndex>, Z: ArrayLength>(
+    fn generate_chunk_iter<I: Into<PrssIndex>, Z: ArrayLength>(
         &self,
         index: I,
-    ) -> Self::ChunksIter<'_, Z> {
-        ChunksIter {
-            inner: self,
-            index: index.into(),
-            offset: 0,
-            phantom_data: PhantomData,
-        }
+        direction: Direction,
+    ) -> Self::ChunkIter<'_, Z> {
+        Self::ChunkIter::new(self, index, direction)
     }
 }
 
-pub struct ChunksIter<'a, Z: ArrayLength> {
+pub struct ChunkIter<'a, Z: ArrayLength> {
     inner: &'a IndexedSharedRandomness,
     index: PrssIndex,
     offset: usize,
+    direction: Direction,
     phantom_data: PhantomData<Z>,
 }
 
-impl<'a, Z: ArrayLength> Iterator for ChunksIter<'a, Z> {
-    type Item = (GenericArray<u128, Z>, GenericArray<u128, Z>);
+impl<'a, Z: ArrayLength> Iterator for ChunkIter<'a, Z> {
+    type Item = GenericArray<u128, Z>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let l = GenericArray::generate(|i| {
-            self.inner.left.generate(self.index.offset(self.offset + i))
+        let chunk = GenericArray::generate(|i| {
+            let generator = match self.direction {
+                Direction::Left => &self.inner.left,
+                Direction::Right => &self.inner.right,
+            };
+
+            generator.generate(self.index.offset(self.offset + i))
         });
-        let r = GenericArray::generate(|i| {
-            self.inner
-                .right
-                .generate(self.index.offset(self.offset + i))
-        });
+
         self.offset += Z::USIZE;
-        Some((l, r))
+        Some(chunk)
+    }
+}
+
+impl<'a, Z: ArrayLength> ChunkIter<'a, Z> {
+    pub fn new<I: Into<PrssIndex>>(
+        prss: &'a IndexedSharedRandomness,
+        index: I,
+        direction: Direction,
+    ) -> Self {
+        Self {
+            inner: prss,
+            index: index.into(),
+            offset: 0,
+            direction,
+            phantom_data: PhantomData,
+        }
     }
 }
 

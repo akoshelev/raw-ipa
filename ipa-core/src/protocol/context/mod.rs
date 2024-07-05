@@ -552,7 +552,7 @@ mod tests {
 
     use crate::{
         ff::{
-            boolean_array::{BA3, BA8},
+            boolean_array::{BA3, BA64, BA8},
             Field, Fp31, Serializable, U128Conversions,
         },
         helpers::{Direction, Role},
@@ -580,6 +580,12 @@ mod tests {
             WithShards,
         },
     };
+
+    /// Each helper can generate randomness shared with the peer on the left and on the right.
+    /// Protocols in these tests, invoke PRSS methods that generate a pair in one shot.
+    /// This results in PRSS metrics incremented twice per invocation and this constant helps
+    /// to track that.
+    const PRSS_INVOCATIONS_PER_HELPER: usize = 2;
 
     trait ReplicatedLeftValue<F: Field> {
         fn l(&self) -> F;
@@ -679,8 +685,8 @@ mod tests {
 
         let indexed_prss_assert = snapshot
             .assert_metric(INDEXED_PRSS_GENERATED)
-            .total(3 * input_size)
-            .per_step(&metrics_step, 3 * input_size);
+            .total(PRSS_INVOCATIONS_PER_HELPER * 3 * input_size)
+            .per_step(&metrics_step, PRSS_INVOCATIONS_PER_HELPER * 3 * input_size);
 
         let bytes_sent_assert = snapshot
             .assert_metric(BYTES_SENT)
@@ -697,7 +703,7 @@ mod tests {
         for role in Role::all() {
             records_sent_assert.per_helper(role, input_size);
             bytes_sent_assert.per_helper(role, field_size * input_size);
-            indexed_prss_assert.per_helper(role, input_size);
+            indexed_prss_assert.per_helper(role, PRSS_INVOCATIONS_PER_HELPER * input_size);
             seq_prss_assert.per_helper(role, 6 * input_size);
         }
     }
@@ -757,11 +763,11 @@ mod tests {
         // (input_size) to execute toy protocol
         // (1) to generate randomness for check_zero
         // (1) to multiply output with r
-        let prss_factor = |input_size| 3 * input_size + 3 + 1 + 1;
+        let prss_factor = |input_size| PRSS_INVOCATIONS_PER_HELPER * (3 * input_size + 3 + 1 + 1);
         let indexed_prss_assert = snapshot
             .assert_metric(INDEXED_PRSS_GENERATED)
             .total(3 * prss_factor(input_size))
-            .per_step(&metrics_step, 3 * input_size);
+            .per_step(&metrics_step, PRSS_INVOCATIONS_PER_HELPER * 3 * input_size);
 
         // see semi-honest test for explanation
         let seq_prss_assert = snapshot
@@ -865,5 +871,28 @@ mod tests {
 
             assert_eq!(input, r);
         });
+    }
+
+    #[test]
+    fn prss_one_side() {
+        run(|| async {
+            let input = ();
+            let world = TestWorld::default();
+
+            world
+                .semi_honest(input, |ctx, _| async move {
+                    let left_value: BA64 = ctx
+                        .prss()
+                        .generate_one_side(RecordId::FIRST, Direction::Left);
+                    let right_value = ctx
+                        .prss()
+                        .generate_one_side(RecordId::FIRST, Direction::Right);
+
+                    Replicated::new(left_value, right_value)
+                })
+                .await
+                // reconstruct validates that sharings are valid
+                .reconstruct();
+        })
     }
 }

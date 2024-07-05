@@ -4,7 +4,7 @@ use generic_array::ArrayLength;
 use rand_core::{Error, RngCore};
 
 use crate::{
-    helpers::Role,
+    helpers::{Direction, Role},
     protocol::{
         prss::{IndexedSharedRandomness, PrssIndex, SequentialSharedRandomness, SharedRandomness},
         Gate,
@@ -35,29 +35,30 @@ impl<'a> InstrumentedIndexedSharedRandomness<'a> {
 }
 
 impl SharedRandomness for InstrumentedIndexedSharedRandomness<'_> {
-    type ChunksIter<'a, Z: ArrayLength> = InstrumentedChunksIter<
+    type ChunkIter<'a, Z: ArrayLength> = InstrumentedChunkIter<
         'a,
-        <IndexedSharedRandomness as SharedRandomness>::ChunksIter<'a, Z>,
+        <IndexedSharedRandomness as SharedRandomness>::ChunkIter<'a, Z>,
     >
     where Self: 'a;
 
-    fn generate_chunks_iter<I: Into<PrssIndex>, Z: ArrayLength>(
+    fn generate_chunk_iter<I: Into<PrssIndex>, Z: ArrayLength>(
         &self,
         index: I,
-    ) -> Self::ChunksIter<'_, Z> {
-        InstrumentedChunksIter {
+        direction: Direction,
+    ) -> Self::ChunkIter<'_, Z> {
+        InstrumentedChunkIter {
             instrumented: self,
-            inner: self.inner.generate_chunks_iter(index),
+            inner: self.inner.generate_chunk_iter(index, direction),
         }
     }
 }
 
-pub struct InstrumentedChunksIter<'a, I: Iterator> {
+pub struct InstrumentedChunkIter<'a, I: Iterator> {
     instrumented: &'a InstrumentedIndexedSharedRandomness<'a>,
     inner: I,
 }
 
-impl<'a, I: Iterator> Iterator for InstrumentedChunksIter<'a, I> {
+impl<'a, I: Iterator> Iterator for InstrumentedChunkIter<'a, I> {
     type Item = <I as Iterator>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
