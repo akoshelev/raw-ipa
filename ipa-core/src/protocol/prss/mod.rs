@@ -149,10 +149,9 @@ impl SharedRandomness for IndexedSharedRandomness {
 }
 
 pub struct ChunkIter<'a, Z: ArrayLength> {
-    inner: &'a IndexedSharedRandomness,
+    inner: &'a Generator,
     index: PrssIndex,
     offset: usize,
-    direction: Direction,
     phantom_data: PhantomData<Z>,
 }
 
@@ -161,12 +160,7 @@ impl<'a, Z: ArrayLength> Iterator for ChunkIter<'a, Z> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let chunk = GenericArray::generate(|i| {
-            let generator = match self.direction {
-                Direction::Left => &self.inner.left,
-                Direction::Right => &self.inner.right,
-            };
-
-            generator.generate(self.index.offset(self.offset + i))
+            self.inner.generate(self.index.offset(self.offset + i))
         });
 
         self.offset += Z::USIZE;
@@ -175,16 +169,19 @@ impl<'a, Z: ArrayLength> Iterator for ChunkIter<'a, Z> {
 }
 
 impl<'a, Z: ArrayLength> ChunkIter<'a, Z> {
+    #[inline]
     pub fn new<I: Into<PrssIndex>>(
         prss: &'a IndexedSharedRandomness,
         index: I,
         direction: Direction,
     ) -> Self {
         Self {
-            inner: prss,
+            inner: match direction {
+                Direction::Left => &prss.left,
+                Direction::Right => &prss.right,
+            },
             index: index.into(),
             offset: 0,
-            direction,
             phantom_data: PhantomData,
         }
     }
