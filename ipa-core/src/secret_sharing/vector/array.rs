@@ -6,12 +6,12 @@ use std::{
 };
 
 use generic_array::{ArrayLength, GenericArray};
-use typenum::{U16, U256, U32, U64};
+use typenum::{U128, U146, U16, U170, U204, U256, U32, U341, U4, U51, U64, U9};
 
 use crate::{
     const_assert_eq,
     error::LengthError,
-    ff::{ec_prime_field::Fp25519, Expand, Field, Fp32BitPrime, Serializable},
+    ff::{ec_prime_field::Fp25519, Expand, Field, Fp32BitPrime, Fp61BitPrime, Serializable},
     protocol::{ipa_prf::PRF_CHUNK, prss::FromRandom},
     secret_sharing::{FieldArray, Sendable, SharedValue, SharedValueArray},
 };
@@ -311,6 +311,13 @@ impl<F: SharedValue + FromRandom> FromRandom for StdArray<F, 1> {
     }
 }
 
+/// The implementation of [`FromRandom`] needs to account for bias when sampling
+/// from a multiple of 16 byte value - which is what PRSS gives.
+/// A rough formula to approximate the bias is: `1/2^(128 - x)` where `x` is the
+/// number of bits in the field.
+/// For 32 bit prime field we use, the bias is `1/2^96` which is negligible.
+/// The line on the sand is to never sample prime fields larger than 64 bits in size.
+/// There is a const assert check in prime field macro that enforces that.
 macro_rules! impl_from_random {
     ($value_ty:ty, $width:expr, $source_len:ty, $item_len:expr) => {
         impl FromRandom for StdArray<$value_ty, $width> {
@@ -335,6 +342,7 @@ const_assert_eq!(
 impl_from_random!(Fp25519, 16, U32, 2);
 
 impl_from_random!(Fp32BitPrime, 32, U32, 1);
+impl_from_random!(Fp61BitPrime, 16, U16, 1);
 
 impl<V: SharedValue> Serializable for StdArray<V, 1> {
     type Size = <V as Serializable>::Size;
@@ -387,6 +395,24 @@ impl_serializable!(16, U16);
 impl_serializable!(32, U32);
 impl_serializable!(64, U64);
 impl_serializable!(256, U256);
+
+// Canonical vectorization factors for boolean fields
+// BA3
+impl_serializable!(341, U341);
+// BA5
+impl_serializable!(204, U204);
+// BA6
+impl_serializable!(170, U170);
+// BA7
+impl_serializable!(146, U146);
+// BA8
+impl_serializable!(128, U128);
+// BA20
+impl_serializable!(51, U51);
+// BA112
+impl_serializable!(9, U9);
+// BA256
+impl_serializable!(4, U4);
 
 #[cfg(all(test, unit_test))]
 mod test {

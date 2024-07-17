@@ -340,11 +340,12 @@ macro_rules! boolean_array_impl {
                 }
             }
 
+            const CANONICAL_VECTORIZATION: usize = 1024/$bits;
             impl SharedValue for $name {
                 type Storage = Store;
                 const BITS: u32 = $bits;
                 const ZERO: Self = Self(<Store>::ZERO);
-                const VECTORIZE: usize = 1024/$bits;
+                const VECTORIZE: usize = CANONICAL_VECTORIZATION;
 
                 impl_shared_value_common!();
             }
@@ -428,6 +429,9 @@ macro_rules! boolean_array_impl {
                 type Array = StdArray<$name, 1>;
             }
 
+            impl Vectorizable<CANONICAL_VECTORIZATION> for $name {
+                type Array = StdArray<$name, CANONICAL_VECTORIZATION>;
+            }
             impl std::ops::Mul<&Self> for $name {
                 type Output = Self;
                 fn mul(self, rhs: &Self) -> Self::Output {

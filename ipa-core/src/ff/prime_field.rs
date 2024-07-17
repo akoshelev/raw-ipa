@@ -67,13 +67,23 @@ macro_rules! field_impl {
         #[derive(Clone, Copy, PartialEq, Eq)]
         pub struct $field(<Self as SharedValue>::Storage);
 
+        const CANONICAL_VECTORIZATION: usize = 1024 / $bits;
+
         impl SharedValue for $field {
             type Storage = $store;
             const BITS: u32 = $bits;
             const ZERO: Self = $field(0);
-            const VECTORIZE: usize = 1024/$bits;
+            const VECTORIZE: usize = CANONICAL_VECTORIZATION;
 
             impl_shared_value_common!();
+        }
+
+        impl Vectorizable<CANONICAL_VECTORIZATION> for $field {
+            type Array = StdArray<$field, CANONICAL_VECTORIZATION>;
+        }
+
+        impl FieldVectorizable<CANONICAL_VECTORIZATION> for $field {
+            type ArrayAlias = StdArray<$field, CANONICAL_VECTORIZATION>;
         }
 
         impl Vectorizable<1> for $field {
@@ -385,14 +395,6 @@ mod fp31 {
 
 mod fp32bit {
     field_impl! { Fp32BitPrime, u32, u64, 32, 4_294_967_291 }
-
-    impl Vectorizable<32> for Fp32BitPrime {
-        type Array = StdArray<Fp32BitPrime, 32>;
-    }
-
-    impl FieldVectorizable<32> for Fp32BitPrime {
-        type ArrayAlias = StdArray<Fp32BitPrime, 32>;
-    }
 
     #[cfg(all(test, unit_test))]
     mod specialized_tests {

@@ -157,7 +157,11 @@ macro_rules! bit_array_impl {
                 type Storage = $store;
                 const BITS: u32 = $bits;
                 const ZERO: Self = Self(<$store>::ZERO);
-                const VECTORIZE: usize = 1024/$bits;
+                /// We don't use Galois fields in vectorizable contexts anywhere
+                /// at this point, so the canonical vectorization is set to 1.
+                /// If there is ever a need to vectorize them as well, the considerations
+                /// should be the same as for boolean fields.
+                const VECTORIZE: usize = 1;
 
                 impl_shared_value_common!();
             }
