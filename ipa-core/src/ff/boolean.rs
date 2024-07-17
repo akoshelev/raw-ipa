@@ -62,6 +62,7 @@ impl SharedValue for Boolean {
     type Storage = bool;
     const BITS: u32 = 1;
     const ZERO: Self = Self(false);
+    const VECTORIZE: usize = 1024;
 
     impl_shared_value_common!();
 }

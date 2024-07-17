@@ -157,6 +157,7 @@ macro_rules! bit_array_impl {
                 type Storage = $store;
                 const BITS: u32 = $bits;
                 const ZERO: Self = Self(<$store>::ZERO);
+                const VECTORIZE: usize = 1024/$bits;
 
                 impl_shared_value_common!();
             }

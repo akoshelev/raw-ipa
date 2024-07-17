@@ -91,6 +91,9 @@ pub trait SharedValue:
 
     const ZERO: Self;
 
+    /// The recommended vectorization factor for this type of shared value
+    const VECTORIZE: usize;
+
     // Note the trait bound of `Vectorizable<1>` here, i.e., these
     // helpers only apply to arrays of a single element.
     fn into_array(self) -> <Self as Vectorizable<1>>::Array

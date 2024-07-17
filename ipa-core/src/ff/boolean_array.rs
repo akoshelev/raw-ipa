@@ -344,6 +344,7 @@ macro_rules! boolean_array_impl {
                 type Storage = Store;
                 const BITS: u32 = $bits;
                 const ZERO: Self = Self(<Store>::ZERO);
+                const VECTORIZE: usize = 1024/$bits;
 
                 impl_shared_value_common!();
             }

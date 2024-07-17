@@ -41,6 +41,7 @@ impl SharedValue for RP25519 {
     type Storage = CompressedRistretto;
     const BITS: u32 = 256;
     const ZERO: Self = Self(CompressedRistretto([0_u8; 32]));
+    const VECTORIZE: usize = 16;
 
     impl_shared_value_common!();
 }

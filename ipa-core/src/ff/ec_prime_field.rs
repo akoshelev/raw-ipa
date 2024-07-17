@@ -52,6 +52,7 @@ impl SharedValue for Fp25519 {
     type Storage = Scalar;
     const BITS: u32 = 256;
     const ZERO: Self = Self(Scalar::ZERO);
+    const VECTORIZE: usize = 16;
 
     impl_shared_value_common!();
 }

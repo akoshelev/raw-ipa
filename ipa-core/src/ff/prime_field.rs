@@ -71,6 +71,7 @@ macro_rules! field_impl {
             type Storage = $store;
             const BITS: u32 = $bits;
             const ZERO: Self = $field(0);
+            const VECTORIZE: usize = 1024/$bits;
 
             impl_shared_value_common!();
         }
