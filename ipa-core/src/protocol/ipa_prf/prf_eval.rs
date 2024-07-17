@@ -1,8 +1,9 @@
+use std::future::Future;
 use std::iter::zip;
-
+use futures_util::future::try_join;
 use crate::{
     error::Error,
-    ff::{boolean::Boolean, curve_points::RP25519, ec_prime_field::Fp25519, Expand},
+    ff::{boolean::Boolean, curve_points::RP25519, ec_prime_field::Fp25519},
     helpers::TotalRecords,
     protocol::{
         basics::{Reveal, SecureMul},
@@ -11,8 +12,16 @@ use crate::{
         prss::{FromPrss, SharedRandomness},
         RecordId,
     },
-    secret_sharing::{replicated::semi_honest::AdditiveShare, Sendable, StdArray, Vectorizable},
+    secret_sharing::{
+        replicated::semi_honest::AdditiveShare, Sendable, SharedValue, StdArray, Vectorizable,
+    },
 };
+use crate::ff::Expand;
+use crate::protocol::BasicProtocols;
+use crate::protocol::context::{UpgradableContext, UpgradedContext};
+use crate::protocol::ipa_prf::boolean_ops::step::MultiplicationStep::Add;
+use crate::secret_sharing::{Linear, SecretSharing};
+use crate::seq_join::assert_send;
 
 /// generates match key pseudonyms from match keys (in Fp25519 format) and PRF key
 /// PRF key needs to be generated separately using `gen_prf_key`
@@ -30,12 +39,13 @@ where
     AdditiveShare<Boolean, 1>: SecureMul<C>,
     AdditiveShare<Fp25519>: SecureMul<C>,
 {
-    let ctx = sh_ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
-    let futures = input_match_keys
-        .into_iter()
-        .enumerate()
-        .map(|(i, x)| eval_dy_prf(ctx.clone(), i.into(), &prf_key, x));
-    Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
+    todo!()
+    // let ctx = sh_ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
+    // let futures = input_match_keys
+    //     .into_iter()
+    //     .enumerate()
+    //     .map(|(i, x)| eval_dy_prf(ctx.clone(), i.into(), &prf_key, x));
+    // Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
 }
 
 impl<const N: usize> From<AdditiveShare<Fp25519, N>> for AdditiveShare<RP25519, N>
@@ -55,11 +65,12 @@ where
 }
 
 /// generates PRF key k as secret sharing over Fp25519
-pub fn gen_prf_key<C>(ctx: &C) -> AdditiveShare<Fp25519>
+pub fn gen_prf_key<C>(ctx: &C) -> AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>
 where
     C: Context,
 {
-    ctx.narrow(&Step::PRFKeyGen).prss().generate(RecordId(0))
+    let v: AdditiveShare<Fp25519, 1> = ctx.narrow(&Step::PRFKeyGen).prss().generate(RecordId(0));
+    AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v)
 }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))
@@ -67,47 +78,51 @@ where
 /// PRF key k needs to be generated using `gen_prf_key`
 ///  x is the match key in Fp25519 format
 /// outputs a u64 as specified in `protocol/prf_sharding/mod.rs`, all parties learn the output
+///
+/// This function takes an expanded key `key` replicated with the vectorization factor
+/// that matches the `x` and the same key is used to evaluate the PRF function across
+/// all records.
 /// # Errors
 /// Propagates errors from multiplications, reveal and scalar multiplication
 /// # Panics
 /// Never as of when this comment was written, but the compiler didn't know that.
-pub async fn eval_dy_prf<C, const N: usize>(
+pub fn eval_dy_prf<C, L, R>(
     ctx: C,
     record_id: RecordId,
-    k: &AdditiveShare<Fp25519>,
-    x: AdditiveShare<Fp25519, N>,
-) -> Result<[u64; N], Error>
+    k: &L,
+    x: L,
+) -> impl Future<Output = Result<[u64; Fp25519::VECTORIZE], Error>> + Send
 where
-    C: Context,
-    Fp25519: Vectorizable<N>,
-    RP25519: Vectorizable<N, Array = StdArray<RP25519, N>>,
-    AdditiveShare<Fp25519, N>: SecureMul<C> + FromPrss,
-    StdArray<RP25519, N>: Sendable,
+    C: UpgradedContext,
+    L: Linear<Fp25519> + BasicProtocols<C, Fp25519, { Fp25519::VECTORIZE }>,
+    R: SecretSharing<RP25519> + Reveal<C, { RP25519::VECTORIZE }, Output = <RP25519 as Vectorizable<{ Fp25519::VECTORIZE }>>::Array> + From<L>,
 {
-    let sh_r: AdditiveShare<Fp25519, N> =
-        ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
-
+    let sh_r: L = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     //compute x+k
-    let mut y = x + AdditiveShare::<Fp25519, N>::expand(k);
+    let mut y = x + k;
 
-    //compute y <- r*y
-    y = y
-        .multiply(&sh_r, ctx.narrow(&Step::MultMaskWithPRFInput), record_id)
-        .await?;
+    async move {
+        // compute y <- r*y
+        y = y
+            .multiply(&sh_r, ctx.narrow(&Step::MultMaskWithPRFInput), record_id)
+            .await?;
 
-    //compute (g^left, g^right)
-    let sh_gr = AdditiveShare::<RP25519, N>::from(sh_r);
+        // compute (g^left, g^right)
+        let sh_gr = R::from(sh_r);
 
-    //reconstruct (z,R)
-    let gr = sh_gr.reveal(ctx.narrow(&Step::RevealR), record_id).await?;
-    let z = y.reveal(ctx.narrow(&Step::Revealz), record_id).await?;
+        //reconstruct (z,R)
+        let (gr, z) = assert_send(try_join(
+            sh_gr.reveal(ctx.narrow(&Step::RevealR), record_id),
+            y.reveal(ctx.narrow(&Step::Revealz), record_id)
+        )).await?;
 
-    //compute R^(1/z) to u64
-    Ok(zip(gr, z)
-        .map(|(gr, z)| u64::from(gr * z.invert()))
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("iteration over arrays"))
+        //compute R^(1/z) to u64
+        Ok(zip(gr, z)
+            .map(|(gr, z)| u64::from(gr * z.invert()))
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("iteration over arrays"))
+    }
 }
 
 #[cfg(all(test, unit_test))]

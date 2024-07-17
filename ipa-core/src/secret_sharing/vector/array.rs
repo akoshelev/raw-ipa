@@ -344,6 +344,10 @@ impl_from_random!(Fp25519, 16, U32, 2);
 impl_from_random!(Fp32BitPrime, 32, U32, 1);
 impl_from_random!(Fp61BitPrime, 16, U16, 1);
 
+#[cfg(any(test, feature = "weak-field"))]
+impl_from_random!(crate::ff::Fp31, 128, U128, 1);
+
+
 impl<V: SharedValue> Serializable for StdArray<V, 1> {
     type Size = <V as Serializable>::Size;
     type DeserializationError = <V as Serializable>::DeserializationError;

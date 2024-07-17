@@ -88,6 +88,10 @@ pub const AGG_CHUNK: usize = 256;
 pub const SORT_CHUNK: usize = 256;
 
 use step::IpaPrfStep as Step;
+use crate::ff::curve_points::RP25519;
+use crate::protocol::BasicProtocols;
+use crate::protocol::context::Validator;
+use crate::seq_join::{assert_send, SeqJoin};
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -275,12 +279,14 @@ where
     C: UpgradableContext,
     <C as UpgradableContext>::DZKPValidator: Send + Sync,
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
+    C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519, Share = Replicated<Fp25519>>,
     BK: BooleanArray,
     TV: BooleanArray,
     TS: BooleanArray,
     Replicated<Boolean, CONV_CHUNK>:
         BooleanProtocols<<C as UpgradableContext>::DZKPUpgradedContext, CONV_CHUNK>,
     Replicated<Fp25519, PRF_CHUNK>: SecureMul<C> + FromPrss,
+    Replicated<Fp25519, PRF_CHUNK>: BasicProtocols<C::UpgradedContext<Fp25519>, Fp25519, PRF_CHUNK> // todo: default vectorize
 {
     let conv_records =
         TotalRecords::specified(div_round_up(input_rows.len(), Const::<CONV_CHUNK>))?;
@@ -288,9 +294,6 @@ where
     let convert_ctx = ctx
         .narrow(&Step::ConvertFp25519)
         .set_total_records(conv_records);
-    let eval_ctx = ctx.narrow(&Step::EvalPrf).set_total_records(eval_records);
-
-    let prf_key = gen_prf_key(&eval_ctx);
 
     let curve_pts = seq_join(
         ctx.active_work(),
@@ -310,14 +313,18 @@ where
     .try_collect::<Vec<_>>()
     .await?;
 
+    let validator = ctx.validator::<Fp25519>();
+    let eval_ctx = validator.context()
+        .narrow(&Step::EvalPrf)
+        .set_total_records(eval_records);
+
+    let prf_key = &gen_prf_key(&eval_ctx);
     let prf_of_match_keys = seq_join(
-        ctx.active_work(),
+        eval_ctx.active_work(),
         stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
             let record_id = RecordId::from(i);
             let eval_ctx = eval_ctx.clone();
-            let prf_key = &prf_key;
-            curve_pts
-                .then(move |pts| eval_dy_prf::<_, PRF_CHUNK>(eval_ctx, record_id, prf_key, pts))
+            curve_pts.then(move |pts| eval_dy_prf::<_, _, Replicated<RP25519, {RP25519::VECTORIZE}>>(eval_ctx, record_id, prf_key, pts))
         }),
     )
     .try_collect::<Vec<_>>()
