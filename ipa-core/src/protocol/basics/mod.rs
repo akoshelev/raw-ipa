@@ -32,6 +32,8 @@ use crate::{
     },
     sharding::ShardBinding,
 };
+use crate::ff::Field;
+use crate::secret_sharing::Linear;
 
 /// Basic suite of MPC protocols for vectorized data.
 ///
@@ -39,8 +41,8 @@ use crate::{
 /// but those are omitted here because they are not vectorized. (`ShareKnownValue` has the
 /// difficulty of resolving `V` vs. `[V; 1]` issues for the known value type. `Reshare` hasn't been
 /// attempted.)
-pub trait BasicProtocols<C: Context, V: SharedValue + Vectorizable<N>, const N: usize = 1>:
-    SecretSharing<V> + Reveal<C, N, Output = <V as Vectorizable<N>>::Array> + SecureMul<C> + FromPrss
+pub trait BasicProtocols<C: Context, V: Field + Vectorizable<N>, const N: usize = 1>:
+    Linear<V> + Reveal<C, Output = <V as Vectorizable<N>>::Array> + SecureMul<C> + FromPrss
 {
 }
 
@@ -61,7 +63,7 @@ impl<'a, B: ShardBinding>
 /// Adds the requirement that the type implements `Not`.
 pub trait BooleanProtocols<C: Context, const N: usize = 1>:
     SecretSharing<Boolean>
-    + Reveal<C, N, Output = <Boolean as Vectorizable<N>>::Array>
+    + Reveal<C, Output = <Boolean as Vectorizable<N>>::Array>
     + SecureMul<C>
     + Not<Output = Self>
 where
