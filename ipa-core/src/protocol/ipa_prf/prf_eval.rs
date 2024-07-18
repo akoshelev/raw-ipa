@@ -25,48 +25,33 @@ use crate::secret_sharing::{FieldSimd, Linear, SecretSharing};
 use crate::seq_join::assert_send;
 use crate::sharding::NotSharded;
 
-/// Trait for fields that can be used to compute PRF values.
-/// At the moment, only [`Fp25519`] can be used.
-pub(super) trait PrfFieldShare<C, const N: usize>: BasicProtocols<C, N, ProtocolField = Self::PrfField>
-where
-    C: Context,
-{
-    type PrfField: FieldSimd<N> + Invert;
+
+/// This trait defines the requirements to the sharing types and the underlying fields
+/// used to generate PRF values.
+pub(super) trait PrfSharing<C: Context, const N: usize>: BasicProtocols<C, N, ProtocolField = Self::Field> {
+    /// The type of field used to compute `z`
+    type Field: FieldSimd<N> + Invert;
+
+    /// Curve point scalar value allowed to use with [`Self::Field`] and used
+    /// to compute `r`.
+    type CurvePoint: SharedValue + Vectorizable<N> + Into<u64>
+     + Mul<Self::Field, Output = Self::CurvePoint>;
+
+    /// Sharing of curve point compatible with this implementation.
+    type CurvePointSharing: SecretSharing<SharedValue = Self::CurvePoint>
+      + Reveal<C, Output = <Self::CurvePoint as Vectorizable<N>>::Array>
+      + From<Self>;
 }
 
-/// Trait for elliptic curve points that can be used to compute PRF values.
-/// At the moment, only [`RP25519`] can be used.
-pub(super) trait CurvePointShare<C: Context, const N: usize> : SecretSharing
-+ Reveal<C, Output = <Self::CurvePoint as Vectorizable<N>>::Array>
-+ From<Self::PrfFieldShare>
-{
-    type CurvePoint: SharedValue
-    + Vectorizable<N>
-    + Into<u64>
-    + Mul<<<Self as CurvePointShare<C, N>>::PrfFieldShare as PrfFieldShare<C, N>>::PrfField, Output = Self::CurvePoint>;
-    type PrfFieldShare: PrfFieldShare<C, N>;
-}
-
-/// Allow using semi-honest [`Fp25519`] as the prime field for PRF evaluation
-impl <C: Context, const N: usize> PrfFieldShare<C, N>
-for AdditiveShare<Fp25519, N>
+impl <C: Context, const N: usize> PrfSharing<C, N> for AdditiveShare<Fp25519, N>
 where
     Fp25519: FieldSimd<N>,
-    AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>
-{
-    type PrfField = Fp25519;
-}
-
-/// Allow using [`RP25519`] curve points along with [`Fp25519`]
-impl <C, const N: usize> CurvePointShare<C, N> for AdditiveShare<RP25519, N>
-where
-    C: Context,
     RP25519: Vectorizable<N>,
-    Fp25519: FieldSimd<N>,
     AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>
 {
+    type Field = Fp25519;
     type CurvePoint = RP25519;
-    type PrfFieldShare = AdditiveShare<Fp25519, N>;
+    type CurvePointSharing = AdditiveShare<RP25519, N>;
 }
 
 impl<const N: usize> From<AdditiveShare<Fp25519, N>> for AdditiveShare<RP25519, N>
@@ -101,18 +86,17 @@ where
 /// Propagates errors from multiplications, reveal and scalar multiplication
 /// # Panics
 /// Never as of when this comment was written, but the compiler didn't know that.
-pub(super) fn eval_dy_prf<C, L, R, const N: usize>(
+pub(super) fn eval_dy_prf<C, P, const N: usize>(
     ctx: C,
     record_id: RecordId,
-    k: &L,
-    x: L,
+    k: &P,
+    x: P,
 ) -> impl Future<Output = Result<[u64; N], Error>> + Send
 where
     C: UpgradedContext,
-    L: PrfFieldShare<C, N>,
-    R: CurvePointShare<C, N, PrfFieldShare = L>,
+    P: PrfSharing<C, N>,
 {
-    let sh_r: L = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
+    let sh_r: P = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     //compute x+k
     let mut y = x + k;
 
@@ -123,7 +107,7 @@ where
             .await?;
 
         // compute (g^left, g^right)
-        let sh_gr = R::from(sh_r);
+        let sh_gr = P::CurvePointSharing::from(sh_r);
 
         //reconstruct (z,R)
         let (gr, z) = assert_send(try_join(
@@ -207,14 +191,13 @@ mod test {
     ) -> Result<Vec<u64>, Error>
     where
         C: UpgradedContext,
-        // AdditiveShare<Boolean, 1>: SecureMul<C>,
         AdditiveShare<Fp25519>: BasicProtocols<C, 1, ProtocolField = Fp25519>,
     {
         let ctx = sh_ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
         let futures = input_match_keys
             .into_iter()
             .enumerate()
-            .map(|(i, x)| eval_dy_prf::<_, _, AdditiveShare<RP25519>, 1>(ctx.clone(), i.into(), &prf_key, x));
+            .map(|(i, x)| eval_dy_prf(ctx.clone(), i.into(), &prf_key, x));
         Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
     }
 

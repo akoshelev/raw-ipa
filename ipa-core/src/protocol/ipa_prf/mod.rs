@@ -323,7 +323,7 @@ where
         stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
             let record_id = RecordId::from(i);
             let eval_ctx = eval_ctx.clone();
-            curve_pts.then(move |pts| eval_dy_prf::<_, _, Replicated<RP25519, {Fp25519::VECTORIZE}>, {Fp25519::VECTORIZE}>(eval_ctx, record_id, prf_key, pts))
+            curve_pts.then(move |pts| eval_dy_prf(eval_ctx, record_id, prf_key, pts))
         }),
     )
     .try_collect::<Vec<_>>()
