@@ -21,7 +21,7 @@ use rand::{
     distributions::{Distribution, Standard},
     Rng,
 };
-pub use scheme::{Bitwise, Linear, LinearRefOps, SecretSharing};
+pub use scheme::{Bitwise, Linear, LinearRefOps, SecretSharing, VectorizedSecretSharing};
 pub use vector::{
     FieldArray, FieldSimd, FieldVectorizable, SharedValueArray, StdArray, TransposeFrom,
     Vectorizable,

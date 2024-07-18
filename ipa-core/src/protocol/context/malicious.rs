@@ -35,6 +35,7 @@ use crate::{
     sharding::NotSharded,
     sync::Arc,
 };
+use crate::secret_sharing::FieldSimd;
 
 #[derive(Clone)]
 pub struct Context<'a> {

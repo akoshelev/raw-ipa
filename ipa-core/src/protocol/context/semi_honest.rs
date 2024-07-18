@@ -4,7 +4,7 @@ use std::{
     marker::PhantomData,
     num::NonZeroUsize,
 };
-
+use std::future::Future;
 use async_trait::async_trait;
 use ipa_step::{Step, StepNarrow};
 
@@ -30,6 +30,8 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
+use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
+use crate::secret_sharing::{FieldSimd, Vectorizable};
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {
@@ -180,6 +182,23 @@ impl<B: ShardBinding> Debug for Context<'_, B> {
 pub struct Upgraded<'a, B: ShardBinding, F: ExtendableField> {
     inner: Base<'a, B>,
     _f: PhantomData<F>,
+}
+
+// impl <B: ShardBinding, const N: usize, F: ExtendableField + Vectorizable<N>> UpgradeVectorizedFriendly<N> for Upgraded<'_, B, F> {
+//     type Input = Replicated<F, N>;
+//     type Output = Replicated<F, N>;
+//
+//     fn upgrade_one(self, record_id: RecordId, input: Self::Input) -> impl Future<Output=Result<Self::Output, Error>> + Send {
+//         async move { Ok(input) }
+//     }
+// }
+
+impl <B: ShardBinding, const N: usize, F: ExtendableField + Vectorizable<N>> UpgradeVectorizedFriendly<Replicated<F, N>> for Upgraded<'_, B, F> {
+    type UpgradeOutput = Replicated<F, N>;
+
+    fn upgrade_one(self, record_id: RecordId, input: Replicated<F, N>) -> impl Future<Output=Result<Self::UpgradeOutput, Error>> + Send {
+        async move { Ok(input) }
+    }
 }
 
 impl<'a, B: ShardBinding, F: ExtendableField> Upgraded<'a, B, F> {

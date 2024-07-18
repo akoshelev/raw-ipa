@@ -20,15 +20,16 @@ use crate::{
 use crate::ff::{Expand, Invert, PrimeField};
 use crate::protocol::BasicProtocols;
 use crate::protocol::context::{UpgradableContext, UpgradedContext, UpgradedSemiHonestContext};
+use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
 use crate::protocol::ipa_prf::boolean_ops::step::MultiplicationStep::Add;
-use crate::secret_sharing::{FieldSimd, Linear, SecretSharing};
+use crate::secret_sharing::{FieldSimd, Linear, SecretSharing, VectorizedSecretSharing};
 use crate::seq_join::assert_send;
 use crate::sharding::NotSharded;
 
 
 /// This trait defines the requirements to the sharing types and the underlying fields
 /// used to generate PRF values.
-pub(super) trait PrfSharing<C: Context, const N: usize>: BasicProtocols<C, N, ProtocolField = Self::Field> {
+pub trait PrfSharing<C: Context, const N: usize>: BasicProtocols<C, N, ProtocolField = Self::Field> {
     /// The type of field used to compute `z`
     type Field: FieldSimd<N> + Invert;
 
@@ -65,12 +66,15 @@ where
 }
 
 /// generates PRF key k as secret sharing over Fp25519
-pub fn gen_prf_key<C>(ctx: &C) -> AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>
+pub async fn gen_prf_key<C>(ctx: &C) -> Result<C::UpgradeOutput, Error>
 where
-    C: Context,
+    C: UpgradedContext + UpgradeVectorizedFriendly<AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>>,
 {
-    let v: AdditiveShare<Fp25519, 1> = ctx.narrow(&Step::PRFKeyGen).prss().generate(RecordId(0));
-    AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v)
+    let ctx = ctx.narrow(&Step::PRFKeyGen);
+    let v: AdditiveShare<Fp25519, 1> = ctx.prss().generate(RecordId(0));
+
+    // TODO: recordid first will conflict with PRSS
+    ctx.upgrade_one(RecordId::FIRST, AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v)).await
 }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))

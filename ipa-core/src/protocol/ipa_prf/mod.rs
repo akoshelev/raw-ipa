@@ -1,5 +1,5 @@
 use std::{convert::Infallible, iter::zip, num::NonZeroU32, ops::Add};
-
+use std::iter::repeat;
 use futures::{stream, StreamExt, TryStreamExt};
 use generic_array::{ArrayLength, GenericArray};
 use typenum::{Const, Unsigned, U18};
@@ -90,7 +90,9 @@ pub const SORT_CHUNK: usize = 256;
 use step::IpaPrfStep as Step;
 use crate::ff::curve_points::RP25519;
 use crate::protocol::BasicProtocols;
-use crate::protocol::context::Validator;
+use crate::protocol::context::{UpgradeToMalicious, Validator};
+use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
+use crate::protocol::ipa_prf::prf_eval::PrfSharing;
 use crate::seq_join::{SeqJoin};
 
 #[derive(Clone, Debug, Default)]
@@ -279,7 +281,9 @@ where
     C: UpgradableContext,
     <C as UpgradableContext>::DZKPValidator: Send + Sync,
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
-    C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519, Share = Replicated<Fp25519>>,
+    C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519>,
+    C::UpgradedContext<Fp25519>: UpgradeVectorizedFriendly<Replicated<Fp25519, {Fp25519::VECTORIZE}>>,
+    <C::UpgradedContext<Fp25519> as UpgradeVectorizedFriendly<Replicated<Fp25519, {Fp25519::VECTORIZE}>>>::UpgradeOutput: PrfSharing<C::UpgradedContext<Fp25519>, {Fp25519::VECTORIZE}>,
     BK: BooleanArray,
     TV: BooleanArray,
     TS: BooleanArray,
@@ -293,9 +297,15 @@ where
     let convert_ctx = ctx
         .narrow(&Step::ConvertFp25519)
         .set_total_records(conv_records);
+    let active_work = ctx.active_work();
+
+    let validator = ctx.validator::<Fp25519>();
+    let eval_ctx = validator.context()
+        .narrow(&Step::EvalPrf)
+        .set_total_records(eval_records);
 
     let curve_pts = seq_join(
-        ctx.active_work(),
+        active_work,
         process_slice_by_chunks(input_rows, move |idx, records: ChunkData<_, CONV_CHUNK>| {
             let record_id = RecordId::from(idx);
             let convert_ctx = convert_ctx.clone();
@@ -312,18 +322,16 @@ where
     .try_collect::<Vec<_>>()
     .await?;
 
-    let validator = ctx.validator::<Fp25519>();
-    let eval_ctx = validator.context()
-        .narrow(&Step::EvalPrf)
-        .set_total_records(eval_records);
-
-    let prf_key = &gen_prf_key(&eval_ctx);
+    let prf_key = &gen_prf_key(&eval_ctx).await?;
     let prf_of_match_keys = seq_join(
         eval_ctx.active_work(),
         stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
             let record_id = RecordId::from(i);
             let eval_ctx = eval_ctx.clone();
-            curve_pts.then(move |pts| eval_dy_prf(eval_ctx, record_id, prf_key, pts))
+            curve_pts.then(move |pts| async move {
+                let pts = eval_ctx.clone().upgrade_one(record_id, pts).await?;
+                eval_dy_prf(eval_ctx, record_id, prf_key, pts).await
+            })
         }),
     )
     .try_collect::<Vec<_>>()

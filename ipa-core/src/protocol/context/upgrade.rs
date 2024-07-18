@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::marker::PhantomData;
 
 use async_trait::async_trait;
@@ -17,6 +18,7 @@ use crate::{
         Linear as LinearSecretSharing,
     },
 };
+use crate::secret_sharing::VectorizedSecretSharing;
 
 /// Special context type used for malicious upgrades.
 ///
@@ -75,6 +77,14 @@ where
         Self::new(self.ctx.narrow(step), self.record_binding)
     }
 }
+
+
+pub trait UpgradeVectorizedFriendly<I: Send> {
+    type UpgradeOutput: Send;
+
+    fn upgrade_one(self, record_id: RecordId, input: I) -> impl Future<Output = Result<Self::UpgradeOutput, Error>> + Send;
+}
+
 
 #[async_trait]
 pub trait UpgradeToMalicious<T, M>

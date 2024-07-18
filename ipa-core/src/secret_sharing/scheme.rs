@@ -28,6 +28,12 @@ pub trait Linear:
     type SharedFieldValue: Field;
 }
 
+/// Trait for vectorized secret sharings, i.e. secret shares that hold
+/// vectorized values.
+pub trait VectorizedSecretSharing<const N: usize> : SecretSharing<SharedValue = Self::VectorizedSharedValue> {
+    type VectorizedSharedValue: SharedValue + Vectorizable<N>;
+}
+
 /// The trait for arithmetic operations on references to a secret share, taking the
 /// second operand either by value or by reference. Secret sharings can be added/subtracted and
 /// multiplied by the shared values locally.
