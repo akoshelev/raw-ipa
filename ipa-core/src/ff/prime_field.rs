@@ -11,11 +11,25 @@ use crate::{
     secret_sharing::{Block, FieldVectorizable, SharedValue, StdArray, Vectorizable},
 };
 
+
+/// Provides an implementation of multiplicative inverse.
+/// The only reason it exists is because of `Into<u128>` constraint
+/// on `PrimeInteger` inside [`PrimeField`] that prevents
+/// it from being implemented on [`crate::ff::ec_prime_field::Fp25519`]
+/// that uses a prime that is much larger than 128 bits.
+/// When it is fixed, this trait can go away.
+pub trait Invert {
+    #[must_use]
+    fn invert(&self) -> Self;
+}
+
 pub trait PrimeField: Field + U128Conversions {
     type PrimeInteger: Into<u128>;
 
     const PRIME: Self::PrimeInteger;
+}
 
+impl <F: PrimeField> Invert for F {
     /// Invert function that returns the multiplicative inverse
     /// the default implementation uses the extended Euclidean algorithm,
     /// follows inversion algorithm in

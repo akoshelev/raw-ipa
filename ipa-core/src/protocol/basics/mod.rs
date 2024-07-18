@@ -33,6 +33,7 @@ use crate::{
     sharding::ShardBinding,
 };
 use crate::ff::Field;
+use crate::protocol::context::UpgradedContext;
 use crate::secret_sharing::{FieldVectorizable, Linear};
 
 /// Basic suite of MPC protocols for vectorized data.

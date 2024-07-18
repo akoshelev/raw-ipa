@@ -101,6 +101,10 @@ impl<V: SharedValue + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
         &self.1
     }
 
+    pub fn into_tuple_arr(self) -> (<V as Vectorizable<N>>::Array, <V as Vectorizable<N>>::Array) {
+        (self.0, self.1)
+    }
+
     pub(in crate::secret_sharing) fn left_arr_mut(&mut self) -> &mut <V as Vectorizable<N>>::Array {
         &mut self.0
     }
@@ -110,6 +114,7 @@ impl<V: SharedValue + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
     ) -> &mut <V as Vectorizable<N>>::Array {
         &mut self.1
     }
+
 
     pub fn from_fns<LF: FnMut(usize) -> V, RF: FnMut(usize) -> V>(lf: LF, rf: RF) -> Self {
         Self(
@@ -124,6 +129,15 @@ impl<V: SharedValue + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
     pub fn into_unpacking_iter(self) -> UnpackIter<V, N> {
         let Self(left, right) = self;
         UnpackIter(left.into_iter(), right.into_iter())
+    }
+
+    pub fn map<F, T>(self, mut f: F) -> AdditiveShare<T, N>
+    where F: FnMut(V) -> T, T: SharedValue + Vectorizable<N>
+    {
+        let (l, r) = self.into_tuple_arr();
+        let left_arr = <T as Vectorizable<N>>::Array::from_iter(l.into_iter().map(&mut f));
+        let right_arr = <T as Vectorizable<N>>::Array::from_iter(r.into_iter().map(&mut f));
+        AdditiveShare::new_arr(left_arr, right_arr)
     }
 }
 

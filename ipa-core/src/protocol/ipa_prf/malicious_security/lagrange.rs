@@ -2,7 +2,7 @@ use std::{borrow::Borrow, fmt::Debug};
 
 use typenum::Unsigned;
 
-use crate::ff::{Field, PrimeField, Serializable};
+use crate::ff::{Field, Invert, PrimeField, Serializable};
 
 /// The Canonical Lagrange denominator is defined as the denominator of the Lagrange base polynomials
 /// `https://en.wikipedia.org/wiki/Lagrange_polynomial`

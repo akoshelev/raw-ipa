@@ -18,6 +18,7 @@ use crate::{
         Block, FieldVectorizable, SharedValue, StdArray, Vectorizable,
     },
 };
+use crate::ff::Invert;
 
 impl Block for Scalar {
     type Size = U32;
@@ -30,14 +31,16 @@ pub struct Fp25519(<Self as SharedValue>::Storage);
 
 impl Fp25519 {
     pub const ONE: Self = Self(Scalar::ONE);
+}
 
+impl Invert for Fp25519 {
     ///allow invert for scalars, i.e. computes 1/a mod p
     ///# Panics
     /// Panics when self is zero
     #[must_use]
-    pub fn invert(&self) -> Fp25519 {
-        assert_ne!(*self, Fp25519::ZERO);
-        Fp25519(self.0.invert())
+    fn invert(&self) -> Self {
+        assert_ne!(*self, Self::ZERO);
+        Self(self.0.invert())
     }
 }
 
@@ -282,6 +285,7 @@ mod test {
         ff::{ec_prime_field::Fp25519, Serializable},
         secret_sharing::SharedValue,
     };
+    use crate::ff::Invert;
 
     sc_hash_impl!(u32);
 

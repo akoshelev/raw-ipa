@@ -285,8 +285,7 @@ where
     TS: BooleanArray,
     Replicated<Boolean, CONV_CHUNK>:
         BooleanProtocols<<C as UpgradableContext>::DZKPUpgradedContext, CONV_CHUNK>,
-    Replicated<Fp25519, PRF_CHUNK>: SecureMul<C> + FromPrss,
-    Replicated<Fp25519, PRF_CHUNK>: BasicProtocols<C::UpgradedContext<Fp25519>, Fp25519, PRF_CHUNK> // todo: default vectorize
+    Replicated<Fp25519, PRF_CHUNK>: BasicProtocols<C::UpgradedContext<Fp25519>, PRF_CHUNK, ProtocolField = Fp25519> // todo: default vectorize
 {
     let conv_records =
         TotalRecords::specified(div_round_up(input_rows.len(), Const::<CONV_CHUNK>))?;
@@ -324,7 +323,7 @@ where
         stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
             let record_id = RecordId::from(i);
             let eval_ctx = eval_ctx.clone();
-            curve_pts.then(move |pts| eval_dy_prf::<_, _, Replicated<RP25519, {RP25519::VECTORIZE}>>(eval_ctx, record_id, prf_key, pts))
+            curve_pts.then(move |pts| eval_dy_prf::<_, _, Replicated<RP25519, {Fp25519::VECTORIZE}>, {Fp25519::VECTORIZE}>(eval_ctx, record_id, prf_key, pts))
         }),
     )
     .try_collect::<Vec<_>>()
