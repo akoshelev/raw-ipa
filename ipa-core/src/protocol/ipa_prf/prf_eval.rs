@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::iter::zip;
+use std::ops::Mul;
 use futures_util::future::try_join;
 use crate::{
     error::Error,
@@ -16,12 +17,15 @@ use crate::{
         replicated::semi_honest::AdditiveShare, Sendable, SharedValue, StdArray, Vectorizable,
     },
 };
-use crate::ff::Expand;
+use crate::ff::{Expand, PrimeField};
 use crate::protocol::BasicProtocols;
 use crate::protocol::context::{UpgradableContext, UpgradedContext};
 use crate::protocol::ipa_prf::boolean_ops::step::MultiplicationStep::Add;
-use crate::secret_sharing::{Linear, SecretSharing};
+use crate::secret_sharing::{FieldSimd, Linear, SecretSharing};
 use crate::seq_join::assert_send;
+
+trait CurvePointShare<C: Context> {}
+trait PrfField<C: Context> {}
 
 /// generates match key pseudonyms from match keys (in Fp25519 format) and PRF key
 /// PRF key needs to be generated separately using `gen_prf_key`
@@ -94,8 +98,13 @@ pub fn eval_dy_prf<C, L, R>(
 ) -> impl Future<Output = Result<[u64; Fp25519::VECTORIZE], Error>> + Send
 where
     C: UpgradedContext,
-    L: Linear<SharedFieldValue = Fp25519> + BasicProtocols<C, Fp25519, { Fp25519::VECTORIZE }>,
-    R: SecretSharing<SharedValue = RP25519> + Reveal<C, Output = <RP25519 as Vectorizable<{ Fp25519::VECTORIZE }>>::Array> + From<L>,
+    L: BasicProtocols<C, {Fp25519::VECTORIZE}>,
+    L::ProtocolField: PrimeField,
+    R: SecretSharing + Reveal<C, Output = <R::SharedValue as Vectorizable<{Fp25519::VECTORIZE}>>::Array> + From<L>,
+    R::SharedValue:
+        FieldSimd<{Fp25519::VECTORIZE}>
+        + Mul<L::ProtocolField, Output = R::SharedValue>,
+    u64: From<R::SharedValue>,
 {
     let sh_r: L = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     //compute x+k

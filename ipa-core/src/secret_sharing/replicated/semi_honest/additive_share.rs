@@ -13,6 +13,7 @@ use crate::{
         SecretSharing, SharedValue, SharedValueArray, Vectorizable,
     },
 };
+use crate::secret_sharing::FieldVectorizable;
 
 /// Additive secret sharing.
 ///
@@ -38,7 +39,9 @@ impl<V: SharedValue + Vectorizable<N>, const N: usize> SecretSharing for Additiv
     );
 }
 
-impl<F, const N: usize> LinearSecretSharing for AdditiveShare<F, N> where F: Field + FieldSimd<N> { type SharedFieldValue = F; }
+impl<F, const N: usize> LinearSecretSharing for AdditiveShare<F, N> where F: Field + FieldSimd<N> {
+    type SharedFieldValue = F;
+}
 
 impl<V: SharedValue + Vectorizable<N> + Debug, const N: usize> Debug for AdditiveShare<V, N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

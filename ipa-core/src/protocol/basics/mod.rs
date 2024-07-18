@@ -33,7 +33,7 @@ use crate::{
     sharding::ShardBinding,
 };
 use crate::ff::Field;
-use crate::secret_sharing::Linear;
+use crate::secret_sharing::{FieldVectorizable, Linear};
 
 /// Basic suite of MPC protocols for vectorized data.
 ///
@@ -41,21 +41,23 @@ use crate::secret_sharing::Linear;
 /// but those are omitted here because they are not vectorized. (`ShareKnownValue` has the
 /// difficulty of resolving `V` vs. `[V; 1]` issues for the known value type. `Reshare` hasn't been
 /// attempted.)
-pub trait BasicProtocols<C: Context, V: Field + Vectorizable<N>, const N: usize = 1>:
-    Linear + Reveal<C, Output = <V as Vectorizable<N>>::Array> + SecureMul<C> + FromPrss
+pub trait BasicProtocols<C: Context, const N: usize>:
+    Linear<SharedFieldValue = Self::ProtocolField>
+    + Reveal<C, Output = <Self::ProtocolField as Vectorizable<N>>::Array>
+    + SecureMul<C>
+    + FromPrss
 {
+    type ProtocolField: FieldSimd<N>;
 }
 
 // For PRF test
-impl<'a, B: ShardBinding> BasicProtocols<UpgradedSemiHonestContext<'a, B, Fp25519>, Fp25519>
-    for AdditiveShare<Fp25519>
+impl<'a, B: ShardBinding, const N: usize> BasicProtocols<UpgradedSemiHonestContext<'a, B, Fp25519>, N>
+    for AdditiveShare<Fp25519, N>
+where
+    Fp25519: FieldSimd<N>,
+    AdditiveShare<Fp25519, N>: FromPrss
 {
-}
-
-impl<'a, B: ShardBinding>
-    BasicProtocols<UpgradedSemiHonestContext<'a, B, Fp25519>, Fp25519, PRF_CHUNK>
-    for AdditiveShare<Fp25519, PRF_CHUNK>
-{
+    type ProtocolField = Fp25519;
 }
 
 /// Basic suite of MPC protocols for (possibly vectorized) boolean shares.
