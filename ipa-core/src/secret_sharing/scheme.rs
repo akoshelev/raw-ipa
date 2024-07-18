@@ -7,22 +7,25 @@ use super::SharedValue;
 use crate::ff::{AddSub, AddSubAssign, Field, GaloisField};
 
 /// Secret sharing scheme i.e. Replicated secret sharing
-pub trait SecretSharing<V: SharedValue>: Clone + Debug + Sized + Send + Sync + 'static {
+pub trait SecretSharing: Clone + Debug + Sized + Send + Sync + 'static {
+    type SharedValue: SharedValue;
+
     const ZERO: Self;
 }
 
 /// Secret share of a secret that has additive and multiplicative properties.
-pub trait Linear<V: Field>:
-    SecretSharing<V>
+pub trait Linear:
+    SecretSharing<SharedValue = Self::SharedFieldValue>
     + AddSub
     + AddSubAssign
     + for<'r> AddSub<&'r Self>
     + for<'r> AddSubAssign<&'r Self>
-    + Mul<V, Output = Self>
-    + for<'r> Mul<&'r V, Output = Self>
+    + Mul<Self::SharedValue, Output = Self>
+    + for<'r> Mul<&'r Self::SharedValue, Output = Self>
     + Neg<Output = Self>
     + 'static
 {
+    type SharedFieldValue: Field;
 }
 
 /// The trait for arithmetic operations on references to a secret share, taking the
@@ -52,4 +55,4 @@ impl<'a, T, Base: 'a, R: 'a> LinearRefOps<'a, Base, R> for T where
 }
 
 /// Secret share of a secret in bits. It has additive and multiplicative properties.
-pub trait Bitwise<V: GaloisField>: SecretSharing<V> + Linear<V> {}
+pub trait Bitwise<V: GaloisField>: Linear<SharedFieldValue = V> {}

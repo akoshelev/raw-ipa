@@ -120,7 +120,7 @@ pub trait UpgradableContext: Context {
 #[async_trait]
 pub trait UpgradedContext: Context {
     type Field: ExtendableField;
-    type Share: SecretSharing<Self::Field> + 'static;
+    type Share: SecretSharing<SharedValue = Self::Field> + 'static;
 
     async fn upgrade_one(
         &self,

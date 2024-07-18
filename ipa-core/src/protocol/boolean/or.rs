@@ -15,7 +15,7 @@ use crate::{
 ///
 /// ## Errors
 /// Fails if the multiplication protocol fails.
-pub async fn or<F: Field, C: Context, S: LinearSecretSharing<F> + SecureMul<C>>(
+pub async fn or<F: Field, C: Context, S: LinearSecretSharing<SharedFieldValue = F> + SecureMul<C>>(
     ctx: C,
     record_id: RecordId,
     a: &S,

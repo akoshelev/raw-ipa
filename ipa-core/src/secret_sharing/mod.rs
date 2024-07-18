@@ -189,7 +189,7 @@ mod tests {
         },
     };
 
-    fn arithmetic<L: Linear<F> + PartialEq, F: Field>()
+    fn arithmetic<L: Linear<SharedFieldValue = F> + PartialEq, F: Field>()
     where
         for<'a> &'a L: LinearRefOps<'a, L, F>,
     {
@@ -202,30 +202,30 @@ mod tests {
         assert_eq!(L::ZERO, a + b);
     }
 
-    fn trait_bounds<L: Linear<F> + PartialEq, F: Field>()
+    fn trait_bounds<L: Linear<SharedFieldValue = F> + PartialEq, F: Field>()
     where
         for<'a> &'a L: LinearRefOps<'a, L, F>,
     {
-        fn sum_owned<S: Linear<F>, F: Field>(a: S, b: S) -> S {
+        fn sum_owned<S: Linear<SharedFieldValue = F>, F: Field>(a: S, b: S) -> S {
             a + b
         }
 
         fn sum_ref_ref<S, F>(a: &S, b: &S) -> S
         where
-            S: Linear<F>,
+            S: Linear<SharedFieldValue = F>,
             F: Field,
             for<'a> &'a S: LinearRefOps<'a, S, F>,
         {
             a + b
         }
 
-        fn sum_owned_ref<S: Linear<F>, F: Field>(a: S, b: &S) -> S {
+        fn sum_owned_ref<S: Linear<SharedFieldValue = F>, F: Field>(a: S, b: &S) -> S {
             a + b
         }
 
         fn sum_ref_owned<S, F>(a: &S, b: S) -> S
         where
-            S: Linear<F>,
+            S: Linear<SharedFieldValue = F>,
             F: Field,
             for<'a> &'a S: LinearRefOps<'a, S, F>,
         {

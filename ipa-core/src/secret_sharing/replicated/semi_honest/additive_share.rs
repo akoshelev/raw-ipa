@@ -30,14 +30,15 @@ pub struct BAASIterator<'a, S: BooleanArray> {
     share: &'a AdditiveShare<S>,
 }
 
-impl<V: SharedValue + Vectorizable<N>, const N: usize> SecretSharing<V> for AdditiveShare<V, N> {
+impl<V: SharedValue + Vectorizable<N>, const N: usize> SecretSharing for AdditiveShare<V, N> {
+    type SharedValue = V;
     const ZERO: Self = Self(
         <V as Vectorizable<N>>::Array::ZERO_ARRAY,
         <V as Vectorizable<N>>::Array::ZERO_ARRAY,
     );
 }
 
-impl<F, const N: usize> LinearSecretSharing<F> for AdditiveShare<F, N> where F: Field + FieldSimd<N> {}
+impl<F, const N: usize> LinearSecretSharing for AdditiveShare<F, N> where F: Field + FieldSimd<N> { type SharedFieldValue = F; }
 
 impl<V: SharedValue + Vectorizable<N> + Debug, const N: usize> Debug for AdditiveShare<V, N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -65,10 +66,12 @@ impl<V: SharedValue> AdditiveShare<V> {
     }
 }
 
-impl<V> ReplicatedSecretSharing<V> for AdditiveShare<V>
+impl <V> ReplicatedSecretSharing for AdditiveShare<V>
 where
     V: SharedValue + Vectorizable<1>,
 {
+    type V = V;
+
     fn new(a: V, b: V) -> Self {
         Self(a.into_array(), b.into_array())
     }

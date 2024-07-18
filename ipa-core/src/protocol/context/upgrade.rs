@@ -151,14 +151,14 @@ where
         self.ctx.upgrade_one(self.record_binding, input).await
     }
 }
-pub struct IPAModulusConvertedInputRowWrapper<F: Field, T: LinearSecretSharing<F>> {
+pub struct IPAModulusConvertedInputRowWrapper<F: Field, T: LinearSecretSharing<SharedFieldValue = F>> {
     pub timestamp: T,
     pub is_trigger_bit: T,
     pub trigger_value: T,
     _marker: PhantomData<F>,
 }
 
-impl<F: Field, T: LinearSecretSharing<F>> IPAModulusConvertedInputRowWrapper<F, T> {
+impl<F: Field, T: LinearSecretSharing<SharedFieldValue = F>> IPAModulusConvertedInputRowWrapper<F, T> {
     pub fn new(timestamp: T, is_trigger_bit: T, trigger_value: T) -> Self {
         Self {
             timestamp,

@@ -67,11 +67,12 @@ impl ExtendableField for Gf2 {
     }
 }
 
-impl<V: SharedValue + ExtendableField> SecretSharing<V> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableField> SecretSharing for AdditiveShare<V> {
+    type SharedValue = V;
     const ZERO: Self = AdditiveShare::ZERO;
 }
 
-impl<V: SharedValue + ExtendableField> LinearSecretSharing<V> for AdditiveShare<V> {}
+impl<V: SharedValue + ExtendableField> LinearSecretSharing for AdditiveShare<V> { type SharedFieldValue = V; }
 
 /// A trait that is implemented for various collections of `replicated::malicious::AdditiveShare`.
 /// This allows a protocol to downgrade to ordinary `replicated::semi_honest::AdditiveShare`

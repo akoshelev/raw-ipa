@@ -94,8 +94,8 @@ pub fn eval_dy_prf<C, L, R>(
 ) -> impl Future<Output = Result<[u64; Fp25519::VECTORIZE], Error>> + Send
 where
     C: UpgradedContext,
-    L: Linear<Fp25519> + BasicProtocols<C, Fp25519, { Fp25519::VECTORIZE }>,
-    R: SecretSharing<RP25519> + Reveal<C, Output = <RP25519 as Vectorizable<{ Fp25519::VECTORIZE }>>::Array> + From<L>,
+    L: Linear<SharedFieldValue = Fp25519> + BasicProtocols<C, Fp25519, { Fp25519::VECTORIZE }>,
+    R: SecretSharing<SharedValue = RP25519> + Reveal<C, Output = <RP25519 as Vectorizable<{ Fp25519::VECTORIZE }>>::Array> + From<L>,
 {
     let sh_r: L = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     //compute x+k

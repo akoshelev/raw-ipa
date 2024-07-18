@@ -70,7 +70,7 @@ impl<S> BitDecomposed<S> {
     /// over the shares of bits and computes `Σ(2^i * b_i)`.
     pub fn to_additive_sharing_in_large_field<F>(&self) -> S
     where
-        S: LinearSecretSharing<F>,
+        S: LinearSecretSharing<SharedFieldValue = F>,
         for<'a> &'a S: LinearRefOps<'a, S, F>,
         F: PrimeField,
     {
@@ -83,7 +83,7 @@ impl<S> BitDecomposed<S> {
     // but rather takes ownership over the BitDecomposed
     pub fn to_additive_sharing_in_large_field_consuming<F>(bits: BitDecomposed<S>) -> S
     where
-        S: LinearSecretSharing<F>,
+        S: LinearSecretSharing<SharedFieldValue = F>,
         F: PrimeField,
     {
         bits.into_iter().enumerate().fold(S::ZERO, |acc, (i, b)| {

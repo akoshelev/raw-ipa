@@ -3,12 +3,13 @@ pub mod semi_honest;
 
 use super::{SecretSharing, SharedValue};
 
-pub trait ReplicatedSecretSharing<V: SharedValue>: SecretSharing<V> {
-    fn new(a: V, b: V) -> Self;
-    fn left(&self) -> V;
-    fn right(&self) -> V;
+pub trait ReplicatedSecretSharing: SecretSharing<SharedValue = Self::V> {
+    type V: SharedValue;
+    fn new(a: Self::V, b: Self::V) -> Self;
+    fn left(&self) -> Self::V;
+    fn right(&self) -> Self::V;
 
-    fn map<F: Fn(V) -> T, R: ReplicatedSecretSharing<T>, T: SharedValue>(&self, f: F) -> R {
+    fn map<F: Fn(Self::V) -> T, R: ReplicatedSecretSharing<V = T>, T: SharedValue>(&self, f: F) -> R {
         R::new(f(self.left()), f(self.right()))
     }
 }

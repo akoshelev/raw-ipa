@@ -91,7 +91,7 @@ use step::IpaPrfStep as Step;
 use crate::ff::curve_points::RP25519;
 use crate::protocol::BasicProtocols;
 use crate::protocol::context::Validator;
-use crate::seq_join::{assert_send, SeqJoin};
+use crate::seq_join::{SeqJoin};
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
