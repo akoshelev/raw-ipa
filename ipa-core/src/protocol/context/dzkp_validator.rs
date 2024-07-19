@@ -838,10 +838,7 @@ impl<'a> Drop for MaliciousDZKPValidator<'a> {
 
 #[cfg(all(test, unit_test))]
 mod tests {
-    use std::{
-        iter::{repeat, repeat_with, zip},
-        num::NonZeroUsize,
-    };
+    use std::{iter::{repeat, repeat_with, zip}, mem, num::NonZeroUsize};
 
     use bitvec::{order::Lsb0, prelude::BitArray, vec::BitVec};
     use futures::{StreamExt, TryStreamExt};

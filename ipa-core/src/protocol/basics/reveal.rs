@@ -26,7 +26,7 @@ use crate::{
 use crate::secret_sharing::Sendable;
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
-pub trait Reveal<C: Context, const N: usize>: Sized {
+pub trait Reveal<C: Context>: Sized {
     type Output: Sendable + Send + Sync + 'static;
     /// Reveal a shared secret to all helpers in the MPC ring.
     ///
@@ -208,7 +208,7 @@ where
     S::partial_reveal(v, ctx, record_id, excluded)
 }
 
-pub fn validated_partial_reveal<'fut, V, S, const N: usize>(
+pub fn validated_partial_reveal<'fut, V, S>(
     validator: V,
     record_id: RecordId,
     excluded: Role,
@@ -216,7 +216,7 @@ pub fn validated_partial_reveal<'fut, V, S, const N: usize>(
 ) -> impl Future<Output = Result<Vec<Option<S::Output>>, Error>> + Send
 where
     V: DZKPValidator + 'fut,
-    S: Reveal<V::Context, N> + Send + Sync,
+    S: Reveal<V::Context> + Send + Sync,
 {
     async move {
         validator.clone().validate_record(record_id).await?;
