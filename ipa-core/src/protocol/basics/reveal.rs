@@ -1,13 +1,17 @@
-use std::future::Future;
+use std::{
+    future::Future,
+    iter::{repeat, zip},
+};
 
 use embed_doc_image::embed_doc_image;
-use futures::TryFutureExt;
+use futures::{future::try_join_all, TryFutureExt};
 
 use crate::{
     error::Error,
     helpers::{Direction, MaybeFuture, Role},
     protocol::{
-        context::{Context, UpgradedMaliciousContext},
+        context::{dzkp_validator::DZKPValidator, Context, UpgradedMaliciousContext},
+        ipa_prf::boolean_ops::step::Fp25519ConversionStep,
         RecordId,
     },
     secret_sharing::{
@@ -17,12 +21,13 @@ use crate::{
         },
         SharedValue, Vectorizable,
     },
+    seq_join::assert_send,
 };
 use crate::secret_sharing::Sendable;
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
-pub trait Reveal<C: Context>: Sized {
-    type Output: Sendable;
+pub trait Reveal<C: Context, const N: usize>: Sized {
+    type Output: Sendable + Send + Sync + 'static;
     /// Reveal a shared secret to all helpers in the MPC ring.
     ///
     /// Note that after method is called, it must be assumed that the secret value has been
@@ -201,6 +206,33 @@ where
     S: Reveal<C>,
 {
     S::partial_reveal(v, ctx, record_id, excluded)
+}
+
+pub fn validated_partial_reveal<'fut, V, S, const N: usize>(
+    validator: V,
+    record_id: RecordId,
+    excluded: Role,
+    v: Vec<S>,
+) -> impl Future<Output = Result<Vec<Option<S::Output>>, Error>> + Send
+where
+    V: DZKPValidator + 'fut,
+    S: Reveal<V::Context, N> + Send + Sync,
+{
+    async move {
+        validator.clone().validate_record(record_id).await?;
+        try_join_all(zip(v, repeat(validator.context())).enumerate().map(
+            |(i, (v, ctx))| async move {
+                assert_send(S::partial_reveal(
+                    &v,
+                    ctx.narrow(&Fp25519ConversionStep::RevealY(i)),
+                    record_id,
+                    excluded,
+                ))
+                .await
+            },
+        ))
+        .await
+    }
 }
 
 #[cfg(all(test, unit_test))]
