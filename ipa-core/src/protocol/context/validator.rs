@@ -39,6 +39,8 @@ use crate::{
 pub trait Validator<B: UpgradableContext, F: ExtendableField> {
     fn context(&self) -> B::UpgradedContext<F>;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
 }
 
 pub struct SemiHonest<'a, B: ShardBinding, F: ExtendableField> {
@@ -66,6 +68,10 @@ impl<'a, B: ShardBinding, F: ExtendableField> Validator<super::semi_honest::Cont
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error> {
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
         Ok(values.downgrade().await.access_without_downgrade())
+    }
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -238,6 +244,10 @@ impl<'a, F: ExtendableField> Validator<MaliciousContext<'a>, F> for Malicious<'a
         } else {
             Err(Error::MaliciousSecurityCheckFailed)
         }
+    }
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        unimplemented!()
     }
 }
 

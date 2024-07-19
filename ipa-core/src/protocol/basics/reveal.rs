@@ -23,6 +23,7 @@ use crate::{
     },
     seq_join::assert_send,
 };
+use crate::protocol::context::{UpgradableContext, UpgradedContext, Validator};
 use crate::secret_sharing::Sendable;
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
@@ -208,7 +209,7 @@ where
     S::partial_reveal(v, ctx, record_id, excluded)
 }
 
-pub fn validated_partial_reveal<'fut, V, S>(
+pub fn zkp_validated_partial_reveal<'fut, V, S>(
     validator: V,
     record_id: RecordId,
     excluded: Role,
@@ -232,6 +233,23 @@ where
             },
         ))
         .await
+    }
+}
+
+pub fn mac_validated_reveal<C, V, S, F>(
+    validator: V,
+    record_id: RecordId,
+    v: S,
+) -> impl Future<Output = Result<S::Output, Error>> + Send
+where
+    C: UpgradableContext,
+    F: ExtendableField,
+    V: Validator<C, F> + Send,
+    S: Reveal<C::UpgradedContext<F>> + Send + Sync,
+{
+    async move {
+        validator.validate_record(record_id).await?;
+        assert_send(v.reveal(validator.context(), record_id)).await
     }
 }
 

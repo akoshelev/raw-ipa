@@ -10,7 +10,7 @@ use crate::{
     },
     helpers::Role,
     protocol::{
-        basics::{validated_partial_reveal, BooleanProtocols},
+        basics::{zkp_validated_partial_reveal, BooleanProtocols},
         boolean::step::TwoHundredFiftySixBitOpStep,
         context::{dzkp_validator::DZKPValidator, Context},
         ipa_prf::boolean_ops::{
@@ -166,7 +166,7 @@ where
 
     // validate and reveal
     // this leaks information, but with negligible probability
-    let revealed_y = validated_partial_reveal(
+    let revealed_y = zkp_validated_partial_reveal(
         dzkp_validator.clone(),
         //m_ctx.narrow(&Step::RevealY(i)),
         record_id,

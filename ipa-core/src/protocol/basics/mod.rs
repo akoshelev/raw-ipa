@@ -13,7 +13,7 @@ pub use check_zero::check_zero;
 pub use if_else::select;
 pub use mul::{BooleanArrayMul, SecureMul};
 pub use reshare::Reshare;
-pub use reveal::{partial_reveal, reveal, validated_partial_reveal, Reveal};
+pub use reveal::{partial_reveal, reveal, zkp_validated_partial_reveal, Reveal};
 pub use share_known_value::ShareKnownValue;
 
 use crate::{
