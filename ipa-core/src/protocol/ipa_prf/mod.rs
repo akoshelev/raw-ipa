@@ -1,5 +1,10 @@
-use std::{convert::Infallible, iter::zip, num::NonZeroU32, ops::Add};
-use std::iter::repeat;
+use std::{
+    convert::Infallible,
+    iter::{repeat, zip},
+    num::NonZeroU32,
+    ops::Add,
+};
+
 use futures::{stream, StreamExt, TryStreamExt};
 use generic_array::{ArrayLength, GenericArray};
 use typenum::{Const, Unsigned, U18};
@@ -88,12 +93,16 @@ pub const AGG_CHUNK: usize = 256;
 pub const SORT_CHUNK: usize = 256;
 
 use step::IpaPrfStep as Step;
-use crate::ff::curve_points::RP25519;
-use crate::protocol::BasicProtocols;
-use crate::protocol::context::{UpgradeToMalicious, Validator};
-use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
-use crate::protocol::ipa_prf::prf_eval::PrfSharing;
-use crate::seq_join::{SeqJoin};
+
+use crate::{
+    ff::curve_points::RP25519,
+    protocol::{
+        context::{upgrade::UpgradeVectorizedFriendly, UpgradeToMalicious, Validator},
+        ipa_prf::prf_eval::PrfSharing,
+        BasicProtocols,
+    },
+    seq_join::SeqJoin,
+};
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -287,8 +296,11 @@ where
     C: UpgradableContext,
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
     C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519>,
-    C::UpgradedContext<Fp25519>: UpgradeVectorizedFriendly<Replicated<Fp25519, {Fp25519::VECTORIZE}>>,
-    <C::UpgradedContext<Fp25519> as UpgradeVectorizedFriendly<Replicated<Fp25519, {Fp25519::VECTORIZE}>>>::UpgradeOutput: PrfSharing<C::UpgradedContext<Fp25519>, {Fp25519::VECTORIZE}>,
+    C::UpgradedContext<Fp25519>:
+        UpgradeVectorizedFriendly<Replicated<Fp25519, { Fp25519::VECTORIZE }>>,
+    <C::UpgradedContext<Fp25519> as UpgradeVectorizedFriendly<
+        Replicated<Fp25519, { Fp25519::VECTORIZE }>,
+    >>::UpgradeOutput: PrfSharing<C::UpgradedContext<Fp25519>, { Fp25519::VECTORIZE }>,
     BK: BooleanArray,
     TV: BooleanArray,
     TS: BooleanArray,
@@ -296,7 +308,8 @@ where
         <<C as UpgradableContext>::DZKPValidator as DZKPValidator>::Context,
         CONV_CHUNK,
     >,
-    Replicated<Fp25519, PRF_CHUNK>: BasicProtocols<C::UpgradedContext<Fp25519>, PRF_CHUNK, ProtocolField = Fp25519> // todo: default vectorize
+    Replicated<Fp25519, PRF_CHUNK>:
+        BasicProtocols<C::UpgradedContext<Fp25519>, PRF_CHUNK, ProtocolField = Fp25519>, // todo: default vectorize
 {
     let conv_records =
         TotalRecords::specified(div_round_up(input_rows.len(), Const::<CONV_CHUNK>))?;
@@ -305,11 +318,6 @@ where
         .narrow(&Step::ConvertFp25519)
         .set_total_records(conv_records);
     let active_work = ctx.active_work();
-
-    let validator = ctx.validator::<Fp25519>();
-    let eval_ctx = validator.context()
-        .narrow(&Step::EvalPrf)
-        .set_total_records(eval_records);
 
     let validator = convert_ctx.dzkp_validator(CONV_PROOF_CHUNK * CONV_CHUNK);
 
@@ -330,15 +338,22 @@ where
     .try_collect::<Vec<_>>()
     .await?;
 
+    let validator = ctx.validator::<Fp25519>();
+    let eval_ctx = validator
+        .context()
+        .narrow(&Step::EvalPrf)
+        .set_total_records(eval_records);
+
     let prf_key = &gen_prf_key(&eval_ctx).await?;
     let prf_of_match_keys = seq_join(
         eval_ctx.active_work(),
         stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
             let record_id = RecordId::from(i);
             let eval_ctx = eval_ctx.clone();
+            let validator = validator.clone();
             curve_pts.then(move |pts| async move {
                 let pts = eval_ctx.clone().upgrade_one(record_id, pts).await?;
-                eval_dy_prf(eval_ctx, record_id, prf_key, pts).await
+                eval_dy_prf(validator, record_id, prf_key, pts).await
             })
         }),
     )

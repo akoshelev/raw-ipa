@@ -1,58 +1,109 @@
-use std::future::Future;
-use std::iter::zip;
-use std::ops::Mul;
+use std::{future::Future, iter::zip, marker::PhantomData, ops::Mul};
+
 use futures_util::future::try_join;
+use typenum::Const;
+
 use crate::{
     error::Error,
-    ff::{boolean::Boolean, curve_points::RP25519, ec_prime_field::Fp25519},
-    helpers::TotalRecords,
+    ff::{
+        boolean::Boolean, curve_points::RP25519, ec_prime_field::Fp25519, Expand, Invert,
+        PrimeField,
+    },
+    helpers::{Role, TotalRecords},
     protocol::{
-        basics::{Reveal, SecureMul},
-        context::Context,
-        ipa_prf::step::PrfStep as Step,
+        basics::{mac_validated_reveal, Reveal, SecureMul},
+        context::{
+            upgrade::UpgradeVectorizedFriendly, Context, UpgradableContext, UpgradedContext,
+            UpgradedSemiHonestContext, Validator,
+        },
+        ipa_prf::{boolean_ops::step::MultiplicationStep::Add, step::PrfStep as Step},
         prss::{FromPrss, SharedRandomness},
-        RecordId,
+        BasicProtocols, RecordId,
     },
     secret_sharing::{
-        replicated::semi_honest::AdditiveShare, Sendable, SharedValue, StdArray, Vectorizable,
+        replicated::{malicious::ExtendableField, semi_honest::AdditiveShare},
+        FieldSimd, Linear, SecretSharing, Sendable, SharedValue, StdArray, Vectorizable,
+        VectorizedSecretSharing,
     },
+    seq_join::assert_send,
+    sharding::NotSharded,
 };
-use crate::ff::{Expand, Invert, PrimeField};
-use crate::protocol::BasicProtocols;
-use crate::protocol::context::{UpgradableContext, UpgradedContext, UpgradedSemiHonestContext};
-use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
-use crate::protocol::ipa_prf::boolean_ops::step::MultiplicationStep::Add;
-use crate::secret_sharing::{FieldSimd, Linear, SecretSharing, VectorizedSecretSharing};
-use crate::seq_join::assert_send;
-use crate::sharding::NotSharded;
-
 
 /// This trait defines the requirements to the sharing types and the underlying fields
 /// used to generate PRF values.
-pub trait PrfSharing<C: Context, const N: usize>: BasicProtocols<C, N, ProtocolField = Self::Field> {
+pub trait PrfSharing<C: Context, const N: usize>:
+    BasicProtocols<C, N, ProtocolField = Self::Field>
+{
     /// The type of field used to compute `z`
-    type Field: FieldSimd<N> + Invert;
+    type Field: ExtendableField + FieldSimd<N> + Invert;
 
     /// Curve point scalar value allowed to use with [`Self::Field`] and used
     /// to compute `r`.
-    type CurvePoint: SharedValue + Vectorizable<N> + Into<u64>
-     + Mul<Self::Field, Output = Self::CurvePoint>;
+    type CurvePoint: SharedValue
+        + Vectorizable<N>
+        + Into<u64>
+        + Mul<Self::Field, Output = Self::CurvePoint>;
 
     /// Sharing of curve point compatible with this implementation.
     type CurvePointSharing: SecretSharing<SharedValue = Self::CurvePoint>
-      + Reveal<C, Output = <Self::CurvePoint as Vectorizable<N>>::Array>
-      + From<Self>;
+        + Reveal<C, Output = <Self::CurvePoint as Vectorizable<N>>::Array>
+        + From<Self>;
+
+    // fn reveal(&self, ctx: C, record_id: RecordId, curve_point_sharing: Self::CurvePointSharing)
+    //     -> impl Future<Output = Result<(<Self::Field as Vectorizable<N>>::Array, <Self::CurvePoint as Vectorizable<N>>::Array), Error>> + Send {
+    //     try_join(
+    //         curve_point_sharing.reveal(ctx.narrow(&Step::RevealR), record_id),
+    //         self.reveal(ctx.narrow(&Step::Revealz), record_id)
+    //     )
+    // }
 }
 
-impl <C: Context, const N: usize> PrfSharing<C, N> for AdditiveShare<Fp25519, N>
+struct RevealablePrfSharing<C: Context, Z: PrfSharing<C, N>, const N: usize> {
+    prf_share: Z,
+    curve_point_share: Z::CurvePointSharing,
+}
+
+impl<C: Context, const N: usize> PrfSharing<C, N> for AdditiveShare<Fp25519, N>
 where
     Fp25519: FieldSimd<N>,
     RP25519: Vectorizable<N>,
-    AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>
+    AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>,
 {
     type Field = Fp25519;
     type CurvePoint = RP25519;
     type CurvePointSharing = AdditiveShare<RP25519, N>;
+}
+
+impl<const N: usize, C: UpgradedContext, Z: PrfSharing<C, N>> Reveal<C>
+    for RevealablePrfSharing<C, Z, N>
+{
+    type Output = (
+        <Z::CurvePoint as Vectorizable<N>>::Array,
+        <Z::Field as Vectorizable<N>>::Array,
+    );
+
+    fn generic_reveal<'fut>(
+        &'fut self,
+        ctx: C,
+        record_id: RecordId,
+        excluded: Option<Role>,
+    ) -> impl Future<Output = Result<Option<Self::Output>, Error>> + Send + 'fut
+    where
+        C: 'fut,
+    {
+        let sh_gr = &self.curve_point_share;
+        let y = &self.prf_share;
+        async move {
+            let (gr, z) = assert_send(try_join(
+                sh_gr.reveal(ctx.narrow(&Step::RevealR), record_id),
+                // sh_gr.reveal(ctx.narrow(&Step::RevealR), record_id),
+                y.reveal(ctx.narrow(&Step::Revealz), record_id),
+            ))
+            .await?;
+
+            Ok(Some((gr, z)))
+        }
+    }
 }
 
 impl<const N: usize> From<AdditiveShare<Fp25519, N>> for AdditiveShare<RP25519, N>
@@ -68,13 +119,17 @@ where
 /// generates PRF key k as secret sharing over Fp25519
 pub async fn gen_prf_key<C>(ctx: &C) -> Result<C::UpgradeOutput, Error>
 where
-    C: UpgradedContext + UpgradeVectorizedFriendly<AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>>,
+    C: UpgradedContext + UpgradeVectorizedFriendly<AdditiveShare<Fp25519, { Fp25519::VECTORIZE }>>,
 {
     let ctx = ctx.narrow(&Step::PRFKeyGen);
     let v: AdditiveShare<Fp25519, 1> = ctx.prss().generate(RecordId(0));
 
     // TODO: recordid first will conflict with PRSS
-    ctx.upgrade_one(RecordId::FIRST, AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v)).await
+    ctx.upgrade_one(
+        RecordId::FIRST,
+        AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v),
+    )
+    .await
 }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))
@@ -90,16 +145,19 @@ where
 /// Propagates errors from multiplications, reveal and scalar multiplication
 /// # Panics
 /// Never as of when this comment was written, but the compiler didn't know that.
-pub(super) fn eval_dy_prf<C, P, const N: usize>(
-    ctx: C,
+pub(super) fn eval_dy_prf<C, F, V, P, const N: usize>(
+    validator: V,
     record_id: RecordId,
     k: &P,
     x: P,
 ) -> impl Future<Output = Result<[u64; N], Error>> + Send
 where
-    C: UpgradedContext,
-    P: PrfSharing<C, N>,
+    F: ExtendableField,
+    C: UpgradableContext,
+    V: Validator<C, F>,
+    P: PrfSharing<<C as UpgradableContext>::UpgradedContext<F>, N>,
 {
+    let ctx = validator.context();
     let sh_r: P = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     //compute x+k
     let mut y = x + k;
@@ -114,10 +172,15 @@ where
         let sh_gr = P::CurvePointSharing::from(sh_r);
 
         //reconstruct (z,R)
-        let (gr, z) = assert_send(try_join(
-            sh_gr.reveal(ctx.narrow(&Step::RevealR), record_id),
-            y.reveal(ctx.narrow(&Step::Revealz), record_id)
-        )).await?;
+        let (gr, z) = mac_validated_reveal(
+            validator,
+            record_id,
+            RevealablePrfSharing {
+                curve_point_share: sh_gr,
+                prf_share: y,
+            },
+        )
+        .await?;
 
         //compute R^(1/z) to u64
         Ok(zip(gr, z)
@@ -133,18 +196,19 @@ mod test {
     use rand::Rng;
 
     use crate::{
-        ff::{curve_points::RP25519, ec_prime_field::Fp25519},
+        error::Error,
+        ff::{boolean::Boolean, curve_points::RP25519, ec_prime_field::Fp25519, Invert},
+        helpers::TotalRecords,
+        protocol::{
+            context::{Context, UpgradableContext, UpgradedContext, Validator},
+            ipa_prf::prf_eval::eval_dy_prf,
+            BasicProtocols,
+        },
         secret_sharing::{replicated::semi_honest::AdditiveShare, IntoShares},
         test_executor::run,
         test_fixture::{Reconstruct, Runner, TestWorld},
     };
-    use crate::error::Error;
-    use crate::ff::boolean::Boolean;
-    use crate::ff::Invert;
-    use crate::helpers::TotalRecords;
-    use crate::protocol::BasicProtocols;
-    use crate::protocol::context::{Context, UpgradableContext, UpgradedContext, Validator};
-    use crate::protocol::ipa_prf::prf_eval::eval_dy_prf;
+    use crate::seq_join::SeqJoin;
 
     ///defining test input struct
     #[derive(Copy, Clone)]
@@ -189,22 +253,22 @@ mod test {
     /// # Errors
     /// Propagates errors from multiplications
     async fn compute_match_key_pseudonym<C>(
-        sh_ctx: C,
+        ctx: C,
         prf_key: AdditiveShare<Fp25519>,
         input_match_keys: Vec<AdditiveShare<Fp25519>>,
     ) -> Result<Vec<u64>, Error>
     where
-        C: UpgradedContext,
-        AdditiveShare<Fp25519>: BasicProtocols<C, 1, ProtocolField = Fp25519>,
+        C: UpgradableContext,
+        AdditiveShare<Fp25519>: BasicProtocols<C::UpgradedContext<Fp25519>, 1, ProtocolField = Fp25519>,
     {
-        let ctx = sh_ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
+        let ctx = ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
+        let validator = ctx.clone().validator::<Fp25519>();
         let futures = input_match_keys
             .into_iter()
             .enumerate()
-            .map(|(i, x)| eval_dy_prf(ctx.clone(), i.into(), &prf_key, x));
+            .map(|(i, x)| eval_dy_prf(validator.clone(), i.into(), &prf_key, x));
         Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
     }
-
 
     ///testing correctness of DY PRF evaluation
     /// by checking MPC generated pseudonym with pseudonym generated in the clear
@@ -242,9 +306,7 @@ mod test {
                 .semi_honest(
                     (records.into_iter(), k),
                     |ctx, (input_match_keys, prf_key)| async move {
-                        let validator = ctx.validator::<Fp25519>();
-                        let upgraded_ctx = validator.context();
-                        compute_match_key_pseudonym::<_>(upgraded_ctx, prf_key, input_match_keys)
+                        compute_match_key_pseudonym(ctx, prf_key, input_match_keys)
                             .await
                             .unwrap()
                     },

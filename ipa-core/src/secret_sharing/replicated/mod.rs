@@ -9,7 +9,10 @@ pub trait ReplicatedSecretSharing: SecretSharing<SharedValue = Self::V> {
     fn left(&self) -> Self::V;
     fn right(&self) -> Self::V;
 
-    fn map<F: Fn(Self::V) -> T, R: ReplicatedSecretSharing<V = T>, T: SharedValue>(&self, f: F) -> R {
+    fn map<F: Fn(Self::V) -> T, R: ReplicatedSecretSharing<V = T>, T: SharedValue>(
+        &self,
+        f: F,
+    ) -> R {
         R::new(f(self.left()), f(self.right()))
     }
 }

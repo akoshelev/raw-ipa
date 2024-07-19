@@ -36,13 +36,14 @@ use crate::{
 };
 
 #[async_trait]
-pub trait Validator<B: UpgradableContext, F: ExtendableField> {
+pub trait Validator<B: UpgradableContext, F: ExtendableField>: Send + Sync + Clone {
     fn context(&self) -> B::UpgradedContext<F>;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
 
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
 }
 
+#[derive(Clone)]
 pub struct SemiHonest<'a, B: ShardBinding, F: ExtendableField> {
     context: UpgradedSemiHonestContext<'a, B, F>,
     _f: PhantomData<F>,
@@ -193,6 +194,7 @@ impl<F: ExtendableField> MaliciousAccumulator<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct Malicious<'a, F: ExtendableField> {
     r_share: Replicated<F::ExtendedField>,
     u_and_w: Arc<Mutex<AccumulatorState<F::ExtendedField>>>,

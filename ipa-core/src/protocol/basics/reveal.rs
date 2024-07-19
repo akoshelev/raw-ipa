@@ -28,7 +28,7 @@ use crate::secret_sharing::Sendable;
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
 pub trait Reveal<C: Context>: Sized {
-    type Output: Sendable + Send + Sync + 'static;
+    type Output: Send + Sync + 'static;
     /// Reveal a shared secret to all helpers in the MPC ring.
     ///
     /// Note that after method is called, it must be assumed that the secret value has been
@@ -244,7 +244,7 @@ pub fn mac_validated_reveal<C, V, S, F>(
 where
     C: UpgradableContext,
     F: ExtendableField,
-    V: Validator<C, F> + Send,
+    V: Validator<C, F>,
     S: Reveal<C::UpgradedContext<F>> + Send + Sync,
 {
     async move {
