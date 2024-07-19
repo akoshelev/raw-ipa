@@ -136,7 +136,7 @@ pub trait UpgradedContext: Context {
     async fn upgrade<T, M>(&self, input: T) -> Result<M, Error>
     where
         T: Send,
-        UpgradeContext<Self>: UpgradeToMalicious<T, M>,
+        UpgradeContext<Self>: UpgradeToMalicious<T, Output = M>,
     {
         #[cfg(descriptive_gate)]
         {
@@ -160,7 +160,7 @@ pub trait UpgradedContext: Context {
     async fn upgrade_for<T, M>(&self, record_id: RecordId, input: T) -> Result<M, Error>
     where
         T: Send,
-        UpgradeContext<Self, RecordId>: UpgradeToMalicious<T, M>,
+        UpgradeContext<Self, RecordId>: UpgradeToMalicious<T, Output = M>,
     {
         #[cfg(descriptive_gate)]
         {

@@ -87,55 +87,60 @@ pub trait UpgradeVectorizedFriendly<I: Send> {
 
 
 #[async_trait]
-pub trait UpgradeToMalicious<T, M>
+pub trait UpgradeToMalicious<T>
 where
     T: Send,
 {
-    async fn upgrade(self, input: T) -> Result<M, Error>;
+    type Output: Send;
+
+    async fn upgrade(self, input: T) -> Result<Self::Output, Error>;
 }
 
 #[async_trait]
-impl<C> UpgradeToMalicious<(), ()> for UpgradeContext<C, NoRecord>
+impl<C> UpgradeToMalicious<()> for UpgradeContext<C, NoRecord>
 where
     C: UpgradedContext,
 {
+    type Output = ();
     async fn upgrade(self, _input: ()) -> Result<(), Error> {
         Ok(())
     }
 }
 
-#[async_trait]
-impl<C, T, TM, U, UM> UpgradeToMalicious<(T, U), (TM, UM)> for UpgradeContext<C, NoRecord>
-where
-    C: UpgradedContext,
-    T: Send + 'static,
-    U: Send + 'static,
-    TM: Send + Sized + 'static,
-    UM: Send + Sized + 'static,
-    UpgradeContext<C, NoRecord>: UpgradeToMalicious<T, TM> + UpgradeToMalicious<U, UM>,
-{
-    async fn upgrade(self, input: (T, U)) -> Result<(TM, UM), Error> {
-        try_join(
-            self.narrow(&TwoHundredFiftySixBitOpStep::from(0))
-                .upgrade(input.0),
-            self.narrow(&TwoHundredFiftySixBitOpStep::from(1))
-                .upgrade(input.1),
-        )
-        .await
-    }
-}
+// #[async_trait]
+// impl<C, T, TM, U, UM> UpgradeToMalicious<(T, U), (TM, UM)> for UpgradeContext<C, NoRecord>
+// where
+//     C: UpgradedContext,
+//     T: Send + 'static,
+//     U: Send + 'static,
+//     TM: Send + Sized + 'static,
+//     UM: Send + Sized + 'static,
+//     UpgradeContext<C, NoRecord>: UpgradeToMalicious<T, TM> + UpgradeToMalicious<U, UM>,
+// {
+//     async fn upgrade(self, input: (T, U)) -> Result<(TM, UM), Error> {
+//         try_join(
+//             self.narrow(&TwoHundredFiftySixBitOpStep::from(0))
+//                 .upgrade(input.0),
+//             self.narrow(&TwoHundredFiftySixBitOpStep::from(1))
+//                 .upgrade(input.1),
+//         )
+//         .await
+//     }
+// }
 
 #[async_trait]
-impl<C, I, M> UpgradeToMalicious<I, Vec<M>> for UpgradeContext<C, NoRecord>
+impl<C, I, M> UpgradeToMalicious<Vec<I>> for UpgradeContext<C, NoRecord>
 where
     C: UpgradedContext,
-    I: IntoIterator + Send + 'static,
-    I::IntoIter: ExactSizeIterator + Send,
-    I::Item: Send + 'static,
+    // I: IntoIterator + Send + 'static,
+    // I::IntoIter: ExactSizeIterator + Send,
+    I: Send + 'static,
     M: Send + 'static,
-    UpgradeContext<C, RecordId>: UpgradeToMalicious<I::Item, M>,
+    UpgradeContext<C, RecordId>: UpgradeToMalicious<I, Output = M>,
 {
-    async fn upgrade(self, input: I) -> Result<Vec<M>, Error> {
+    type Output = Vec<M>;
+
+    async fn upgrade(self, input: Vec<I>) -> Result<Vec<M>, Error> {
         let iter = input.into_iter();
         let ctx = self
             .ctx
@@ -152,43 +157,79 @@ where
 }
 
 #[async_trait]
-impl<C, F> UpgradeToMalicious<Replicated<F>, C::Share> for UpgradeContext<C, RecordId>
+impl<C, F> UpgradeToMalicious<Replicated<F>> for UpgradeContext<C, RecordId>
 where
     C: UpgradedContext<Field = F>,
     F: ExtendableField,
 {
+    type Output = C::Share;
     async fn upgrade(self, input: Replicated<F>) -> Result<C::Share, Error> {
         self.ctx.upgrade_one(self.record_binding, input).await
     }
 }
-pub struct IPAModulusConvertedInputRowWrapper<F: Field, T: LinearSecretSharing<SharedFieldValue = F>> {
-    pub timestamp: T,
-    pub is_trigger_bit: T,
-    pub trigger_value: T,
-    _marker: PhantomData<F>,
+
+#[cfg(test)]
+#[async_trait]
+impl<C, F> UpgradeToMalicious<(Replicated<F>, Replicated<F>)> for UpgradeContext<C, RecordId>
+where
+    C: UpgradedContext<Field = F>,
+    F: ExtendableField,
+{
+    type Output = (C::Share, C::Share);
+    async fn upgrade(self, (l, r): (Replicated<F>, Replicated<F>)) -> Result<(C::Share, C::Share), Error> {
+        let l_ctx = self.ctx.narrow("left_upgrade");
+        let r_ctx = self.ctx.narrow("right_upgrade");
+        try_join(
+            l_ctx.upgrade_one(self.record_binding, l),
+            r_ctx.upgrade_one(self.record_binding, r)
+        ).await
+    }
 }
 
-impl<F: Field, T: LinearSecretSharing<SharedFieldValue = F>> IPAModulusConvertedInputRowWrapper<F, T> {
-    pub fn new(timestamp: T, is_trigger_bit: T, trigger_value: T) -> Self {
-        Self {
-            timestamp,
-            is_trigger_bit,
-            trigger_value,
-            _marker: PhantomData,
-        }
+#[cfg(test)]
+#[async_trait]
+impl<C, F, M> UpgradeToMalicious<(Replicated<F>, Replicated<F>)> for UpgradeContext<C, NoRecord>
+where
+    C: UpgradedContext<Field = F>,
+    F: ExtendableField,
+    M: Send + 'static,
+    UpgradeContext<C, RecordId>: UpgradeToMalicious<Replicated<F>, Output = M>,
+{
+    type Output = (M, M);
+
+    async fn upgrade(self, (l, r): (Replicated<F>, Replicated<F>)) -> Result<Self::Output, Error> {
+        let ctx = if self.ctx.total_records().is_specified() {
+            self.ctx
+        } else {
+            self.ctx.set_total_records(TotalRecords::ONE)
+        };
+
+        // UpgradeContext::new(ctx, RecordId::FIRST)
+        //     .upgrade(input)
+        //     .await
+
+        let l_ctx = ctx.narrow("left_upgrade");
+        let r_ctx = ctx.narrow("right_upgrade");
+
+        try_join(UpgradeContext::new(l_ctx, RecordId::FIRST)
+            .upgrade(l),
+        UpgradeContext::new(r_ctx, RecordId::FIRST)
+            .upgrade(r)
+        ).await
     }
 }
 
 // Impl to upgrade a single `Replicated<F>` using a non-record-bound context. Used for tests.
 #[cfg(test)]
 #[async_trait]
-impl<C, F, M> UpgradeToMalicious<Replicated<F>, M> for UpgradeContext<C, NoRecord>
+impl<C, F, M> UpgradeToMalicious<Replicated<F>> for UpgradeContext<C, NoRecord>
 where
     C: UpgradedContext,
     F: ExtendableField,
-    M: 'static,
-    UpgradeContext<C, RecordId>: UpgradeToMalicious<Replicated<F>, M>,
+    M: Send + 'static,
+    UpgradeContext<C, RecordId>: UpgradeToMalicious<Replicated<F>, Output = M>,
 {
+    type Output = M;
     async fn upgrade(self, input: Replicated<F>) -> Result<M, Error> {
         let ctx = if self.ctx.total_records().is_specified() {
             self.ctx
