@@ -28,6 +28,7 @@ use crate::{
     seq_join::assert_send,
     sharding::NotSharded,
 };
+use crate::protocol::context::validator::Upgradeable;
 
 /// This trait defines the requirements to the sharing types and the underlying fields
 /// used to generate PRF values.
@@ -117,19 +118,23 @@ where
 }
 
 /// generates PRF key k as secret sharing over Fp25519
-pub async fn gen_prf_key<C>(ctx: &C) -> Result<C::UpgradeOutput, Error>
+pub async fn gen_prf_key<C, V>(validator: V) -> Result<
+    <AdditiveShare<Fp25519, {Fp25519::VECTORIZE}> as Upgradeable<C::UpgradedContext<Fp25519>>>::Output
+    , Error>
 where
-    C: UpgradedContext + UpgradeVectorizedFriendly<AdditiveShare<Fp25519, { Fp25519::VECTORIZE }>>,
+    C: UpgradableContext,
+    V: Validator<C, Fp25519>,
+    AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>: Upgradeable<C::UpgradedContext<Fp25519>>
 {
+    let ctx = validator.context();
     let ctx = ctx.narrow(&Step::PRFKeyGen);
     let v: AdditiveShare<Fp25519, 1> = ctx.prss().generate(RecordId(0));
 
     // TODO: recordid first will conflict with PRSS
-    ctx.upgrade_one(
+    validator.upgrade_record(
         RecordId::FIRST,
         AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v),
-    )
-    .await
+    ).await
 }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))

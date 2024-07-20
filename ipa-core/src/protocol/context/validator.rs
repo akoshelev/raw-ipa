@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Formatter},
     marker::PhantomData,
 };
-
+use std::future::Future;
 use async_trait::async_trait;
 use typenum::Const;
 
@@ -34,12 +34,34 @@ use crate::{
     sharding::ShardBinding,
     sync::{Arc, Mutex, Weak},
 };
+use crate::ff::PrimeField;
+use crate::protocol::context::UpgradedContext;
+use crate::secret_sharing::Vectorizable;
+use crate::seq_join::assert_send;
+use crate::sharding::NotSharded;
+
+pub trait Upgradeable<C: Context> : Send {
+    type Output;
+
+    fn upgrade<'ctx>(self, record_id: RecordId, context: C) -> impl Future<Output = Result<Self::Output, Error>> + Send + 'ctx where C: 'ctx;
+}
+
+impl <'a, V: ExtendableField + Vectorizable<N>, const N: usize> Upgradeable<UpgradedSemiHonestContext<'a, NotSharded, V>> for Replicated<V, N> {
+    type Output = Replicated<V, N>;
+
+    fn upgrade<'ctx>(self, record_id: RecordId, context: UpgradedSemiHonestContext<'a, NotSharded, V>) -> impl Future<Output=Result<Self::Output, Error>> + Send + 'ctx
+    where UpgradedSemiHonestContext<'ctx, NotSharded, V>: 'ctx, 'a: 'ctx
+    {
+        async move { Ok(self) }
+    }
+}
 
 #[async_trait]
 pub trait Validator<B: UpgradableContext, F: ExtendableField>: Send + Sync + Clone {
     fn context(&self) -> B::UpgradedContext<F>;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
 
+    async fn upgrade_record<U: Upgradeable<B::UpgradedContext<F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error>;
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
 }
 
@@ -69,6 +91,10 @@ impl<'a, B: ShardBinding, F: ExtendableField> Validator<super::semi_honest::Cont
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error> {
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
         Ok(values.downgrade().await.access_without_downgrade())
+    }
+
+    async fn upgrade_record<U: Upgradeable<UpgradedSemiHonestContext<'a, B, F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error> {
+        assert_send(input.upgrade(record_id, self.context)).await
     }
 
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
@@ -246,6 +272,10 @@ impl<'a, F: ExtendableField> Validator<MaliciousContext<'a>, F> for Malicious<'a
         } else {
             Err(Error::MaliciousSecurityCheckFailed)
         }
+    }
+
+    async fn upgrade_record<U: Upgradeable<UpgradedMaliciousContext<'a, F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error> {
+        todo!()
     }
 
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {

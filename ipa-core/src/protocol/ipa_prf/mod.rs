@@ -103,6 +103,7 @@ use crate::{
     },
     seq_join::SeqJoin,
 };
+use crate::protocol::context::validator::Upgradeable;
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -296,11 +297,8 @@ where
     C: UpgradableContext,
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
     C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519>,
-    C::UpgradedContext<Fp25519>:
-        UpgradeVectorizedFriendly<Replicated<Fp25519, { Fp25519::VECTORIZE }>>,
-    <C::UpgradedContext<Fp25519> as UpgradeVectorizedFriendly<
-        Replicated<Fp25519, { Fp25519::VECTORIZE }>,
-    >>::UpgradeOutput: PrfSharing<C::UpgradedContext<Fp25519>, { Fp25519::VECTORIZE }>,
+    Replicated<Fp25519, { Fp25519::VECTORIZE }> :Upgradeable<C::UpgradedContext<Fp25519>>,
+    <Replicated<Fp25519, { Fp25519::VECTORIZE }> as Upgradeable<C::UpgradedContext<Fp25519>>>::Output: PrfSharing<C::UpgradedContext<Fp25519>, {Fp25519::VECTORIZE}>,
     BK: BooleanArray,
     TV: BooleanArray,
     TS: BooleanArray,
@@ -344,15 +342,13 @@ where
         .narrow(&Step::EvalPrf)
         .set_total_records(eval_records);
 
-    let prf_key = &gen_prf_key(&eval_ctx).await?;
+    let prf_key = &gen_prf_key(validator.clone()).await?;
     let prf_of_match_keys = seq_join(
         eval_ctx.active_work(),
-        stream::iter(curve_pts).enumerate().map(|(i, curve_pts)| {
+        stream::iter(zip(curve_pts, repeat(validator))).enumerate().map(|(i, (curve_pts, validator))| {
             let record_id = RecordId::from(i);
-            let eval_ctx = eval_ctx.clone();
-            let validator = validator.clone();
             curve_pts.then(move |pts| async move {
-                let pts = eval_ctx.clone().upgrade_one(record_id, pts).await?;
+                let pts = validator.clone().upgrade_record(record_id, pts).await?;
                 eval_dy_prf(validator, record_id, prf_key, pts).await
             })
         }),
