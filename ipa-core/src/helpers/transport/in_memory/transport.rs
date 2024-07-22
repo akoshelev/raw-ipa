@@ -21,14 +21,20 @@ use tracing::Instrument;
 use crate::{
     error::BoxError,
     helpers::{
-        transport::routing::{Addr, RouteId},
-        ApiError, BodyStream, HandlerRef, HelperResponse, NoResourceIdentifier, QueryIdBinding,
-        ReceiveRecords, RequestHandler, RouteParams, StepBinding, StreamCollection, Transport,
+        ApiError,
+        BodyStream, HandlerRef, HelperResponse, NoResourceIdentifier, QueryIdBinding, ReceiveRecords,
+        RequestHandler, RouteParams, StepBinding, StreamCollection, transport::{
+            in_memory::config::StreamInterceptor,
+            routing::{Addr, RouteId},
+        }, Transport,
         TransportIdentity,
     },
     protocol::{Gate, QueryId},
     sync::{Arc, Weak},
 };
+use crate::helpers::{HelperIdentity, in_memory_config};
+use crate::helpers::transport::in_memory::config::InspectContext;
+use crate::sharding::ShardIndex;
 
 type Packet<I> = (
     Addr<I>,
@@ -66,15 +72,21 @@ pub struct InMemoryTransport<I> {
     identity: I,
     connections: HashMap<I, ConnectionTx<I>>,
     record_streams: StreamCollection<I, InMemoryStream>,
+    config: TransportConfig,
 }
 
 impl<I: TransportIdentity> InMemoryTransport<I> {
     #[must_use]
-    fn new(identity: I, connections: HashMap<I, ConnectionTx<I>>) -> Self {
+    fn with_config(
+        identity: I,
+        connections: HashMap<I, ConnectionTx<I>>,
+        config: TransportConfig,
+    ) -> Self {
         Self {
             identity,
             connections,
             record_streams: StreamCollection::default(),
+            config,
         }
     }
 
@@ -170,12 +182,25 @@ impl<I: TransportIdentity> Transport for Weak<InMemoryTransport<I>> {
         let this = self.upgrade().unwrap();
         let channel = this.get_channel(dest);
         let addr = Addr::from_route(Some(this.identity), route);
+        let gate = addr.gate.clone().expect("In memory transport is used to send step data only");
+
         let (ack_tx, ack_rx) = oneshot::channel();
+        let context = InspectContext {
+            shard_index: this.config.shard_index,
+            identity: this.config.identity,
+            dest: dest.as_str(),
+            gate,
+        };
 
         channel
             .send((
                 addr,
-                InMemoryStream::wrap(data.map(Bytes::from).map(Ok)),
+                InMemoryStream::wrap(data.map({
+                    move |mut chunk| {
+                        this.config.stream_peeker.peek(&context, &mut chunk);
+                        Ok(Bytes::from(chunk))
+                    }
+                })),
                 ack_tx,
             ))
             .await
@@ -251,17 +276,26 @@ pub struct Setup<I> {
     tx: ConnectionTx<I>,
     rx: ConnectionRx<I>,
     connections: HashMap<I, ConnectionTx<I>>,
+    config: TransportConfig,
+}
+
+impl Setup<HelperIdentity> {
+    #[must_use]
+    pub fn new(identity: HelperIdentity) -> Self {
+        Self::with_config(identity, TransportConfigBuilder::for_helper(identity).not_sharded())
+    }
 }
 
 impl<I: TransportIdentity> Setup<I> {
     #[must_use]
-    pub fn new(identity: I) -> Self {
+    pub fn with_config(identity: I, config: TransportConfig) -> Self {
         let (tx, rx) = channel(16);
         Self {
             identity,
             tx,
             rx,
             connections: HashMap::default(),
+            config,
         }
     }
 
@@ -288,7 +322,7 @@ impl<I: TransportIdentity> Setup<I> {
         self,
         handler: Option<HandlerRef<I>>,
     ) -> (ConnectionTx<I>, Arc<InMemoryTransport<I>>) {
-        let transport = Arc::new(InMemoryTransport::new(self.identity, self.connections));
+        let transport = Arc::new(InMemoryTransport::with_config(self.identity, self.connections, self.config));
         transport.listen(handler, self.rx);
 
         (self.tx, transport)
@@ -309,7 +343,7 @@ mod tests {
 
     use bytes::Bytes;
     use futures::{stream, Stream};
-    use futures_util::{stream::poll_immediate, FutureExt, StreamExt};
+    use futures_util::{FutureExt, stream::poll_immediate, StreamExt};
     use tokio::sync::{mpsc::channel, oneshot};
     use tokio_stream::wrappers::ReceiverStream;
     use typenum::Unsigned;
@@ -317,16 +351,16 @@ mod tests {
     use crate::{
         ff::{FieldType, Fp31, Serializable},
         helpers::{
-            make_owned_handler,
-            query::{PrepareQuery, QueryConfig, QueryType::TestMultiply},
-            transport::{
+            HandlerBox,
+            HelperIdentity,
+            HelperResponse,
+            make_owned_handler, OrderingSender, query::{PrepareQuery, QueryConfig, QueryType::TestMultiply}, Role, RoleAssignment, transport::{
                 in_memory::{
-                    transport::{Addr, ConnectionTx, Error, InMemoryStream, InMemoryTransport},
-                    InMemoryMpcNetwork, Setup,
+                    InMemoryMpcNetwork,
+                    Setup, transport::{Addr, ConnectionTx, Error, InMemoryStream, InMemoryTransport},
                 },
                 routing::RouteId,
             },
-            HandlerBox, HelperIdentity, HelperResponse, OrderingSender, Role, RoleAssignment,
             Transport, TransportIdentity,
         },
         protocol::{Gate, QueryId},
@@ -577,5 +611,36 @@ mod tests {
 
         // must be received by now
         assert_eq!(vec![vec![0, 1]], recv.collect::<Vec<_>>().await);
+    }
+}
+
+pub struct TransportConfig {
+    pub shard_index: Option<ShardIndex>,
+    pub identity: HelperIdentity,
+    pub stream_peeker: Arc<dyn StreamInterceptor<Context =InspectContext>>,
+}
+
+pub struct TransportConfigBuilder {
+    identity: HelperIdentity,
+    stream_peeker: Arc<dyn StreamInterceptor<Context =InspectContext>>,
+}
+
+impl TransportConfigBuilder {
+    pub fn for_helper(identity: HelperIdentity) -> Self {
+        Self { identity, stream_peeker: in_memory_config::passthrough() }
+    }
+
+    pub fn with_peeker(&mut self, peeker: &Arc<dyn StreamInterceptor<Context =InspectContext>>) -> &mut Self {
+        self.stream_peeker = Arc::clone(peeker);
+
+        self
+    }
+
+    pub fn bind_to_shard(&self, shard_index: ShardIndex) -> TransportConfig {
+        TransportConfig { shard_index: Some(shard_index), identity: self.identity, stream_peeker: Arc::clone(&self.stream_peeker) }
+    }
+
+    pub fn not_sharded(&self) -> TransportConfig {
+        TransportConfig { shard_index: None, identity: self.identity, stream_peeker: Arc::clone(&self.stream_peeker) }
     }
 }

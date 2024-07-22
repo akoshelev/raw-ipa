@@ -72,7 +72,7 @@ pub use transport::{
     WrappedBoxBodyStream,
 };
 #[cfg(feature = "in-memory-infra")]
-pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport};
+pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport, config as in_memory_config};
 use typenum::{Const, ToUInt, Unsigned, U8};
 use x25519_dalek::PublicKey;
 
@@ -130,6 +130,20 @@ impl TryFrom<usize> for HelperIdentity {
     }
 }
 
+impl TryFrom<&str> for HelperIdentity {
+    type Error = String;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        for identity in HelperIdentity::make_three() {
+            if identity.as_str() == value {
+                return Ok(identity);
+            }
+        }
+
+        Err(format!("{value} is not a valid helper identity"))
+    }
+}
+
 impl From<HelperIdentity> for u8 {
     fn from(value: HelperIdentity) -> Self {
         value.id
@@ -141,12 +155,7 @@ impl Debug for HelperIdentity {
         write!(
             f,
             "{}",
-            match self.id {
-                1 => "A",
-                2 => "B",
-                3 => "C",
-                _ => unreachable!(),
-            }
+            self.as_str()
         )
     }
 }

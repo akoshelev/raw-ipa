@@ -64,7 +64,7 @@ impl Default for TestApp {
         let (setup, handlers) = unzip_tuple_array(array::from_fn(|_| AppSetup::new()));
 
         let mpc_network = InMemoryMpcNetwork::new(handlers.map(Some));
-        let shard_network = InMemoryShardNetwork::with_shards(1);
+        let shard_network = InMemoryShardNetwork::with_shards(1, );
         let drivers = zip3(mpc_network.transports().each_ref(), setup)
             .map(|(t, s)| s.connect(Clone::clone(t), shard_network.transport(t.identity(), 0)));
 

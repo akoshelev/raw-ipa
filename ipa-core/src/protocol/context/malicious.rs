@@ -245,7 +245,8 @@ pub(super) async fn upgrade_one<F: ExtendableField<ExtendedField: FieldSimd<N>> 
     record_id: RecordId,
     x: Replicated<F, N>
 ) -> Result<MaliciousReplicated<F, N>, Error>
-where Replicated<<F as ExtendableField>::ExtendedField, N>: FromPrss
+where
+    Replicated<<F as ExtendableField>::ExtendedField, N>: FromPrss
 {
     //
     // This code is drawn from:

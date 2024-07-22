@@ -1,15 +1,17 @@
+pub mod config;
 mod sharding;
 mod transport;
 
-use std::array;
-
 pub use sharding::InMemoryShardNetwork;
 pub use transport::Setup;
-
+pub use config::{MaliciousHelper, passthrough as passthrough_peeker, StreamInterceptor};
+use transport::TransportConfigBuilder;
 use crate::{
     helpers::{HandlerRef, HelperIdentity},
     sync::{Arc, Weak},
 };
+use crate::helpers::in_memory_config::InspectContext;
+use crate::helpers::transport::in_memory::config::passthrough;
 
 pub type InMemoryTransport<I> = Weak<transport::InMemoryTransport<I>>;
 
@@ -21,15 +23,29 @@ pub struct InMemoryMpcNetwork {
 
 impl Default for InMemoryMpcNetwork {
     fn default() -> Self {
-        Self::new(array::from_fn(|_| None))
+        Self::new(Self::noop_handlers())
     }
 }
 
 impl InMemoryMpcNetwork {
+    pub fn noop_handlers() -> [Option<HandlerRef>; 3] {
+        [None, None, None]
+    }
+
     #[must_use]
     pub fn new(handlers: [Option<HandlerRef>; 3]) -> Self {
+        Self::with_stream_peeker(handlers, &passthrough())
+    }
+
+    #[must_use]
+    pub fn with_stream_peeker(handlers: [Option<HandlerRef>; 3], peeker: &Arc<dyn StreamInterceptor<Context =InspectContext>>) -> Self {
         let [mut first, mut second, mut third]: [_; 3] =
-            HelperIdentity::make_three().map(Setup::new);
+            HelperIdentity::make_three().map(|i| {
+                let mut config_builder = TransportConfigBuilder::for_helper(i);
+                config_builder.with_peeker(peeker);
+
+                Setup::with_config(i, config_builder.not_sharded())
+            });
 
         first.connect(&mut second);
         second.connect(&mut third);

@@ -6,6 +6,9 @@ use crate::{
     sharding::ShardIndex,
     sync::{Arc, Weak},
 };
+use crate::helpers::in_memory_config::StreamInterceptor;
+use crate::helpers::transport::in_memory::transport::TransportConfigBuilder;
+use crate::test_fixture::TestWorldConfig;
 
 /// Container for shard-to-shard communication channels set up for each helper. Each shard is connected
 /// to every other shard within the same helper and these connections are stored here. MPC connections
@@ -22,9 +25,16 @@ pub struct InMemoryShardNetwork {
 
 impl InMemoryShardNetwork {
     pub fn with_shards<I: Into<ShardIndex>>(shard_count: I) -> Self {
+        Self::with_config(shard_count, &TestWorldConfig::default())
+    }
+
+    pub fn with_config<I: Into<ShardIndex>>(shard_count: I, config: &TestWorldConfig) -> Self {
         let shard_count = shard_count.into();
         let shard_network: [_; 3] = HelperIdentity::make_three().map(|h| {
-            let mut shard_connections = shard_count.iter().map(Setup::new).collect::<Vec<_>>();
+            let mut peek_config_builder = TransportConfigBuilder::for_helper(h);
+            peek_config_builder.with_peeker(&config.stream_interceptor);
+
+            let mut shard_connections = shard_count.iter().map(|i| Setup::with_config(i, peek_config_builder.bind_to_shard(i))).collect::<Vec<_>>();
             for i in 0..shard_connections.len() {
                 let (lhs, rhs) = shard_connections.split_at_mut(i);
                 if let Some((a, _)) = lhs.split_last_mut() {
@@ -108,7 +118,7 @@ mod tests {
         logging::setup();
         run(|| async {
             let shard_count = 5;
-            let shard_network = InMemoryShardNetwork::with_shards(shard_count);
+            let shard_network = InMemoryShardNetwork::with_shards(shard_count, );
             let mut sum: u32 = 0;
 
             for identity in HelperIdentity::make_three() {
@@ -176,7 +186,7 @@ mod tests {
         }
 
         run(|| async {
-            let shard_network = InMemoryShardNetwork::with_shards(2);
+            let shard_network = InMemoryShardNetwork::with_shards(2, );
             test_send(&shard_network).await;
             shard_network.reset();
             test_send(&shard_network).await;
