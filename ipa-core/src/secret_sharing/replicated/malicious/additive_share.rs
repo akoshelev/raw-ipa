@@ -21,6 +21,7 @@ use crate::{
     },
     seq_join::seq_join,
 };
+use crate::secret_sharing::{FieldSimd, FieldVectorizable, Vectorizable};
 
 ///
 /// This code is an optimization to our malicious compiler that is drawn from:
@@ -35,9 +36,9 @@ use crate::{
 /// This makes it possible to minimize communication overhead required to reach a desired level of statistical security.
 ///
 #[derive(Clone, PartialEq, Eq)]
-pub struct AdditiveShare<V: SharedValue + ExtendableField> {
-    x: SemiHonestAdditiveShare<V>,
-    rx: SemiHonestAdditiveShare<V::ExtendedField>,
+pub struct AdditiveShare<V: SharedValue + ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize = 1> {
+    x: SemiHonestAdditiveShare<V, N>,
+    rx: SemiHonestAdditiveShare<V::ExtendedField, N>,
 }
 
 pub trait ExtendableField: Field {
@@ -91,10 +92,10 @@ pub trait ThisCodeIsAuthorizedToDowngradeFromMalicious<T> {
     fn access_without_downgrade(self) -> T;
 }
 
-impl<V: SharedValue + ExtendableField>
-    ThisCodeIsAuthorizedToDowngradeFromMalicious<SemiHonestAdditiveShare<V>> for AdditiveShare<V>
+impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N>, const N: usize>
+    ThisCodeIsAuthorizedToDowngradeFromMalicious<SemiHonestAdditiveShare<V, N>> for AdditiveShare<V, N>
 {
-    fn access_without_downgrade(self) -> SemiHonestAdditiveShare<V> {
+    fn access_without_downgrade(self) -> SemiHonestAdditiveShare<V, N> {
         self.x
     }
 }
@@ -114,26 +115,31 @@ impl<V: SharedValue + ExtendableField> Default for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> AdditiveShare<V> {
+impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
     #[must_use]
     pub fn new(
-        x: SemiHonestAdditiveShare<V>,
-        rx: SemiHonestAdditiveShare<V::ExtendedField>,
+        x: SemiHonestAdditiveShare<V, N>,
+        rx: SemiHonestAdditiveShare<V::ExtendedField, N>,
     ) -> Self {
         Self { x, rx }
     }
 
-    pub fn x(&self) -> UnauthorizedDowngradeWrapper<&SemiHonestAdditiveShare<V>> {
+    pub fn x(&self) -> UnauthorizedDowngradeWrapper<&SemiHonestAdditiveShare<V, N>> {
         UnauthorizedDowngradeWrapper(&self.x)
     }
+
+    pub fn rx(&self) -> &SemiHonestAdditiveShare<V::ExtendedField, N> {
+        &self.rx
+    }
+}
+
+impl<V: SharedValue + ExtendableField> AdditiveShare<V> {
+
 
     pub fn downgrade(self) -> UnauthorizedDowngradeWrapper<SemiHonestAdditiveShare<V>> {
         UnauthorizedDowngradeWrapper(self.x)
     }
 
-    pub fn rx(&self) -> &SemiHonestAdditiveShare<V::ExtendedField> {
-        &self.rx
-    }
 
     pub const ZERO: Self = Self {
         x: SemiHonestAdditiveShare::ZERO,

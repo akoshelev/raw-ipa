@@ -35,7 +35,10 @@ use crate::{
     sharding::NotSharded,
     sync::Arc,
 };
-use crate::secret_sharing::FieldSimd;
+use crate::ff::Expand;
+use crate::protocol::context::UpgradedMaliciousContext;
+use crate::protocol::prss::FromPrss;
+use crate::secret_sharing::{FieldSimd, FieldVectorizable};
 
 #[derive(Clone)]
 pub struct Context<'a> {
@@ -230,12 +233,66 @@ impl<'a, F: ExtendableField> Upgraded<'a, F> {
             &self.inner.r_share * value.to_extended(),
         )
     }
+
+    pub(super) fn r(&self) -> &Replicated<F::ExtendedField> {
+        &self.inner.r_share
+    }
 }
+
+
+pub(super) async fn upgrade_one<F: ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N>, const N: usize>(
+    ctx: UpgradedMaliciousContext<'_, F>,
+    record_id: RecordId,
+    x: Replicated<F, N>
+) -> Result<MaliciousReplicated<F, N>, Error>
+where Replicated<<F as ExtendableField>::ExtendedField, N>: FromPrss
+{
+    //
+    // This code is drawn from:
+    // "Field Extension in Secret-Shared Form and Its Applications to Efficient Secure Computation"
+    // R. Kikuchi, N. Attrapadung, K. Hamada, D. Ikarashi, A. Ishida, T. Matsuda, Y. Sakai, and J. C. N. Schuldt
+    // <https://eprint.iacr.org/2019/386.pdf>
+    //
+    // See protocol 4.15
+    // In Step 3: "Randomization of inputs:", it says:
+    //
+    // For each input wire sharing `[v_j]` (where j ∈ {1, . . . , M}), the parties locally
+    // compute the induced share `[[v_j]] = f([v_j], 0, . . . , 0)`.
+    // Then, the parties call `Ḟ_mult` on `[[ȓ]]` and `[[v_j]]` to receive `[[ȓ · v_j]]`
+    //
+    let induced_share = x.induced();
+    // expand r to match the vectorization factor of induced share
+    let r = ctx.r().expand();
+
+    let rx = semi_honest_multiply(
+        ctx.as_base(),
+        record_id,
+        &induced_share,
+        &r
+    )
+        .await?;
+    let m = MaliciousReplicated::new(x, rx);
+    let narrowed = ctx.narrow(&RandomnessForValidation);
+    let prss = narrowed.prss();
+    let accumulator = narrowed.accumulator();
+    accumulator.accumulate_macs(&prss, record_id, &m);
+
+    Ok(m)
+}
+
+impl <'a, F: ExtendableField> Upgraded<'a, F> {
+
+    fn accumulator(&self) -> MaliciousAccumulator<F> {
+        self.inner.accumulator.clone()
+    }
+}
+
 
 #[async_trait]
 impl<'a, F: ExtendableField> UpgradedContext for Upgraded<'a, F> {
     type Field = F;
     type Share = MaliciousReplicated<F>;
+
 
     async fn upgrade_one(
         &self,

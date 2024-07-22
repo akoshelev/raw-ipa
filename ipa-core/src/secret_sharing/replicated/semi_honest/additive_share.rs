@@ -14,6 +14,7 @@ use crate::{
     },
 };
 use crate::secret_sharing::FieldVectorizable;
+use crate::secret_sharing::replicated::malicious::ExtendableField;
 use crate::secret_sharing::scheme::VectorizedSecretSharing;
 
 /// Additive secret sharing.
@@ -90,6 +91,21 @@ where
 
     fn right(&self) -> V {
         V::from_array(&self.1)
+    }
+}
+
+impl <V: SharedValue + Vectorizable<1>> AdditiveShare<V> {
+    pub(crate) fn expand<const N: usize>(&self) -> AdditiveShare<V, N> where V: Vectorizable<N> {
+        AdditiveShare(
+            <V as Vectorizable<N>>::Array::from_fn(|i| self.left().clone()),
+            <V as Vectorizable<N>>::Array::from_fn(|i| self.right().clone()),
+        )
+    }
+}
+
+impl <V: ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N>, const N: usize> AdditiveShare<V, N> {
+    pub fn induced(&self) -> AdditiveShare<V::ExtendedField, N> {
+        self.clone().map(|v| v.to_extended())
     }
 }
 
