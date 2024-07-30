@@ -24,7 +24,8 @@ use crate::{
     seq_join::assert_send,
 };
 use crate::protocol::context::{UpgradableContext, UpgradedContext, Validator};
-use crate::secret_sharing::Sendable;
+use crate::secret_sharing::{FieldSimd, Sendable};
+use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
 pub trait Reveal<C: Context>: Sized {
@@ -129,15 +130,15 @@ impl<C: Context, V: SharedValue + Vectorizable<N>, const N: usize> Reveal<C>
 /// It works similarly to semi-honest reveal, the key difference is that each helper sends its share
 /// to both helpers (right and left) and upon receiving 2 shares from peers it validates that they
 /// indeed match.
-impl<'a, F: ExtendableField> Reveal<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F> {
-    type Output = <F as Vectorizable<1>>::Array;
+impl<'a, F: ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize> Reveal<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F, N> {
+    type Output = <F as Vectorizable<N>>::Array;
 
     async fn generic_reveal<'fut>(
         &'fut self,
         ctx: UpgradedMaliciousContext<'a, F>,
         record_id: RecordId,
         excluded: Option<Role>,
-    ) -> Result<Option<<F as Vectorizable<1>>::Array>, Error>
+    ) -> Result<Option<<F as Vectorizable<N>>::Array>, Error>
     where
         UpgradedMaliciousContext<'a, F>: 'fut,
     {
@@ -145,11 +146,12 @@ impl<'a, F: ExtendableField> Reveal<UpgradedMaliciousContext<'a, F>> for Malicio
 
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
 
-        let (left, right) = self.x().access_without_downgrade().as_tuple();
-        let left_sender = ctx.send_channel(ctx.role().peer(Direction::Left));
-        let left_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Left));
-        let right_sender = ctx.send_channel(ctx.role().peer(Direction::Right));
-        let right_receiver = ctx.recv_channel::<F>(ctx.role().peer(Direction::Right));
+        let left = self.x().access_without_downgrade().left_arr();
+        let right = self.x().access_without_downgrade().right_arr();
+        let left_sender = ctx.send_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Left));
+        let left_receiver = ctx.recv_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Left));
+        let right_sender = ctx.send_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Right));
+        let right_receiver = ctx.recv_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Right));
 
         // Send shares to the left and right helpers, unless excluded.
         let send_left_fut =
@@ -173,7 +175,7 @@ impl<'a, F: ExtendableField> Reveal<UpgradedMaliciousContext<'a, F>> for Malicio
             .await?;
 
             if share_from_left == share_from_right {
-                Ok(Some((left + right + share_from_left).into_array()))
+                Ok(Some((left.clone() + right + share_from_left)))
             } else {
                 Err(Error::MaliciousRevealFailed)
             }

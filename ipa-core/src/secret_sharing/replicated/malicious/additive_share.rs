@@ -123,7 +123,9 @@ impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + Vectorizabl
     ) -> Self {
         Self { x, rx }
     }
+}
 
+impl<V: SharedValue + ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
     pub fn x(&self) -> UnauthorizedDowngradeWrapper<&SemiHonestAdditiveShare<V, N>> {
         UnauthorizedDowngradeWrapper(&self.x)
     }
