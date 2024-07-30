@@ -226,7 +226,6 @@ impl<F: ExtendableField> MaliciousAccumulator<F> {
         // Then, the parties call `Ḟ_product` on vectors
         // `([[ᾶ_1]], . . . , [[ᾶ_N ]], [[β_1]], . . . , [[β_M]])` and `([[z_1]], . . . , [[z_N]], [[v_1]], . . . , [[v_M]])` to receive `[[ŵ]]`
         let induced_share = x.induced();
-
         let random_constant = prss.generate(record_id);
         let w_contribution =
             Self::compute_dot_product_contribution(&random_constant, &induced_share);

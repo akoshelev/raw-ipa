@@ -1,8 +1,7 @@
 // We have quite a bit of code that is only used when descriptive-gate is enabled.
 #![allow(dead_code)]
-use std::{array, array::from_fn, borrow::Borrow, fmt::Debug, io::stdout, iter::zip, marker::PhantomData};
+use std::{array::from_fn, borrow::Borrow, fmt::Debug, io::stdout, iter::zip, marker::PhantomData};
 
-use crate::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::join_all, stream::FuturesOrdered, Future, StreamExt};
 use rand::{
@@ -14,6 +13,7 @@ use tracing::{Instrument, Level, Span};
 
 use crate::{
     helpers::{
+        in_memory_config::{passthrough, DynStreamInterceptor},
         Gateway, GatewayConfig, HelperIdentity, InMemoryMpcNetwork, InMemoryShardNetwork,
         InMemoryTransport, Role, RoleAssignment, Transport,
     },
@@ -41,7 +41,6 @@ use crate::{
     },
     utils::array::zip3_ref,
 };
-use crate::helpers::in_memory_config::{passthrough, InspectContext, StreamInterceptor};
 
 pub trait ShardingScheme {
     type Container<A>;
@@ -117,11 +116,11 @@ pub struct TestWorldConfig {
     /// for each communication round between any pair of helpers.
     /// The application include:
     /// * Malicious behavior. This can help simulating a malicious
-    /// actor being present in the system by running one or several
-    /// additive attacks.
+    ///     actor being present in the system by running one or several
+    ///     additive attacks.
     /// * Data corruption. Tests can simulate bit flips that occur
-    /// at the network layer and check whether IPA can recover from
-    /// these (checksums, etc).
+    ///     at the network layer and check whether IPA can recover from
+    ///     these (checksums, etc).
     ///
     /// The interface is pretty low level because of the layer
     /// where it operates. [`StreamInterceptor`] interface provides
@@ -132,11 +131,13 @@ pub struct TestWorldConfig {
     /// a custom interceptor for repeated use-cases that is less
     /// generic than [`StreamInterceptor`].
     ///
-    /// If not set, all streams will be processed unchanged.
+    /// If interception is not required, the [`passthrough`] interceptor
+    /// may be used.
     ///
     /// [`StreamInterceptor`]: crate::helpers::in_memory_config::StreamInterceptor
     /// [`MaliciousHelper`]: crate::helpers::in_memory_config::MaliciousHelper
-    pub stream_interceptor: Arc<dyn StreamInterceptor<Context =InspectContext>>,
+    /// [`passthrough`]: crate::helpers::in_memory_config::passthrough
+    pub stream_interceptor: DynStreamInterceptor,
 }
 
 impl ShardingScheme for NotSharded {
@@ -264,7 +265,8 @@ impl<S: ShardingScheme> TestWorld<S> {
         println!("TestWorld random seed {seed}", seed = config.seed);
 
         let shard_count = ShardIndex::try_from(S::SHARDS).unwrap();
-        let shard_network = InMemoryShardNetwork::with_config(shard_count, &config);
+        let shard_network =
+            InMemoryShardNetwork::with_stream_interceptor(shard_count, &config.stream_interceptor);
 
         let shards = shard_count
             .iter()
@@ -313,7 +315,7 @@ impl Default for TestWorldConfig {
             role_assignment: None,
             seed: thread_rng().next_u64(),
             initial_gate: None,
-            stream_interceptor: passthrough()
+            stream_interceptor: passthrough(),
         }
     }
 }
@@ -632,7 +634,10 @@ impl<B: ShardBinding> ShardWorld<B> {
         transports: [InMemoryTransport<ShardIndex>; 3],
     ) -> Self {
         let participants = make_participants(&mut StdRng::seed_from_u64(config.seed + shard_seed));
-        let network = InMemoryMpcNetwork::with_stream_peeker(InMemoryMpcNetwork::noop_handlers(), &config.stream_interceptor);
+        let network = InMemoryMpcNetwork::with_stream_interceptor(
+            InMemoryMpcNetwork::noop_handlers(),
+            &config.stream_interceptor,
+        );
 
         let mut gateways = zip3_ref(&network.transports(), &transports).map(|(mpc, shard)| {
             Gateway::new(
@@ -747,23 +752,24 @@ mod tests {
         collections::{HashMap, HashSet},
         sync::{Arc, Mutex},
     };
-    use futures_util::future::{try_join, try_join4};
-    use futures_util::TryFutureExt;
-    use ipa_step::Step;
+
+    use futures_util::future::try_join4;
+
     use crate::{
-        ff::{boolean_array::BA3, U128Conversions},
-        protocol::{context::Context, prss::SharedRandomness},
+        ff::{boolean_array::BA3, Field, Fp31, U128Conversions},
+        helpers::{
+            in_memory_config::{MaliciousHelper, MaliciousHelperContext},
+            Direction, Role,
+        },
+        protocol::{context::Context, prss::SharedRandomness, RecordId},
+        secret_sharing::{
+            replicated::{semi_honest::AdditiveShare, ReplicatedSecretSharing},
+            SharedValue,
+        },
         sharding::ShardConfiguration,
         test_executor::run,
         test_fixture::{world::WithShards, Reconstruct, Runner, TestWorld, TestWorldConfig},
     };
-    use crate::ff::{Field, Fp31};
-    use crate::helpers::{Direction, HelperIdentity, in_memory_config::MaliciousHelper, Role};
-    use crate::helpers::in_memory_config::{MaliciousHelperContext, InspectContext};
-    use crate::protocol::{Gate, RecordId};
-    use crate::secret_sharing::replicated::ReplicatedSecretSharing;
-    use crate::secret_sharing::replicated::semi_honest::AdditiveShare;
-    use crate::secret_sharing::SharedValue;
 
     #[test]
     fn two_shards() {
@@ -838,27 +844,39 @@ mod tests {
             }
 
             let mut config = TestWorldConfig::default();
-            config.stream_interceptor = MaliciousHelper::new(Role::H1, config.role_assignment(), |ctx: &MaliciousHelperContext, data: &mut Vec<u8>| {
-                if ctx.gate.as_ref().contains(STEP) {
-                    corrupt_byte(&mut data[0]);
-                }
-            });
+            config.stream_interceptor = MaliciousHelper::new(
+                Role::H1,
+                config.role_assignment(),
+                |ctx: &MaliciousHelperContext, data: &mut Vec<u8>| {
+                    if ctx.gate.as_ref().contains(STEP) {
+                        corrupt_byte(&mut data[0]);
+                    }
+                },
+            );
 
             let world = TestWorld::new_with(config);
 
-            let shares = world.semi_honest((), |ctx, ()| async move {
-                let ctx = ctx.narrow(STEP).set_total_records(1);
-                let (l, r): (Fp31, Fp31) = ctx.prss().generate(RecordId::FIRST);
+            let shares = world
+                .semi_honest((), |ctx, ()| async move {
+                    let ctx = ctx.narrow(STEP).set_total_records(1);
+                    let (l, r): (Fp31, Fp31) = ctx.prss().generate(RecordId::FIRST);
 
-                let ((), (), r, l) = try_join4(
-                    ctx.send_channel(ctx.role().peer(Direction::Right)).send(RecordId::FIRST, r),
-                    ctx.send_channel(ctx.role().peer(Direction::Left)).send(RecordId::FIRST, l),
-                    ctx.recv_channel::<Fp31>(ctx.role().peer(Direction::Right)).receive(RecordId::FIRST),
-                    ctx.recv_channel::<Fp31>(ctx.role().peer(Direction::Left)).receive(RecordId::FIRST),
-                ).await.unwrap();
+                    let ((), (), r, l) = try_join4(
+                        ctx.send_channel(ctx.role().peer(Direction::Right))
+                            .send(RecordId::FIRST, r),
+                        ctx.send_channel(ctx.role().peer(Direction::Left))
+                            .send(RecordId::FIRST, l),
+                        ctx.recv_channel::<Fp31>(ctx.role().peer(Direction::Right))
+                            .receive(RecordId::FIRST),
+                        ctx.recv_channel::<Fp31>(ctx.role().peer(Direction::Left))
+                            .receive(RecordId::FIRST),
+                    )
+                    .await
+                    .unwrap();
 
-                AdditiveShare::new(l, r)
-            }).await;
+                    AdditiveShare::new(l, r)
+                })
+                .await;
 
             println!("{shares:?}");
             // shares received from H1 must be corrupted
@@ -866,11 +884,11 @@ mod tests {
             assert_ne!(shares[0].left(), shares[2].right());
 
             // and must be set to either 0 or 1
-            assert!(vec![Fp31::ZERO, Fp31::ONE].contains(&shares[1].left()));
-            assert!(vec![Fp31::ZERO, Fp31::ONE].contains(&shares[2].right()));
+            assert!([Fp31::ZERO, Fp31::ONE].contains(&shares[1].left()));
+            assert!([Fp31::ZERO, Fp31::ONE].contains(&shares[2].right()));
 
             // values shared between H2 and H3 must be consistent
             assert_eq!(shares[1].right(), shares[2].left());
-        })
+        });
     }
 }

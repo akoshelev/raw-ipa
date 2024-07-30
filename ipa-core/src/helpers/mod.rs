@@ -64,6 +64,10 @@ pub use gateway_exports::{Gateway, MpcReceivingEnd, SendingEnd, ShardReceivingEn
 pub use prss_protocol::negotiate as negotiate_prss;
 #[cfg(feature = "web-app")]
 pub use transport::WrappedAxumBodyStream;
+#[cfg(feature = "in-memory-infra")]
+pub use transport::{
+    config as in_memory_config, InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport,
+};
 pub use transport::{
     make_owned_handler, query, routing, ApiError, BodyStream, BytesStream, HandlerBox, HandlerRef,
     HelperResponse, Identity as TransportIdentity, LengthDelimitedStream, LogErrors, NoQueryId,
@@ -71,8 +75,6 @@ pub use transport::{
     RouteParams, SingleRecordStream, StepBinding, StreamCollection, StreamKey, Transport,
     WrappedBoxBodyStream,
 };
-#[cfg(feature = "in-memory-infra")]
-pub use transport::{InMemoryMpcNetwork, InMemoryShardNetwork, InMemoryTransport, config as in_memory_config};
 use typenum::{Const, ToUInt, Unsigned, U8};
 use x25519_dalek::PublicKey;
 
@@ -152,11 +154,7 @@ impl From<HelperIdentity> for u8 {
 
 impl Debug for HelperIdentity {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.as_str()
-        )
+        write!(f, "{}", self.as_str())
     }
 }
 

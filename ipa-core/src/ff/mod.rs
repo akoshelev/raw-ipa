@@ -18,7 +18,6 @@ use std::{
 pub use field::{Field, FieldType};
 pub use galois_field::{GaloisField, Gf2, Gf20Bit, Gf32Bit, Gf3Bit, Gf40Bit, Gf8Bit, Gf9Bit};
 use generic_array::{ArrayLength, GenericArray};
-use typenum::Unsigned;
 #[cfg(any(test, feature = "weak-field"))]
 pub use prime_field::Fp31;
 pub use prime_field::{Fp32BitPrime, Fp61BitPrime, PrimeField, Invert};
@@ -104,7 +103,10 @@ pub trait Serializable: Sized {
     ///
     /// [`Self::deserialize`]: Self::deserialize
     #[cfg(test)]
+    #[must_use]
     fn deserialize_from_slice(buf: &[u8]) -> Self {
+        use typenum::Unsigned;
+
         assert_eq!(buf.len(), Self::Size::USIZE);
 
         let mut arr = GenericArray::default();
@@ -121,6 +123,8 @@ pub trait Serializable: Sized {
     /// If the size of `buf` is not equal to `Self::Size`.
     #[cfg(test)]
     fn serialize_to_slice(&self, buf: &mut [u8]) {
+        use typenum::Unsigned;
+
         assert_eq!(buf.len(), Self::Size::USIZE);
 
         let dest = GenericArray::<_, Self::Size>::from_mut_slice(buf);

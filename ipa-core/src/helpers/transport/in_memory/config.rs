@@ -1,8 +1,13 @@
 use std::borrow::Cow;
-use crate::helpers::{HelperIdentity, Role, RoleAssignment};
-use crate::protocol::Gate;
-use crate::sharding::ShardIndex;
-use crate::sync::Arc;
+
+use crate::{
+    helpers::{HelperIdentity, Role, RoleAssignment},
+    protocol::Gate,
+    sharding::ShardIndex,
+    sync::Arc,
+};
+
+pub type DynStreamInterceptor = Arc<dyn StreamInterceptor<Context = InspectContext>>;
 
 /// The interface for stream interceptors.
 ///
@@ -16,7 +21,7 @@ use crate::sync::Arc;
 pub trait StreamInterceptor: Send + Sync {
 
     /// The context type for the stream peeker.
-    /// See [`InspectContext`] and [`MaliciousHelperContext] for
+    /// See [`InspectContext`] and [`MaliciousHelperContext`] for
     /// details.
     type Context;
 
@@ -45,7 +50,7 @@ impl<F: Fn(&InspectContext, &mut Vec<u8>) + Send + Sync + 'static> StreamInterce
     type Context = InspectContext;
 
     fn peek(&self, ctx: &Self::Context, data: &mut Vec<u8>) {
-        (self)(ctx, data)
+        (self)(ctx, data);
     }
 }
 
@@ -71,6 +76,7 @@ pub struct InspectContext {
 /// This is used as a default value for stream
 /// peekers that don't do anything.
 #[inline]
+#[must_use]
 pub fn passthrough() -> Arc<dyn StreamInterceptor<Context = InspectContext>> {
     Arc::new(|_ctx: &InspectContext, _data: &mut Vec<u8>| {})
 }
@@ -86,20 +92,28 @@ pub fn passthrough() -> Arc<dyn StreamInterceptor<Context = InspectContext>> {
 pub struct MaliciousHelper<F> {
     identity: HelperIdentity,
     role_assignment: RoleAssignment,
-    inner: F
+    inner: F,
 }
 
-impl <F: Fn(&MaliciousHelperContext, &mut Vec<u8>) + Send + Sync> MaliciousHelper<F> {
+impl<F: Fn(&MaliciousHelperContext, &mut Vec<u8>) + Send + Sync> MaliciousHelper<F> {
     pub fn new(role: Role, role_assignment: &RoleAssignment, peeker: F) -> Arc<Self> {
-        Arc::new(Self { identity: role_assignment.identity(role), role_assignment: role_assignment.clone(), inner: peeker })
+        Arc::new(Self {
+            identity: role_assignment.identity(role),
+            role_assignment: role_assignment.clone(),
+            inner: peeker,
+        })
     }
 
     fn context(&self, ctx: &InspectContext) -> MaliciousHelperContext {
         let dest = HelperIdentity::try_from(ctx.dest.as_ref())
-            .unwrap_or_else(|_| panic!("MaliciousServerContext::from: invalid destination: {}", ctx.dest));
+            .unwrap_or_else(|e| panic!("Can't resolve helper identity for {}: {e}", ctx.dest));
         let dest = self.role_assignment.role(dest);
 
-        MaliciousHelperContext { shard_index: ctx.shard_index, dest, gate: ctx.gate.clone() }
+        MaliciousHelperContext {
+            shard_index: ctx.shard_index,
+            dest,
+            gate: ctx.gate.clone(),
+        }
     }
 }
 
@@ -119,12 +133,14 @@ pub struct MaliciousHelperContext {
     pub gate: Gate,
 }
 
-impl <F: Fn(&MaliciousHelperContext, &mut Vec<u8>) + Send + Sync> StreamInterceptor for MaliciousHelper<F> {
+impl<F: Fn(&MaliciousHelperContext, &mut Vec<u8>) + Send + Sync> StreamInterceptor
+    for MaliciousHelper<F>
+{
     type Context = InspectContext;
 
     fn peek(&self, ctx: &Self::Context, data: &mut Vec<u8>) {
         if ctx.identity == self.identity {
-            (self.inner)(&self.context(ctx), data)
+            (self.inner)(&self.context(ctx), data);
         }
     }
 }

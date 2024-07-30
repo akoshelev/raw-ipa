@@ -258,36 +258,22 @@ mod tests {
     use std::future::Future;
     use std::iter::zip;
 
-    use futures::future::{join_all, try_join, try_join3};
+    use futures::future::join_all;
     use rand::distributions::{Distribution, Standard};
     use crate::{
         error::Error,
-        ff::{Field, Fp31, Fp32BitPrime},
-        helpers::{Direction, Role},
+        ff::{Field, Fp31, Fp32BitPrime, Serializable},
+        helpers::{in_memory_config::MaliciousHelper, Role},
         protocol::{
             basics::Reveal,
-            context::{
-                Context, UpgradableContext, UpgradedContext, UpgradedMaliciousContext, Validator,
-            },
+            context::{Context, UpgradableContext, UpgradedContext, Validator},
             RecordId,
         },
         rand::{thread_rng, Rng},
-        secret_sharing::{
-            replicated::{
-                malicious::{
-                    AdditiveShare as MaliciousReplicated, ExtendableField,
-                    ThisCodeIsAuthorizedToDowngradeFromMalicious,
-                },
-                semi_honest::AdditiveShare,
-            },
-            IntoShares, SharedValue,
-        },
+        secret_sharing::{replicated::semi_honest::AdditiveShare, IntoShares, SharedValue},
         test_executor::run,
-        test_fixture::{join3v, Runner, TestWorld},
+        test_fixture::{join3v, Runner, TestWorld, TestWorldConfig},
     };
-    use crate::ff::{PrimeField, Serializable};
-    use crate::helpers::in_memory_config::MaliciousHelper;
-    use crate::test_fixture::TestWorldConfig;
 
     #[tokio::test]
     pub async fn simple() -> Result<(), Error> {
@@ -468,39 +454,45 @@ mod tests {
         run(move || async move {
             let mut rng = thread_rng();
             let mut config = TestWorldConfig::default();
-            config.stream_interceptor = MaliciousHelper::new(Role::H3, config.role_assignment(), move |ctx, data| {
-                // H3 runs an additive attack against H1 (on the left) by
-                // adding a 1 to the left part of share it is holding
-                if ctx.gate.as_ref().contains(STEP) && ctx.dest == Role::H1 {
-                    let v = Fp31::deserialize_from_slice(data) + Fp31::ONE;
-                    v.serialize_to_slice(data);
-                }
-            });
+            config.stream_interceptor =
+                MaliciousHelper::new(Role::H3, config.role_assignment(), move |ctx, data| {
+                    // H3 runs an additive attack against H1 (on the right) by
+                    // adding a 1 to the left part of share it is holding
+                    if ctx.gate.as_ref().contains(STEP) && ctx.dest == Role::H1 {
+                        let v = Fp31::deserialize_from_slice(data) + Fp31::ONE;
+                        v.serialize_to_slice(data);
+                    }
+                });
 
             let world = TestWorld::new_with(config);
             let input: Fp31 = rng.gen();
-            world.malicious(input, |ctx, share| async move {
-                let v = ctx.validator();
-                let m_ctx = v.context().set_total_records(1);
-                let malicious_share = v.context().upgrade(share).await.unwrap();
-                let m_ctx = m_ctx.narrow(STEP);
-                let my_role = m_ctx.role();
+            world
+                .malicious(input, |ctx, share| async move {
+                    let v = ctx.validator();
+                    let m_ctx = v.context().set_total_records(1);
+                    let malicious_share = v.context().upgrade(share).await.unwrap();
+                    let m_ctx = m_ctx.narrow(STEP);
+                    let my_role = m_ctx.role();
 
-                let r = if partial {
-                    malicious_share.partial_reveal(m_ctx, RecordId::FIRST, Role::H3).await
-                } else {
-                    malicious_share.generic_reveal(m_ctx, RecordId::FIRST, None).await
-                };
+                    let r = if partial {
+                        malicious_share
+                            .partial_reveal(m_ctx, RecordId::FIRST, Role::H3)
+                            .await
+                    } else {
+                        malicious_share
+                            .generic_reveal(m_ctx, RecordId::FIRST, None)
+                            .await
+                    };
 
-                // H1 should be able to see the mismatch
-                if my_role == Role::H1 {
-                    assert!(matches!(r, Err(Error::MaliciousRevealFailed)));
-                }
-                else {
-                    // sanity check
-                    r.unwrap();
-                }
-            }).await;
+                    // H1 should be able to see the mismatch
+                    if my_role == Role::H1 {
+                        assert!(matches!(r, Err(Error::MaliciousRevealFailed)));
+                    } else {
+                        // sanity check
+                        r.unwrap();
+                    }
+                })
+                .await;
         });
     }
 }

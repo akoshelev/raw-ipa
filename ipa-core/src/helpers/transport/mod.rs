@@ -53,10 +53,10 @@ impl Identity for ShardIndex {
 }
 impl Identity for HelperIdentity {
     fn as_str(&self) -> Cow<'static, str> {
-        Cow::Borrowed(match self {
-            &Self::ONE => &"A",
-            &Self::TWO => &"B",
-            &Self::THREE => &"C",
+        Cow::Borrowed(match *self {
+            Self::ONE => "A",
+            Self::TWO => "B",
+            Self::THREE => "C",
             _ => unreachable!(),
         })
     }

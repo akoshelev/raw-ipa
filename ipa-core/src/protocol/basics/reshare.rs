@@ -199,40 +199,22 @@ mod tests {
     }
 
     mod malicious {
-        use futures::future::try_join;
-        use generic_array::GenericArray;
+
         use rand::{distributions::Standard, prelude::Distribution};
 
         use crate::{
             error::Error,
             ff::{Field, Fp32BitPrime, Gf2, Gf32Bit},
-            helpers::{Direction, Role},
+            helpers::{in_memory_config::MaliciousHelper, Role},
             protocol::{
-                basics::{
-                    mul::step::MaliciousMultiplyStep::{RandomnessForValidation, ReshareRx},
-                    Reshare,
-                },
-                context::{
-                    Context, SemiHonestContext, UpgradableContext, UpgradedContext,
-                    UpgradedMaliciousContext, Validator,
-                },
-                prss::SharedRandomness,
+                basics::Reshare,
+                context::{Context, UpgradableContext, UpgradedContext, Validator},
                 RecordId,
             },
             rand::{thread_rng, Rng},
-            secret_sharing::{
-                replicated::{
-                    malicious::{AdditiveShare as MaliciousReplicated, ExtendableField},
-                    semi_honest::AdditiveShare as Replicated,
-                    ReplicatedSecretSharing,
-                },
-                SharedValue,
-            },
-            test_fixture::{Reconstruct, Runner, TestWorld},
+            secret_sharing::{replicated::malicious::ExtendableField, SharedValue},
+            test_fixture::{Reconstruct, Runner, TestWorld, TestWorldConfig},
         };
-        use crate::ff::Serializable;
-        use crate::helpers::in_memory_config::MaliciousHelper;
-        use crate::test_fixture::TestWorldConfig;
 
         /// Relies on semi-honest protocol tests that enforce reshare to communicate and produce
         /// new shares.
@@ -290,23 +272,26 @@ mod tests {
             /// `binary_data` must carry the exact one value of `F` and the result
             /// will be written back to it, so the attack is run in place
             fn corrupt<F: Field>(binary_data: &mut [u8], add: F) {
-                let slice = GenericArray::from_mut_slice(binary_data);
-                let v = F::deserialize(slice).unwrap() + add;
-                v.serialize(slice);
+                let v = F::deserialize_from_slice(binary_data) + add;
+                v.serialize_to_slice(binary_data);
             }
 
             for (small_value, large_value) in perturbations.iter().copied() {
                 for malicious_actor in [Role::H2, Role::H3] {
                     let mut config = TestWorldConfig::default();
-                    config.stream_interceptor = MaliciousHelper::new(malicious_actor, config.role_assignment(), move |ctx, data| {
-                        if ctx.gate.as_ref().contains(STEP) {
-                            if ctx.gate.as_ref().contains("reshare_rx") {
-                                corrupt(data, large_value);
-                            } else {
-                                corrupt(data, small_value);
+                    config.stream_interceptor = MaliciousHelper::new(
+                        malicious_actor,
+                        config.role_assignment(),
+                        move |ctx, data| {
+                            if ctx.gate.as_ref().contains(STEP) {
+                                if ctx.gate.as_ref().contains("reshare_rx") {
+                                    corrupt(data, large_value);
+                                } else {
+                                    corrupt(data, small_value);
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                     let world = TestWorld::new_with(&config);
                     let mut rng = thread_rng();
                     let a = rng.gen::<F>();
@@ -319,7 +304,6 @@ mod tests {
                             let m_a = v.context().upgrade(a).await.unwrap();
 
                             let m_reshared_a = m_a.reshare(m_ctx.narrow(STEP), RecordId::FIRST, to_helper).await.unwrap();
-
                             match v.validate(m_reshared_a).await {
                                 Ok(result) => panic!("Got a result {result:?}"),
                                 Err(err) => {
