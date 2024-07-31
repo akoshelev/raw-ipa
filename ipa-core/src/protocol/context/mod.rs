@@ -107,8 +107,8 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
 }
 
 pub trait UpgradableContext: Context {
-    type UpgradedContext<F: ExtendableField>: UpgradedContext;
-    type Validator<F: ExtendableField>: Validator<Self, F>;
+    type UpgradedContext<F: ExtendableField>: UpgradedContext<Field = F>;
+    type Validator<F: ExtendableField>: Validator<Self::UpgradedContext<F>>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F>;
 
@@ -122,6 +122,8 @@ pub trait UpgradedContext: Context {
     type Field: ExtendableField;
     type Share: SecretSharing<SharedValue = Self::Field> + 'static;
 
+    /// TODO: this is very promising to make work with new validator. this is the exact interface
+    /// I need to upgrade in different contexts using the same record id
     async fn upgrade_one(
         &self,
         record_id: RecordId,

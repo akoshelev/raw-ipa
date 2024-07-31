@@ -21,7 +21,7 @@ use crate::{
     },
     seq_join::seq_join,
 };
-use crate::secret_sharing::{FieldSimd, FieldVectorizable, Vectorizable};
+use crate::secret_sharing::{FieldSimd, FieldVectorizable, SharedValueArray, Vectorizable};
 
 ///
 /// This code is an optimization to our malicious compiler that is drawn from:
@@ -36,7 +36,7 @@ use crate::secret_sharing::{FieldSimd, FieldVectorizable, Vectorizable};
 /// This makes it possible to minimize communication overhead required to reach a desired level of statistical security.
 ///
 #[derive(Clone, PartialEq, Eq)]
-pub struct AdditiveShare<V: SharedValue + ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize = 1> {
+pub struct AdditiveShare<V: SharedValue + ExtendableFieldSimd<N>, const N: usize = 1> {
     x: SemiHonestAdditiveShare<V, N>,
     rx: SemiHonestAdditiveShare<V::ExtendedField, N>,
 }
@@ -45,6 +45,9 @@ pub trait ExtendableField: Field {
     type ExtendedField: Field + FromRandom;
     fn to_extended(&self) -> Self::ExtendedField;
 }
+
+pub trait ExtendableFieldSimd<const N: usize> : ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N> {}
+impl <F: ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N>, const N: usize> ExtendableFieldSimd<N> for F {}
 
 impl<F: PrimeField> ExtendableField for F {
     type ExtendedField = F;
@@ -68,12 +71,15 @@ impl ExtendableField for Gf2 {
     }
 }
 
-impl<V: SharedValue + ExtendableField> SecretSharing for AdditiveShare<V> {
+impl<V: ExtendableFieldSimd<N>, const N: usize> SecretSharing for AdditiveShare<V, N> {
     type SharedValue = V;
-    const ZERO: Self = AdditiveShare::ZERO;
+    const ZERO: Self = Self {
+        x: SemiHonestAdditiveShare::ZERO,
+        rx: SemiHonestAdditiveShare::ZERO,
+    };
 }
 
-impl<V: SharedValue + ExtendableField> LinearSecretSharing for AdditiveShare<V> { type SharedFieldValue = V; }
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> LinearSecretSharing for AdditiveShare<V, N> { type SharedFieldValue = V; }
 
 /// A trait that is implemented for various collections of `replicated::malicious::AdditiveShare`.
 /// This allows a protocol to downgrade to ordinary `replicated::semi_honest::AdditiveShare`
@@ -100,7 +106,7 @@ impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + FieldSimd<N
     }
 }
 
-impl<V: SharedValue + Debug + ExtendableField> Debug for AdditiveShare<V> {
+impl<V: SharedValue + Debug + ExtendableFieldSimd<N>, const N: usize> Debug for AdditiveShare<V, N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "x: {:?}, rx: {:?}", self.x, self.rx)
     }
@@ -115,7 +121,7 @@ impl<V: SharedValue + ExtendableField> Default for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
+impl<V: ExtendableFieldSimd<N>, const N: usize> AdditiveShare<V, N> {
     #[must_use]
     pub fn new(
         x: SemiHonestAdditiveShare<V, N>,
@@ -125,7 +131,7 @@ impl<V: SharedValue + ExtendableField<ExtendedField: FieldSimd<N>> + Vectorizabl
     }
 }
 
-impl<V: SharedValue + ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize> AdditiveShare<V, N> {
+impl<V: ExtendableFieldSimd<N>, const N: usize> AdditiveShare<V, N> {
     pub fn x(&self) -> UnauthorizedDowngradeWrapper<&SemiHonestAdditiveShare<V, N>> {
         UnauthorizedDowngradeWrapper(&self.x)
     }
@@ -149,10 +155,10 @@ impl<V: SharedValue + ExtendableField> AdditiveShare<V> {
     };
 }
 
-impl<'a, 'b, V: SharedValue + ExtendableField> Add<&'b AdditiveShare<V>> for &'a AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<'a, 'b, V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Add<&'b AdditiveShare<V, N>> for &'a AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
-    fn add(self, rhs: &'b AdditiveShare<V>) -> Self::Output {
+    fn add(self, rhs: &'b AdditiveShare<V, N>) -> Self::Output {
         AdditiveShare {
             x: &self.x + &rhs.x,
             rx: &self.rx + &rhs.rx,
@@ -160,7 +166,7 @@ impl<'a, 'b, V: SharedValue + ExtendableField> Add<&'b AdditiveShare<V>> for &'a
     }
 }
 
-impl<V: SharedValue + ExtendableField> Add<Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Add<Self> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -168,15 +174,15 @@ impl<V: SharedValue + ExtendableField> Add<Self> for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Add<AdditiveShare<V>> for &AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Add<AdditiveShare<V, N>> for &AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
-    fn add(self, rhs: AdditiveShare<V>) -> Self::Output {
+    fn add(self, rhs: AdditiveShare<V, N>) -> Self::Output {
         Add::add(self, &rhs)
     }
 }
 
-impl<V: SharedValue + ExtendableField> Add<&AdditiveShare<V>> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Add<&AdditiveShare<V, N>> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn add(self, rhs: &Self) -> Self::Output {
@@ -184,20 +190,20 @@ impl<V: SharedValue + ExtendableField> Add<&AdditiveShare<V>> for AdditiveShare<
     }
 }
 
-impl<V: SharedValue + ExtendableField> AddAssign<&Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> AddAssign<&Self> for AdditiveShare<V, N> {
     fn add_assign(&mut self, rhs: &Self) {
         self.x += &rhs.x;
         self.rx += &rhs.rx;
     }
 }
 
-impl<V: SharedValue + ExtendableField> AddAssign<Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> AddAssign<Self> for AdditiveShare<V, N> {
     fn add_assign(&mut self, rhs: Self) {
         AddAssign::add_assign(self, &rhs);
     }
 }
 
-impl<V: SharedValue + ExtendableField> Neg for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Neg for AdditiveShare<V, N> {
     type Output = Self;
 
     fn neg(self) -> Self {
@@ -208,8 +214,8 @@ impl<V: SharedValue + ExtendableField> Neg for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Sub<Self> for &AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Sub<Self> for &AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         AdditiveShare {
@@ -219,7 +225,7 @@ impl<V: SharedValue + ExtendableField> Sub<Self> for &AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Sub<Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Sub<Self> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -227,7 +233,7 @@ impl<V: SharedValue + ExtendableField> Sub<Self> for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Sub<&Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Sub<&Self> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn sub(self, rhs: &Self) -> Self::Output {
@@ -235,29 +241,29 @@ impl<V: SharedValue + ExtendableField> Sub<&Self> for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Sub<AdditiveShare<V>> for &AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Sub<AdditiveShare<V, N>> for &AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
-    fn sub(self, rhs: AdditiveShare<V>) -> Self::Output {
+    fn sub(self, rhs: AdditiveShare<V, N>) -> Self::Output {
         Sub::sub(self, &rhs)
     }
 }
 
-impl<V: SharedValue + ExtendableField> SubAssign<&Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> SubAssign<&Self> for AdditiveShare<V, N> {
     fn sub_assign(&mut self, rhs: &Self) {
         self.x -= &rhs.x;
         self.rx -= &rhs.rx;
     }
 }
 
-impl<V: SharedValue + ExtendableField> SubAssign<Self> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> SubAssign<Self> for AdditiveShare<V, N> {
     fn sub_assign(&mut self, rhs: Self) {
         SubAssign::sub_assign(self, &rhs);
     }
 }
 
-impl<'a, 'b, V: SharedValue + ExtendableField> Mul<&'b V> for &'a AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<'a, 'b, V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Mul<&'b V> for &'a AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
     fn mul(self, rhs: &'b V) -> Self::Output {
         AdditiveShare {
@@ -267,7 +273,7 @@ impl<'a, 'b, V: SharedValue + ExtendableField> Mul<&'b V> for &'a AdditiveShare<
     }
 }
 
-impl<V: SharedValue + ExtendableField> Mul<V> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Mul<V> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn mul(self, rhs: V) -> Self::Output {
@@ -275,7 +281,7 @@ impl<V: SharedValue + ExtendableField> Mul<V> for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Mul<&V> for AdditiveShare<V> {
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Mul<&V> for AdditiveShare<V, N> {
     type Output = Self;
 
     fn mul(self, rhs: &V) -> Self::Output {
@@ -283,8 +289,8 @@ impl<V: SharedValue + ExtendableField> Mul<&V> for AdditiveShare<V> {
     }
 }
 
-impl<V: SharedValue + ExtendableField> Mul<V> for &AdditiveShare<V> {
-    type Output = AdditiveShare<V>;
+impl<V: SharedValue + ExtendableFieldSimd<N>, const N: usize> Mul<V> for &AdditiveShare<V, N> {
+    type Output = AdditiveShare<V, N>;
 
     fn mul(self, rhs: V) -> Self::Output {
         Mul::mul(self, &rhs)

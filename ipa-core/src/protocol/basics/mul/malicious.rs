@@ -17,6 +17,8 @@ use crate::{
         ReplicatedSecretSharing,
     },
 };
+use crate::protocol::prss::FromPrss;
+use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
 
 ///
 /// Implementation drawn from:
@@ -49,14 +51,15 @@ use crate::{
 /// back via the error response
 /// ## Panics
 /// Panics if the mutex is found to be poisoned
-pub async fn mac_multiply<F>(
+pub async fn mac_multiply<F, const N: usize>(
     ctx: UpgradedMaliciousContext<'_, F>,
     record_id: RecordId,
-    a: &MaliciousReplicated<F>,
-    b: &MaliciousReplicated<F>,
-) -> Result<MaliciousReplicated<F>, Error>
+    a: &MaliciousReplicated<F, N>,
+    b: &MaliciousReplicated<F, N>,
+) -> Result<MaliciousReplicated<F, N>, Error>
 where
-    F: ExtendableField,
+    F: ExtendableFieldSimd<N>,
+    Replicated<F::ExtendedField, N>: FromPrss
 {
     use crate::{
         protocol::context::SpecialAccessToUpgradedContext,
@@ -82,7 +85,7 @@ where
     // (b) The parties locally compute the induced share [[y]] = f([y], 0, . . . , 0).
     // (c) The parties call `Ḟ_mult` on `[[ȓ · x]]` and `[[y]]` to receive `[[ȓ · x · y]]`.
     //
-    let b_induced_share = Replicated::new(b_x.left().to_extended(), b_x.right().to_extended());
+    let b_induced_share = b_x.induced();
     let (ab, rab) = try_join(
         semi_honest_multiply(
             ctx.base_context(),
@@ -100,14 +103,16 @@ where
     .await?;
 
     let malicious_ab = MaliciousReplicated::new(ab, rab);
-    random_constant_ctx.accumulate_macs(record_id, &malicious_ab);
+    random_constant_ctx.accumulate_macs_vectorized(record_id, &malicious_ab);
 
     Ok(malicious_ab)
 }
 
 /// Implement secure multiplication for malicious contexts with replicated secret sharing.
 #[async_trait]
-impl<'a, F: ExtendableField> SecureMul<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F> {
+impl<'a, F: ExtendableFieldSimd<N>, const N: usize> SecureMul<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F, N>
+where Replicated<F::ExtendedField, N>: FromPrss
+{
     async fn multiply<'fut>(
         &self,
         rhs: &Self,

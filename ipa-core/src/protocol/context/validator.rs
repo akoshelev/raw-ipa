@@ -41,13 +41,13 @@ use crate::protocol::context::malicious::upgrade_one;
 use crate::protocol::context::UpgradedContext;
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::replicated::malicious;
-use crate::secret_sharing::{FieldSimd, FieldVectorizable, Vectorizable};
+use crate::secret_sharing::{FieldSimd, FieldVectorizable, SecretSharing, Vectorizable};
+use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
 use crate::seq_join::assert_send;
 use crate::sharding::NotSharded;
 
-pub trait Upgradeable<C: Context> : Send {
+pub trait Upgradeable<C: UpgradedContext> : Send {
     type Output;
-
     fn upgrade<'ctx>(self, record_id: RecordId, context: C) -> impl Future<Output = Result<Self::Output, Error>> + Send + 'ctx where C: 'ctx;
 }
 
@@ -75,11 +75,11 @@ where <V as ExtendableField>::ExtendedField: FieldSimd<N>,
 }
 
 #[async_trait]
-pub trait Validator<B: UpgradableContext, F: ExtendableField>: Send + Sync + Clone {
-    fn context(&self) -> B::UpgradedContext<F>;
+pub trait Validator<B: UpgradedContext>: Send + Sync + Clone {
+    fn context(&self) -> B;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
 
-    async fn upgrade_record<U: Upgradeable<B::UpgradedContext<F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error>;
+    async fn upgrade_record<U: Upgradeable<B>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error>;
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
 }
 
@@ -99,7 +99,7 @@ impl<'a, B: ShardBinding, F: ExtendableField> SemiHonest<'a, B, F> {
 }
 
 #[async_trait]
-impl<'a, B: ShardBinding, F: ExtendableField> Validator<super::semi_honest::Context<'a, B>, F>
+impl<'a, B: ShardBinding, F: ExtendableField> Validator<UpgradedSemiHonestContext<'a, B, F>>
     for SemiHonest<'a, B, F>
 {
     fn context(&self) -> UpgradedSemiHonestContext<'a, B, F> {
@@ -205,8 +205,7 @@ impl<F: ExtendableField> MaliciousAccumulator<F> {
         prss: &I,
         record_id: RecordId,
         input: &MaliciousReplicated<F, N>,
-    ) where F: FieldSimd<N>,
-            F::ExtendedField: FieldSimd<N>,
+    ) where F: ExtendableFieldSimd<N>,
             Replicated<F::ExtendedField, N>: FromPrss
     {
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
@@ -251,7 +250,7 @@ pub struct Malicious<'a, F: ExtendableField> {
 }
 
 #[async_trait]
-impl<'a, F: ExtendableField> Validator<MaliciousContext<'a>, F> for Malicious<'a, F> {
+impl<'a, F: ExtendableField> Validator<UpgradedMaliciousContext<'a, F>> for Malicious<'a, F> {
     /// Get a copy of the context that can be used for malicious protocol execution.
     fn context<'b>(&'b self) -> UpgradedMaliciousContext<'a, F> {
         self.protocol_ctx.clone()

@@ -33,8 +33,9 @@ use crate::{
     sharding::ShardBinding,
 };
 use crate::ff::Field;
-use crate::protocol::context::UpgradedContext;
+use crate::protocol::context::{UpgradedContext, UpgradedMaliciousContext};
 use crate::secret_sharing::{FieldVectorizable, Linear};
+use crate::secret_sharing::replicated::malicious;
 
 /// Basic suite of MPC protocols for vectorized data.
 ///
@@ -46,7 +47,6 @@ pub trait BasicProtocols<C: Context, const N: usize>:
     Linear<SharedFieldValue = Self::ProtocolField>
     + Reveal<C, Output = <Self::ProtocolField as Vectorizable<N>>::Array>
     + SecureMul<C>
-    + FromPrss
 {
     type ProtocolField: FieldSimd<N>;
 }
@@ -56,7 +56,15 @@ impl<'a, B: ShardBinding, const N: usize> BasicProtocols<UpgradedSemiHonestConte
     for AdditiveShare<Fp25519, N>
 where
     Fp25519: FieldSimd<N>,
-    AdditiveShare<Fp25519, N>: FromPrss
+{
+    type ProtocolField = Fp25519;
+}
+
+impl<'a, const N: usize> BasicProtocols<UpgradedMaliciousContext<'a, Fp25519>, N>
+for malicious::AdditiveShare<Fp25519, N>
+where
+    Fp25519: FieldSimd<N>,
+    AdditiveShare<Fp25519, N>: FromPrss,
 {
     type ProtocolField = Fp25519;
 }

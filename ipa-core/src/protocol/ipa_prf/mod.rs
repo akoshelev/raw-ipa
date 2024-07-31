@@ -104,6 +104,8 @@ use crate::{
     seq_join::SeqJoin,
 };
 use crate::protocol::context::validator::Upgradeable;
+use crate::protocol::ipa_prf::prf_eval::compute_prf;
+use crate::protocol::prss::SharedRandomness;
 
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -299,6 +301,7 @@ where
     C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519>,
     Replicated<Fp25519, { Fp25519::VECTORIZE }> :Upgradeable<C::UpgradedContext<Fp25519>>,
     <Replicated<Fp25519, { Fp25519::VECTORIZE }> as Upgradeable<C::UpgradedContext<Fp25519>>>::Output: PrfSharing<C::UpgradedContext<Fp25519>, {Fp25519::VECTORIZE}>,
+    Replicated<Fp25519, { Fp25519::VECTORIZE}>: FromPrss,
     BK: BooleanArray,
     TV: BooleanArray,
     TS: BooleanArray,
@@ -349,7 +352,7 @@ where
             let record_id = RecordId::from(i);
             curve_pts.then(move |pts| async move {
                 let pts = validator.clone().upgrade_record(record_id, pts).await?;
-                eval_dy_prf(validator, record_id, prf_key, pts).await
+                compute_prf(validator, record_id, &prf_key, pts).await
             })
         }),
     )

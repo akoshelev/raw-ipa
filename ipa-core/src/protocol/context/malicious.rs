@@ -39,6 +39,7 @@ use crate::ff::Expand;
 use crate::protocol::context::UpgradedMaliciousContext;
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::{FieldSimd, FieldVectorizable};
+use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
 
 #[derive(Clone)]
 pub struct Context<'a> {
@@ -236,6 +237,13 @@ impl<'a, F: ExtendableField> Upgraded<'a, F> {
 
     pub(super) fn r(&self) -> &Replicated<F::ExtendedField> {
         &self.inner.r_share
+    }
+
+    pub fn accumulate_macs_vectorized<const N: usize>(self, record_id: RecordId, share: &MaliciousReplicated<F, N>)
+        where F: ExtendableFieldSimd<N>,
+        Replicated<F::ExtendedField, N>: FromPrss,
+    {
+        self.inner.accumulator.accumulate_macs(&self.prss(), record_id, share);
     }
 }
 

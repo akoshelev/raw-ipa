@@ -25,7 +25,7 @@ use crate::{
 };
 use crate::protocol::context::{UpgradableContext, UpgradedContext, Validator};
 use crate::secret_sharing::{FieldSimd, Sendable};
-use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
+use crate::secret_sharing::replicated::malicious::{ExtendableFieldSimd, ThisCodeIsAuthorizedToDowngradeFromMalicious};
 
 /// Trait for reveal protocol to open a shared secret to all helpers inside the MPC ring.
 pub trait Reveal<C: Context>: Sized {
@@ -130,7 +130,7 @@ impl<C: Context, V: SharedValue + Vectorizable<N>, const N: usize> Reveal<C>
 /// It works similarly to semi-honest reveal, the key difference is that each helper sends its share
 /// to both helpers (right and left) and upon receiving 2 shares from peers it validates that they
 /// indeed match.
-impl<'a, F: ExtendableField<ExtendedField: Vectorizable<N>> + Vectorizable<N>, const N: usize> Reveal<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F, N> {
+impl<'a, F: ExtendableFieldSimd<N>, const N: usize> Reveal<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F, N> {
     type Output = <F as Vectorizable<N>>::Array;
 
     async fn generic_reveal<'fut>(
@@ -244,10 +244,9 @@ pub fn mac_validated_reveal<C, V, S, F>(
     v: S,
 ) -> impl Future<Output = Result<S::Output, Error>> + Send
 where
-    C: UpgradableContext,
-    F: ExtendableField,
-    V: Validator<C, F>,
-    S: Reveal<C::UpgradedContext<F>> + Send + Sync,
+    C: UpgradedContext<Field = F>,
+    V: Validator<C>,
+    S: Reveal<C> + Send + Sync,
 {
     async move {
         validator.validate_record(record_id).await?;
