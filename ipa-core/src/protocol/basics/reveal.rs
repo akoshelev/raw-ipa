@@ -239,6 +239,7 @@ where
 }
 
 pub fn mac_validated_reveal<C, V, S, F>(
+    ctx: C,
     validator: V,
     record_id: RecordId,
     v: S,
@@ -250,7 +251,7 @@ where
 {
     async move {
         validator.validate_record(record_id).await?;
-        assert_send(v.reveal(validator.context(), record_id)).await
+        assert_send(v.reveal(ctx, record_id)).await
     }
 }
 

@@ -342,17 +342,19 @@ where
     let validator = ctx.validator::<Fp25519>();
     let eval_ctx = validator
         .context()
-        .narrow(&Step::EvalPrf)
-        .set_total_records(eval_records);
+        .narrow(&Step::EvalPrf);
+        // .set_total_records(eval_records);
 
-    let prf_key = &gen_prf_key(validator.clone()).await?;
+    let prf_key = &gen_prf_key(eval_ctx.clone()).await?;
+    let eval_ctx = eval_ctx.set_total_records(eval_records);
+
     let prf_of_match_keys = seq_join(
         eval_ctx.active_work(),
-        stream::iter(zip(curve_pts, repeat(validator))).enumerate().map(|(i, (curve_pts, validator))| {
+        stream::iter(zip(curve_pts, zip(repeat(eval_ctx), repeat(validator)))).enumerate().map(|(i, (curve_pts, (eval_ctx, validator)))| {
             let record_id = RecordId::from(i);
             curve_pts.then(move |pts| async move {
-                let pts = validator.clone().upgrade_record(record_id, pts).await?;
-                compute_prf(validator, record_id, &prf_key, pts).await
+                let pts = eval_ctx.clone().upgrade_record(record_id, pts).await?;
+                compute_prf(eval_ctx, validator, record_id, &prf_key, pts).await
             })
         }),
     )

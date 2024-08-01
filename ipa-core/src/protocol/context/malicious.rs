@@ -37,9 +37,11 @@ use crate::{
 };
 use crate::ff::Expand;
 use crate::protocol::context::UpgradedMaliciousContext;
+use crate::protocol::context::validator::Upgradeable;
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::{FieldSimd, FieldVectorizable};
 use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
+use crate::seq_join::assert_send;
 
 #[derive(Clone)]
 pub struct Context<'a> {

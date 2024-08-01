@@ -78,8 +78,6 @@ where <V as ExtendableField>::ExtendedField: FieldSimd<N>,
 pub trait Validator<B: UpgradedContext>: Send + Sync + Clone {
     fn context(&self) -> B;
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error>;
-
-    async fn upgrade_record<U: Upgradeable<B>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error>;
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
 }
 
@@ -109,10 +107,6 @@ impl<'a, B: ShardBinding, F: ExtendableField> Validator<UpgradedSemiHonestContex
     async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error> {
         use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
         Ok(values.downgrade().await.access_without_downgrade())
-    }
-
-    async fn upgrade_record<U: Upgradeable<UpgradedSemiHonestContext<'a, B, F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error> {
-        assert_send(input.upgrade(record_id, self.context)).await
     }
 
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
@@ -293,10 +287,6 @@ impl<'a, F: ExtendableField> Validator<UpgradedMaliciousContext<'a, F>> for Mali
         } else {
             Err(Error::MaliciousSecurityCheckFailed)
         }
-    }
-
-    async fn upgrade_record<U: Upgradeable<UpgradedMaliciousContext<'a, F>>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error> {
-        assert_send(input.upgrade(record_id, self.protocol_ctx)).await
     }
 
     async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {

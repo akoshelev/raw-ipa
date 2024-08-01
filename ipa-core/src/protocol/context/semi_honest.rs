@@ -30,7 +30,9 @@ use crate::{
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
 use crate::protocol::context::upgrade::UpgradeVectorizedFriendly;
+use crate::protocol::context::validator::Upgradeable;
 use crate::secret_sharing::{FieldSimd, Vectorizable};
+use crate::seq_join::assert_send;
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {

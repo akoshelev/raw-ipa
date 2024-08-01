@@ -46,7 +46,9 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
+use crate::protocol::context::validator::Upgradeable;
 use crate::secret_sharing::{FieldSimd, Vectorizable};
+use crate::seq_join::assert_send;
 
 /// Context used by each helper to perform secure computation. Provides access to shared randomness
 /// generator and communication channel.
@@ -121,6 +123,10 @@ pub trait UpgradableContext: Context {
 pub trait UpgradedContext: Context {
     type Field: ExtendableField;
     type Share: SecretSharing<SharedValue = Self::Field> + 'static;
+
+    async fn upgrade_record<U: Upgradeable<Self>>(self, record_id: RecordId, input: U) -> Result<U::Output, Error> {
+        assert_send(input.upgrade(record_id, self)).await
+    }
 
     /// TODO: this is very promising to make work with new validator. this is the exact interface
     /// I need to upgrade in different contexts using the same record id

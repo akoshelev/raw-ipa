@@ -30,6 +30,7 @@ use crate::{
 };
 use crate::protocol::context::validator::Upgradeable;
 use crate::secret_sharing::replicated::malicious;
+use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
 
 /// This trait defines the requirements to the sharing types and the underlying fields
 /// used to generate PRF values.
@@ -129,7 +130,7 @@ where
     }
 }
 
-/// TODO: this is widely unsafe and badly broken design. Need a safer way to go from
+/// TODO: this is wildly unsafe and badly broken design. Need a safer way to go from
 /// malicious FP to semi-honest RP
 impl<const N: usize> From<malicious::AdditiveShare<Fp25519, N>> for AdditiveShare<RP25519, N>
 where
@@ -137,31 +138,30 @@ where
     RP25519: Vectorizable<N>,
 {
     fn from(value: malicious::AdditiveShare<Fp25519, N>) -> Self {
-        todo!()
+        value.x().access_without_downgrade().clone().map(|v| RP25519::from(v))
     }
 }
 
 /// generates PRF key k as secret sharing over Fp25519
-pub async fn gen_prf_key<C, V>(validator: V) -> Result<
+pub async fn gen_prf_key<C>(ctx: C) -> Result<
     <AdditiveShare<Fp25519, {Fp25519::VECTORIZE}> as Upgradeable<C>>::Output
     , Error>
 where
     C: UpgradedContext<Field = Fp25519>,
-    V: Validator<C>,
     AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>: Upgradeable<C>,
 {
-    let ctx = validator.context();
-    let ctx = ctx.narrow(&Step::PRFKeyGen);
+    let ctx = ctx.narrow(&Step::PRFKeyGen).set_total_records(TotalRecords::ONE);
     let v: AdditiveShare<Fp25519, 1> = ctx.prss().generate(RecordId(0));
 
     // TODO: recordid first will conflict with PRSS
-    validator.upgrade_record(
+    ctx.upgrade_record(
         RecordId::FIRST,
         AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v),
     ).await
 }
 
-pub(super) async fn compute_prf<C, S, F, V, const N: usize>(
+pub(super) async fn compute_prf<C, V, S, F, const N: usize>(
+    ctx: C,
     validator: V,
     record_id: RecordId,
     key: &S,
@@ -169,15 +169,15 @@ pub(super) async fn compute_prf<C, S, F, V, const N: usize>(
 ) -> Result<[u64; N], Error>
 where
     C: UpgradedContext<Field = F>,
-    F: ExtendableField + Vectorizable<N>,
     V: Validator<C>,
+    F: ExtendableField + Vectorizable<N>,
     S: PrfSharing<C, N>,
     AdditiveShare<F, N>: FromPrss + Upgradeable<C, Output = S>,
 {
-    let mask: AdditiveShare<F, N> = validator.context().narrow(&Step::GenRandomMask).prss().generate(record_id);
+    let mask: AdditiveShare<F, N> = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
     // TODO: this will blow up because the same context is used to upgrade two different things
-    let upgraded_mask = validator.clone().upgrade_record(record_id, mask).await?;
-    eval_dy_prf(validator, record_id, key, value, upgraded_mask).await
+    let upgraded_mask = ctx.narrow(&Step::UpgradeMask).upgrade_record(record_id, mask).await?;
+    eval_dy_prf(ctx, validator, record_id, key, value, upgraded_mask).await
 }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))
@@ -195,7 +195,8 @@ where
 /// Propagates errors from multiplications, reveal and scalar multiplication
 /// # Panics
 /// Never as of when this comment was written, but the compiler didn't know that.
-pub(super) fn eval_dy_prf<C, F, V, P, const N: usize>(
+pub(super) fn eval_dy_prf<C, V, F, P, const N: usize>(
+    ctx: C,
     validator: V,
     record_id: RecordId,
     k: &P,
@@ -208,7 +209,6 @@ where
     V: Validator<C>,
     P: PrfSharing<C, N>,
 {
-    let ctx = validator.context();
     //compute x+k
     let mut y = x + k;
 
@@ -223,6 +223,7 @@ where
 
         //reconstruct (z,R)
         let (gr, z) = mac_validated_reveal(
+            ctx,
             validator,
             record_id,
             RevealablePrfSharing {
@@ -315,13 +316,17 @@ mod test {
         C: UpgradableContext,
         AdditiveShare<Fp25519>: BasicProtocols<C::UpgradedContext<Fp25519>, 1, ProtocolField = Fp25519> + Upgradeable<C::UpgradedContext<Fp25519>, Output = AdditiveShare<Fp25519>>,
     {
-        let ctx = ctx.set_total_records(TotalRecords::specified(input_match_keys.len())?);
-        let validator = ctx.clone().validator::<Fp25519>();
+        let validator = ctx.validator::<Fp25519>();
+        let ctx = validator
+            .context()
+            .set_total_records(TotalRecords::specified(input_match_keys.len())?);
+
         let futures = input_match_keys
             .into_iter()
+            .zip(std::iter::repeat(ctx.clone()))
             .enumerate()
-            .map(|(i, x)| {
-                compute_prf(validator.clone(), i.into(), &prf_key, x)
+            .map(|(i, (x, ctx))| {
+                compute_prf(ctx, validator.clone(), i.into(), &prf_key, x)
             });
         Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
     }
@@ -383,12 +388,13 @@ mod test {
             let world = TestWorld::default();
             let prf_key = Fp25519::from(42_u64);
             world.malicious((prf_key, test_input(42)), |ctx, (prf_key, match_key_share)| async move {
-                let ctx = ctx.set_total_records(1);
                 let v = ctx.validator();
-                let malicious_share: malicious::AdditiveShare<_> = v.context().upgrade(match_key_share).await.unwrap();
-                let prf_key: malicious::AdditiveShare<_> = v.context().upgrade(prf_key).await.unwrap();
+                let upgraded_ctx = v.context().set_total_records(1);
 
-                compute_prf(v, RecordId::FIRST, &prf_key, malicious_share).await.unwrap();
+                let malicious_share: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-match-key").upgrade_record(RecordId::FIRST, match_key_share).await.unwrap();
+                let prf_key: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-prf-key").upgrade(prf_key).await.unwrap();
+
+                compute_prf(upgraded_ctx, v, RecordId::FIRST, &prf_key, malicious_share).await.unwrap();
             }).await;
         })
     }
