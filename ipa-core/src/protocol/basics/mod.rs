@@ -34,6 +34,7 @@ use crate::{
 };
 use crate::ff::Field;
 use crate::protocol::context::{UpgradedContext, UpgradedMaliciousContext};
+use crate::protocol::context::validator::BatchUpgradedContext;
 use crate::secret_sharing::{FieldVectorizable, Linear};
 use crate::secret_sharing::replicated::malicious;
 
@@ -61,6 +62,15 @@ where
 }
 
 impl<'a, const N: usize> BasicProtocols<UpgradedMaliciousContext<'a, Fp25519>, N>
+for malicious::AdditiveShare<Fp25519, N>
+where
+    Fp25519: FieldSimd<N>,
+    AdditiveShare<Fp25519, N>: FromPrss,
+{
+    type ProtocolField = Fp25519;
+}
+
+impl<'a, const N: usize> BasicProtocols<BatchUpgradedContext<'a, Fp25519>, N>
 for malicious::AdditiveShare<Fp25519, N>
 where
     Fp25519: FieldSimd<N>,

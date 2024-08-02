@@ -4,9 +4,11 @@ use std::{
     marker::PhantomData,
 };
 use std::future::Future;
+use std::num::NonZeroUsize;
 use async_trait::async_trait;
+use tokio::sync::Notify;
 use typenum::Const;
-
+use ipa_step::StepNarrow;
 use crate::{
     error::Error,
     ff::Field,
@@ -35,15 +37,20 @@ use crate::{
     sync::{Arc, Mutex, Weak},
 };
 use crate::ff::PrimeField;
+use crate::helpers::{MpcMessage, MpcReceivingEnd, Role, SendingEnd};
 use crate::protocol::basics::mul::semi_honest_multiply;
 use crate::protocol::basics::mul::step::MaliciousMultiplyStep::RandomnessForValidation;
+use crate::protocol::context::batcher::{Batcher, BatchState, Either};
 use crate::protocol::context::malicious::upgrade_one;
+use crate::protocol::context::prss::{InstrumentedIndexedSharedRandomness, InstrumentedSequentialSharedRandomness};
+use crate::protocol::context::step::MaliciousProtocolStep;
 use crate::protocol::context::UpgradedContext;
+use crate::protocol::Gate;
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::replicated::malicious;
 use crate::secret_sharing::{FieldSimd, FieldVectorizable, SecretSharing, Vectorizable};
 use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
-use crate::seq_join::assert_send;
+use crate::seq_join::{assert_send, SeqJoin};
 use crate::sharding::NotSharded;
 
 pub trait Upgradeable<C: UpgradedContext> : Send {
@@ -74,6 +81,38 @@ where <V as ExtendableField>::ExtendedField: FieldSimd<N>,
     }
 }
 
+impl <'a, V: ExtendableField + FieldSimd<N>, const N: usize> Upgradeable<BatchUpgradedContext<'a, V>> for Replicated<V, N>
+where <V as ExtendableField>::ExtendedField: FieldSimd<N>,
+      Replicated<<V as ExtendableField>::ExtendedField, N>: FromPrss,
+{
+    type Output = malicious::AdditiveShare<V, N>;
+
+    fn upgrade<'ctx>(self, record_id: RecordId, context: BatchUpgradedContext<'a, V>) -> impl Future<Output=Result<Self::Output, Error>> + Send + 'ctx
+    where UpgradedMaliciousContext<'ctx, V>: 'ctx, 'a: 'ctx
+    {
+        async move {
+            // let b = {
+            //     let batch_ref = context.batch.upgrade().unwrap();
+            //     let mut batch = batch_ref.lock().unwrap();
+            //     let b = batch.get_batch(record_id);
+            //     let accumulator = MaliciousAccumulator { inner: Arc::downgrade(b.batch.u_and_w.lock().unwrap()) };
+            //     let r_share = b.batch.r_share.clone();
+            //
+            //     UpgradedMaliciousContext::new(
+            //     b.batch.context().clone()
+            // };
+            upgrade_one(context.malicious_ctx(record_id), record_id, self).await
+            // b.batch.context().upgrade_one(record_id, b.batch.context()).await
+            // b.batch.protocol_ctx.upgrade().upgrade_one(record_id, self).await
+            // let malicious_ctx = UpgradedMaliciousContext::new(
+            //     context.base_ctx.as_base(),
+            // )
+            // upgrade_one(malicious_ctx, record_id, self).await
+        }
+    }
+}
+
+/// TODO: get rid of clone, validators are not cloneable
 #[async_trait]
 pub trait Validator<B: UpgradedContext>: Send + Sync + Clone {
     fn context(&self) -> B;
@@ -358,6 +397,143 @@ impl<'a, F: ExtendableField> Malicious<'a, F> {
 impl<F: ExtendableField> Debug for Malicious<'_, F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "MaliciousValidator<{:?}>", type_name::<F>())
+    }
+}
+
+
+/// TODO kill clone
+#[derive(Clone)]
+pub struct BatchValidator<'a, F: ExtendableField> {
+    batches_ref: Arc<Mutex<Batcher<'a, Malicious<'a, F>>>>,
+    base_ctx: MaliciousContext<'a>,
+}
+
+impl <'a, F: ExtendableField> BatchValidator<'a, F> {
+    pub fn new(ctx: MaliciousContext<'a>, total_records: TotalRecords) -> Self {
+        let base_ctx = ctx.clone().set_total_records(total_records);
+        Self {
+            batches_ref: Arc::new(Mutex::new(Batcher::new(total_records.count().expect("total records must be set for batcher to work"), Box::new(move || {
+                Malicious::new(ctx.clone())
+            })))),
+            base_ctx,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BatchUpgradedContext<'a, F: ExtendableField> {
+    batch: Weak<Mutex<Batcher<'a, Malicious<'a, F>>>>,
+    base_ctx: MaliciousContext<'a>
+}
+
+impl <'a, F: ExtendableField> BatchUpgradedContext<'a, F> {
+
+    pub fn malicious_ctx(&self, record_id: RecordId) -> UpgradedMaliciousContext<'a, F> {
+        let batch_ref = self.batch.upgrade().unwrap();
+        let mut batch = batch_ref.lock().unwrap();
+        let b = batch.get_batch(record_id);
+        let accumulator = MaliciousAccumulator { inner: Arc::downgrade(&b.batch.u_and_w) };
+        let r_share = b.batch.r_share.clone();
+        let base = self.base_ctx.as_base();
+
+        UpgradedMaliciousContext::new(base, &MaliciousProtocolStep::MaliciousProtocol, accumulator, r_share).set_total_records(self.total_records())
+
+        // let batch_ptr = self.batch.upgrade().unwrap();
+        // let mut batch = batch_ptr.lock().unwrap();
+        // batch.get_batch(record_id).batch.protocol_ctx.clone()
+    }
+}
+
+impl <F: ExtendableField> SeqJoin for BatchUpgradedContext<'_, F> {
+    fn active_work(&self) -> NonZeroUsize {
+        self.base_ctx.active_work()
+    }
+}
+
+impl <F: ExtendableField> Context for BatchUpgradedContext<'_, F> {
+    fn role(&self) -> Role {
+        self.base_ctx.role()
+    }
+
+    fn gate(&self) -> &Gate {
+        self.base_ctx.gate()
+    }
+
+    fn narrow<S: ipa_step::Step + ?Sized>(&self, step: &S) -> Self
+    where
+        Gate: StepNarrow<S>
+    {
+        Self {
+            batch: Weak::clone(&self.batch),
+            base_ctx: self.base_ctx.narrow(step),
+        }
+    }
+
+    fn set_total_records<T: Into<TotalRecords>>(&self, total_records: T) -> Self {
+        Self {
+            batch: Weak::clone(&self.batch),
+            base_ctx: self.base_ctx.set_total_records(total_records),
+        }
+    }
+
+    fn total_records(&self) -> TotalRecords {
+        self.base_ctx.total_records()
+    }
+
+    fn prss(&self) -> InstrumentedIndexedSharedRandomness<'_> {
+        self.base_ctx.prss()
+    }
+
+    fn prss_rng(&self) -> (InstrumentedSequentialSharedRandomness, InstrumentedSequentialSharedRandomness) {
+        self.base_ctx.prss_rng()
+    }
+
+    fn send_channel<M: MpcMessage>(&self, role: Role) -> SendingEnd<Role, M> {
+        self.base_ctx.send_channel(role)
+    }
+
+    fn recv_channel<M: MpcMessage>(&self, role: Role) -> MpcReceivingEnd<M> {
+        self.base_ctx.recv_channel(role)
+    }
+}
+
+#[async_trait]
+impl <F: ExtendableField> UpgradedContext for BatchUpgradedContext<'_, F> {
+    type Field = F;
+    type Share = malicious::AdditiveShare<F>;
+
+    async fn upgrade_one(&self, record_id: RecordId, x: Replicated<Self::Field>) -> Result<Self::Share, Error> {
+        todo!()
+    }
+}
+
+
+
+#[async_trait]
+impl <'a, F: ExtendableField> Validator<BatchUpgradedContext<'a, F>> for BatchValidator<'a, F> {
+    fn context(&self) -> BatchUpgradedContext<'a, F> {
+        BatchUpgradedContext { batch: Arc::downgrade(&self.batches_ref), base_ctx: self.base_ctx.clone() }
+    }
+
+    async fn validate<D: DowngradeMalicious>(self, values: D) -> Result<D::Target, Error> {
+        todo!()
+    }
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        let r = {
+            self.batches_ref.lock().unwrap().validate_record(record_id)
+        };
+        match r {
+            Either::Left((_, batch)) => {
+                batch.batch.validate(()).await?;
+                batch.notify.notify_waiters();
+                Ok(())
+            }
+            Either::Right(notify) => {
+                notify.notified().await;
+                Ok(())
+            }
+        }
     }
 }
 

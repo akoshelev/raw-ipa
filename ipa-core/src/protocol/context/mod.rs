@@ -12,6 +12,7 @@ pub mod upgrade;
 /// this flag can be removed
 #[allow(dead_code)]
 pub mod validator;
+mod batcher;
 
 use std::{collections::HashMap, iter, num::NonZeroUsize, pin::pin};
 
@@ -110,9 +111,12 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
 
 pub trait UpgradableContext: Context {
     type UpgradedContext<F: ExtendableField>: UpgradedContext<Field = F>;
+    type BatchUpgradedContext<F: ExtendableField>: UpgradedContext<Field = F>;
     type Validator<F: ExtendableField>: Validator<Self::UpgradedContext<F>>;
+    type BatchValidator<F: ExtendableField>: Validator<Self::BatchUpgradedContext<F>>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F>;
+    fn batch_validator<F: ExtendableField>(self, total_records: TotalRecords) -> Self::BatchValidator<F>;
 
     type DZKPValidator: DZKPValidator;
 

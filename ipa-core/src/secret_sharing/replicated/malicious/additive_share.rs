@@ -366,6 +366,15 @@ impl<F: ExtendableField> Downgrade for SemiHonestAdditiveShare<F> {
 }
 
 #[async_trait]
+impl Downgrade for () {
+    type Target = ();
+
+    async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target> {
+        UnauthorizedDowngradeWrapper(())
+    }
+}
+
+#[async_trait]
 impl<T, U> Downgrade for (T, U)
 where
     T: Downgrade,

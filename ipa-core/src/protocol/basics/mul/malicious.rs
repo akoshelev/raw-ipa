@@ -17,6 +17,7 @@ use crate::{
         ReplicatedSecretSharing,
     },
 };
+use crate::protocol::context::validator::BatchUpgradedContext;
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
 
@@ -122,6 +123,25 @@ where Replicated<F::ExtendedField, N>: FromPrss
     where
         UpgradedMaliciousContext<'a, F>: 'fut,
     {
+        mac_multiply(ctx, record_id, self, rhs).await
+    }
+}
+
+/// Implement secure multiplication for malicious contexts with replicated secret sharing.
+#[async_trait]
+impl<'a, F: ExtendableFieldSimd<N>, const N: usize> SecureMul<BatchUpgradedContext<'a, F>> for MaliciousReplicated<F, N>
+where Replicated<F::ExtendedField, N>: FromPrss
+{
+    async fn multiply<'fut>(
+        &self,
+        rhs: &Self,
+        ctx: BatchUpgradedContext<'a, F>,
+        record_id: RecordId,
+    ) -> Result<Self, Error>
+    where
+        UpgradedMaliciousContext<'a, F>: 'fut,
+    {
+        let ctx = ctx.malicious_ctx(record_id);
         mac_multiply(ctx, record_id, self, rhs).await
     }
 }

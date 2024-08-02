@@ -5,7 +5,7 @@ use std::{
 
 use embed_doc_image::embed_doc_image;
 use futures::{future::try_join_all, TryFutureExt};
-
+use rustls::crypto::tls13::expand;
 use crate::{
     error::Error,
     helpers::{Direction, MaybeFuture, Role},
@@ -24,6 +24,7 @@ use crate::{
     seq_join::assert_send,
 };
 use crate::protocol::context::{UpgradableContext, UpgradedContext, Validator};
+use crate::protocol::context::validator::BatchUpgradedContext;
 use crate::secret_sharing::{FieldSimd, Sendable};
 use crate::secret_sharing::replicated::malicious::{ExtendableFieldSimd, ThisCodeIsAuthorizedToDowngradeFromMalicious};
 
@@ -130,6 +131,8 @@ impl<C: Context, V: SharedValue + Vectorizable<N>, const N: usize> Reveal<C>
 /// It works similarly to semi-honest reveal, the key difference is that each helper sends its share
 /// to both helpers (right and left) and upon receiving 2 shares from peers it validates that they
 /// indeed match.
+///
+/// TODO: delete and only allow reveals through batching contexts
 impl<'a, F: ExtendableFieldSimd<N>, const N: usize> Reveal<UpgradedMaliciousContext<'a, F>> for MaliciousReplicated<F, N> {
     type Output = <F as Vectorizable<N>>::Array;
 
@@ -180,6 +183,59 @@ impl<'a, F: ExtendableFieldSimd<N>, const N: usize> Reveal<UpgradedMaliciousCont
                 Err(Error::MaliciousRevealFailed)
             }
         }
+    }
+}
+
+impl<'a, F: ExtendableFieldSimd<N>, const N: usize> Reveal<BatchUpgradedContext<'a, F>> for MaliciousReplicated<F, N> {
+    type Output = <F as Vectorizable<N>>::Array;
+
+    fn generic_reveal<'fut>(&'fut self, ctx: BatchUpgradedContext<'a, F>, record_id: RecordId, excluded: Option<Role>) -> impl Future<Output=Result<Option<Self::Output>, Error>> + Send + 'fut
+    where
+        BatchUpgradedContext<'a, F>: 'fut
+    {
+        // TODO: make sure it is validated (must be a stamp in the context)
+
+        use futures::future::try_join;
+
+        use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
+
+        async move {
+            let left = self.x().access_without_downgrade().left_arr();
+            let right = self.x().access_without_downgrade().right_arr();
+            let left_sender = ctx.send_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Left));
+            let left_receiver = ctx.recv_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Left));
+            let right_sender = ctx.send_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Right));
+            let right_receiver = ctx.recv_channel::<<F as Vectorizable<N>>::Array>(ctx.role().peer(Direction::Right));
+
+            // Send shares to the left and right helpers, unless excluded.
+            let send_left_fut =
+                MaybeFuture::future_or_ok(Some(ctx.role().peer(Direction::Left)) != excluded, || {
+                    left_sender.send(record_id, right)
+                });
+
+            let send_right_fut =
+                MaybeFuture::future_or_ok(Some(ctx.role().peer(Direction::Right)) != excluded, || {
+                    right_sender.send(record_id, left)
+                });
+            try_join(send_left_fut, send_right_fut).await?;
+
+            if Some(ctx.role()) == excluded {
+                Ok(None)
+            } else {
+                let (share_from_left, share_from_right) = try_join(
+                    left_receiver.receive(record_id),
+                    right_receiver.receive(record_id),
+                )
+                    .await?;
+
+                if share_from_left == share_from_right {
+                    Ok(Some((left.clone() + right + share_from_left)))
+                } else {
+                    Err(Error::MaliciousRevealFailed)
+                }
+            }
+        }
+
     }
 }
 

@@ -37,7 +37,7 @@ use crate::{
 };
 use crate::ff::Expand;
 use crate::protocol::context::UpgradedMaliciousContext;
-use crate::protocol::context::validator::Upgradeable;
+use crate::protocol::context::validator::{BatchUpgradedContext, BatchValidator, Upgradeable};
 use crate::protocol::prss::FromPrss;
 use crate::secret_sharing::{FieldSimd, FieldVectorizable};
 use crate::secret_sharing::replicated::malicious::ExtendableFieldSimd;
@@ -49,6 +49,10 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    pub fn as_base(&self) -> &Base<'a> {
+        &self.inner
+    }
+
     pub fn new(participant: &'a PrssEndpoint, gateway: &'a Gateway) -> Self {
         Self::new_with_gate(participant, gateway, Gate::default())
     }
@@ -160,10 +164,16 @@ impl<'a> super::Context for Context<'a> {
 
 impl<'a> UpgradableContext for Context<'a> {
     type UpgradedContext<F: ExtendableField> = Upgraded<'a, F>;
+    type BatchUpgradedContext<F: ExtendableField> = BatchUpgradedContext<'a, F>;
     type Validator<F: ExtendableField> = Validator<'a, F>;
+    type BatchValidator<F: ExtendableField> = BatchValidator<'a, F>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F> {
         Validator::new(self)
+    }
+
+    fn batch_validator<F: ExtendableField>(self, total_records: TotalRecords) -> Self::BatchValidator<F> {
+        BatchValidator::new(self, total_records)
     }
 
     type DZKPValidator = MaliciousDZKPValidator<'a>;

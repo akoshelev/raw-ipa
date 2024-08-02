@@ -151,9 +151,15 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
 
 impl<'a, B: ShardBinding> UpgradableContext for Context<'a, B> {
     type UpgradedContext<F: ExtendableField> = Upgraded<'a, B, F>;
+    type BatchUpgradedContext<F: ExtendableField> = Upgraded<'a, B, F>;
     type Validator<F: ExtendableField> = Validator<'a, B, F>;
+    type BatchValidator<F: ExtendableField> = Validator<'a, B, F>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F> {
+        Self::Validator::new(self.inner)
+    }
+
+    fn batch_validator<F: ExtendableField>(self, total_records: TotalRecords) -> Self::BatchValidator<F> {
         Self::Validator::new(self.inner)
     }
 

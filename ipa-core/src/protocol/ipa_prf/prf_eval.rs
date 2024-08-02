@@ -28,7 +28,8 @@ use crate::{
     seq_join::assert_send,
     sharding::NotSharded,
 };
-use crate::protocol::context::validator::Upgradeable;
+use crate::protocol::context::UpgradedMaliciousContext;
+use crate::protocol::context::validator::{BatchUpgradedContext, Upgradeable};
 use crate::secret_sharing::replicated::malicious;
 use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngradeFromMalicious;
 
@@ -314,12 +315,10 @@ mod test {
     ) -> Result<Vec<u64>, Error>
     where
         C: UpgradableContext,
-        AdditiveShare<Fp25519>: BasicProtocols<C::UpgradedContext<Fp25519>, 1, ProtocolField = Fp25519> + Upgradeable<C::UpgradedContext<Fp25519>, Output = AdditiveShare<Fp25519>>,
+        AdditiveShare<Fp25519>: BasicProtocols<C::BatchUpgradedContext<Fp25519>, 1, ProtocolField = Fp25519> + Upgradeable<C::BatchUpgradedContext<Fp25519>, Output = AdditiveShare<Fp25519>>,
     {
-        let validator = ctx.validator::<Fp25519>();
-        let ctx = validator
-            .context()
-            .set_total_records(TotalRecords::specified(input_match_keys.len())?);
+        let validator = ctx.batch_validator::<Fp25519>(TotalRecords::specified(input_match_keys.len())?);
+        let ctx = validator.context();
 
         let futures = input_match_keys
             .into_iter()
@@ -387,15 +386,16 @@ mod test {
         run(|| async move {
             let world = TestWorld::default();
             let prf_key = Fp25519::from(42_u64);
-            world.malicious((prf_key, test_input(42)), |ctx, (prf_key, match_key_share)| async move {
-                let v = ctx.validator();
-                let upgraded_ctx = v.context().set_total_records(1);
+            let v = world.malicious((prf_key, test_input(42)), |ctx, (prf_key, match_key_share)| async move {
+                let v = ctx.batch_validator(TotalRecords::from(1));
+                let upgraded_ctx = v.context();
 
                 let malicious_share: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-match-key").upgrade_record(RecordId::FIRST, match_key_share).await.unwrap();
-                let prf_key: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-prf-key").upgrade(prf_key).await.unwrap();
+                let prf_key: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-prf-key").upgrade_record(RecordId::FIRST, prf_key).await.unwrap();
 
-                compute_prf(upgraded_ctx, v, RecordId::FIRST, &prf_key, malicious_share).await.unwrap();
-            }).await;
+                compute_prf(upgraded_ctx, v, RecordId::FIRST, &prf_key, malicious_share).await.unwrap().to_vec()
+            }).await.reconstruct();
+            println!("{v:?}");
         })
     }
 }
