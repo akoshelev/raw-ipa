@@ -104,7 +104,6 @@ use crate::{
     seq_join::SeqJoin,
 };
 use crate::protocol::context::validator::Upgradeable;
-use crate::protocol::ipa_prf::prf_eval::compute_prf;
 use crate::protocol::prss::SharedRandomness;
 
 #[derive(Clone, Debug, Default)]
@@ -300,7 +299,6 @@ where
     C::UpgradedContext<Boolean>: UpgradedContext<Field = Boolean, Share = Replicated<Boolean>>,
     C::UpgradedContext<Fp25519>: UpgradedContext<Field = Fp25519>,
     Replicated<Fp25519, { Fp25519::VECTORIZE }> :Upgradeable<C::UpgradedContext<Fp25519>>,
-    <Replicated<Fp25519, { Fp25519::VECTORIZE }> as Upgradeable<C::UpgradedContext<Fp25519>>>::Output: PrfSharing<C::UpgradedContext<Fp25519>, {Fp25519::VECTORIZE}>,
     Replicated<Fp25519, { Fp25519::VECTORIZE}>: FromPrss,
     BK: BooleanArray,
     TV: BooleanArray,
@@ -309,8 +307,9 @@ where
         <<C as UpgradableContext>::DZKPValidator as DZKPValidator>::Context,
         CONV_CHUNK,
     >,
-    Replicated<Fp25519, PRF_CHUNK>:
-        BasicProtocols<C::UpgradedContext<Fp25519>, PRF_CHUNK, ProtocolField = Fp25519>, // todo: default vectorize
+    // Replicated<Fp25519, PRF_CHUNK>:
+    //     BasicProtocols<C::UpgradedContext<Fp25519>, PRF_CHUNK, ProtocolField = Fp25519>, // todo: default vectorize
+    Replicated<Fp25519, PRF_CHUNK>: PrfSharing<C::UpgradedContext<Fp25519>, PRF_CHUNK, Field = Fp25519>
 {
     let conv_records =
         TotalRecords::specified(div_round_up(input_rows.len(), Const::<CONV_CHUNK>))?;
@@ -345,7 +344,7 @@ where
         .narrow(&Step::EvalPrf);
         // .set_total_records(eval_records);
 
-    let prf_key = &gen_prf_key(eval_ctx.clone()).await?;
+    let prf_key = &gen_prf_key(eval_ctx.clone());
     let eval_ctx = eval_ctx.set_total_records(eval_records);
 
     let prf_of_match_keys = seq_join(
@@ -353,8 +352,7 @@ where
         stream::iter(zip(curve_pts, zip(repeat(eval_ctx), repeat(validator)))).enumerate().map(|(i, (curve_pts, (eval_ctx, validator)))| {
             let record_id = RecordId::from(i);
             curve_pts.then(move |pts| async move {
-                let pts = eval_ctx.clone().upgrade_record(record_id, pts).await?;
-                compute_prf(eval_ctx, validator, record_id, &prf_key, pts).await
+                eval_dy_prf(eval_ctx, record_id, prf_key, pts).await
             })
         }),
     )

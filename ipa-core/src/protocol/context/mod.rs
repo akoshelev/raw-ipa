@@ -132,8 +132,12 @@ pub trait UpgradedContext: Context {
         assert_send(input.upgrade(record_id, self)).await
     }
 
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error>;
+
     /// TODO: this is very promising to make work with new validator. this is the exact interface
     /// I need to upgrade in different contexts using the same record id
+    ///
+    /// TODO: delete this method as we use `upgrade_record` now
     async fn upgrade_one(
         &self,
         record_id: RecordId,

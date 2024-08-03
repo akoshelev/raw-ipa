@@ -151,16 +151,17 @@ impl<'a, B: ShardBinding> super::Context for Context<'a, B> {
 
 impl<'a, B: ShardBinding> UpgradableContext for Context<'a, B> {
     type UpgradedContext<F: ExtendableField> = Upgraded<'a, B, F>;
-    type BatchUpgradedContext<F: ExtendableField> = Upgraded<'a, B, F>;
+    type BatchUpgradedContext<F: ExtendableField> = Self::UpgradedContext<F>;
     type Validator<F: ExtendableField> = Validator<'a, B, F>;
-    type BatchValidator<F: ExtendableField> = Validator<'a, B, F>;
+    type BatchValidator<F: ExtendableField> = Self::Validator<F>;
 
     fn validator<F: ExtendableField>(self) -> Self::Validator<F> {
         Self::Validator::new(self.inner)
     }
 
     fn batch_validator<F: ExtendableField>(self, total_records: TotalRecords) -> Self::BatchValidator<F> {
-        Self::Validator::new(self.inner)
+        use crate::protocol::context::Context;
+        Self::Validator::new(self.inner.set_total_records(total_records))
     }
 
     type DZKPValidator = SemiHonestDZKPValidator<'a, B>;
@@ -292,6 +293,10 @@ impl<'a, B: ShardBinding, F: ExtendableField> SeqJoin for Upgraded<'a, B, F> {
 impl<'a, B: ShardBinding, F: ExtendableField> UpgradedContext for Upgraded<'a, B, F> {
     type Field = F;
     type Share = Replicated<F>;
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        Ok(())
+    }
 
     async fn upgrade_one(
         &self,

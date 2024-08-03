@@ -35,66 +35,52 @@ use crate::secret_sharing::replicated::malicious::ThisCodeIsAuthorizedToDowngrad
 
 /// This trait defines the requirements to the sharing types and the underlying fields
 /// used to generate PRF values.
-pub trait PrfSharing<C: Context, const N: usize>:
-    BasicProtocols<C, N, ProtocolField = Self::Field>
+pub trait PrfSharing<C: UpgradedContext, const N: usize>:
+    Upgradeable<C, Output = Self::UpgradedSharing>
+    + FromPrss
 {
     /// The type of field used to compute `z`
-    type Field: ExtendableField + FieldSimd<N> + Invert;
-
-    /// Curve point scalar value allowed to use with [`Self::Field`] and used
-    /// to compute `r`.
-    type CurvePoint: SharedValue
-        + Vectorizable<N>
-        + Into<u64>
-        + Mul<Self::Field, Output = Self::CurvePoint>;
-
-    /// Sharing of curve point compatible with this implementation.
-    type CurvePointSharing: SecretSharing<SharedValue = Self::CurvePoint>
-        + Reveal<C, Output = <Self::CurvePoint as Vectorizable<N>>::Array>
-        + From<Self>;
-
-    // fn reveal(&self, ctx: C, record_id: RecordId, curve_point_sharing: Self::CurvePointSharing)
-    //     -> impl Future<Output = Result<(<Self::Field as Vectorizable<N>>::Array, <Self::CurvePoint as Vectorizable<N>>::Array), Error>> + Send {
-    //     try_join(
-    //         curve_point_sharing.reveal(ctx.narrow(&Step::RevealR), record_id),
-    //         self.reveal(ctx.narrow(&Step::Revealz), record_id)
-    //     )
-    // }
+    type Field: FieldSimd<N>;
+    type UpgradedSharing: BasicProtocols<C, N, ProtocolField = Self::Field>;
 }
 
-struct RevealablePrfSharing<C: Context, Z: PrfSharing<C, N>, const N: usize> {
-    prf_share: Z,
-    curve_point_share: Z::CurvePointSharing,
+struct RevealablePrfSharing<C: UpgradedContext, Z: PrfSharing<C, N>, const N: usize>
+where RP25519: Vectorizable<N>
+{
+    prf_share: Z::UpgradedSharing,
+    curve_point_share: AdditiveShare<RP25519, N>
 }
 
-impl<C: Context, const N: usize> PrfSharing<C, N> for AdditiveShare<Fp25519, N>
+impl<'a, const N: usize> PrfSharing<UpgradedSemiHonestContext<'a, NotSharded, Fp25519>, N> for AdditiveShare<Fp25519, N>
 where
     Fp25519: FieldSimd<N>,
     RP25519: Vectorizable<N>,
-    AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>,
+    AdditiveShare<Fp25519, N>: BasicProtocols<UpgradedSemiHonestContext<'a, NotSharded, Fp25519>, N, ProtocolField = Fp25519> + FromPrss,
 {
     type Field = Fp25519;
-    type CurvePoint = RP25519;
-    type CurvePointSharing = AdditiveShare<RP25519, N>;
+    type UpgradedSharing = AdditiveShare<Fp25519, N>;
 }
 
-impl<C: Context, const N: usize> PrfSharing<C, N> for malicious::AdditiveShare<Fp25519, N>
-where
-    Fp25519: FieldSimd<N>,
-    RP25519: Vectorizable<N>,
-    malicious::AdditiveShare<Fp25519, N>: BasicProtocols<C, N, ProtocolField = Fp25519>,
+impl <'a, const N: usize> PrfSharing<BatchUpgradedContext<'a, Fp25519>, N> for AdditiveShare<Fp25519, N>
+    where
+        Fp25519: FieldSimd<N>,
+        RP25519: Vectorizable<N>,
+        malicious::AdditiveShare<Fp25519, N>: BasicProtocols<BatchUpgradedContext<'a, Fp25519>, N, ProtocolField = Fp25519>,
+        AdditiveShare<Fp25519, N>: FromPrss,
 {
     type Field = Fp25519;
-    type CurvePoint = RP25519;
-    type CurvePointSharing = AdditiveShare<RP25519, N>;
+    type UpgradedSharing = malicious::AdditiveShare<Fp25519, N>;
 }
 
-impl<const N: usize, C: UpgradedContext, Z: PrfSharing<C, N>> Reveal<C>
+impl<const N: usize, C: UpgradedContext, Z: PrfSharing<C, N, Field = Fp25519>> Reveal<C>
     for RevealablePrfSharing<C, Z, N>
+where
+    RP25519: Vectorizable<N>,
+    Fp25519: FieldSimd<N>
 {
     type Output = (
-        <Z::CurvePoint as Vectorizable<N>>::Array,
-        <Z::Field as Vectorizable<N>>::Array,
+        <RP25519 as Vectorizable<N>>::Array,
+        <Fp25519 as Vectorizable<N>>::Array,
     );
 
     fn generic_reveal<'fut>(
@@ -144,42 +130,38 @@ where
 }
 
 /// generates PRF key k as secret sharing over Fp25519
-pub async fn gen_prf_key<C>(ctx: C) -> Result<
-    <AdditiveShare<Fp25519, {Fp25519::VECTORIZE}> as Upgradeable<C>>::Output
-    , Error>
+pub fn gen_prf_key<C, const N: usize>(ctx: C) -> AdditiveShare<Fp25519, N>
 where
     C: UpgradedContext<Field = Fp25519>,
-    AdditiveShare<Fp25519, {Fp25519::VECTORIZE}>: Upgradeable<C>,
+    Fp25519: Vectorizable<N>,
 {
     let ctx = ctx.narrow(&Step::PRFKeyGen).set_total_records(TotalRecords::ONE);
     let v: AdditiveShare<Fp25519, 1> = ctx.prss().generate(RecordId(0));
 
-    // TODO: recordid first will conflict with PRSS
-    ctx.upgrade_record(
-        RecordId::FIRST,
-        AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v),
-    ).await
+    v.expand()
+
+    // // TODO: recordid first will conflict with PRSS
+    // ctx.upgrade_record(
+    //     RecordId::FIRST,
+    //     AdditiveShare::<Fp25519, { Fp25519::VECTORIZE }>::expand(&v),
+    // ).await
 }
 
-pub(super) async fn compute_prf<C, V, S, F, const N: usize>(
-    ctx: C,
-    validator: V,
-    record_id: RecordId,
-    key: &S,
-    value: S
-) -> Result<[u64; N], Error>
-where
-    C: UpgradedContext<Field = F>,
-    V: Validator<C>,
-    F: ExtendableField + Vectorizable<N>,
-    S: PrfSharing<C, N>,
-    AdditiveShare<F, N>: FromPrss + Upgradeable<C, Output = S>,
-{
-    let mask: AdditiveShare<F, N> = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
-    // TODO: this will blow up because the same context is used to upgrade two different things
-    let upgraded_mask = ctx.narrow(&Step::UpgradeMask).upgrade_record(record_id, mask).await?;
-    eval_dy_prf(ctx, validator, record_id, key, value, upgraded_mask).await
-}
+// pub(super) async fn compute_prf<C, V, const N: usize>(
+//     ctx: C,
+//     validator: V,
+//     record_id: RecordId,
+//     key: &AdditiveShare<Fp25519, N>,
+//     value: AdditiveShare<Fp25519, N>
+// ) -> Result<[u64; N], Error>
+// where
+//     C: UpgradedContext<Field = Fp25519>,
+//     V: Validator<C>,
+//     AdditiveShare<Fp25519, N>: PrfSharing<C, N>,
+// {
+//     // TODO: this will blow up because the same context is used to upgrade two different things
+//     eval_dy_prf(ctx, validator, record_id, key, value).await
+// }
 
 /// evaluates the Dodis-Yampolski PRF g^(1/(k+x))
 /// the input x and k are secret shared over finite field Fp25519, i.e. the scalar field of curve 25519
@@ -196,38 +178,42 @@ where
 /// Propagates errors from multiplications, reveal and scalar multiplication
 /// # Panics
 /// Never as of when this comment was written, but the compiler didn't know that.
-pub(super) fn eval_dy_prf<C, V, F, P, const N: usize>(
+pub(super) fn eval_dy_prf<C, const N: usize>(
     ctx: C,
-    validator: V,
     record_id: RecordId,
-    k: &P,
-    x: P,
-    r: P,
+    k: &AdditiveShare<Fp25519, N>,
+    x: AdditiveShare<Fp25519, N>
 ) -> impl Future<Output = Result<[u64; N], Error>> + Send
 where
-    F: ExtendableField,
-    C: UpgradedContext<Field = F>,
-    V: Validator<C>,
-    P: PrfSharing<C, N>,
+    C: UpgradedContext<Field = Fp25519>,
+    AdditiveShare<Fp25519, N>: PrfSharing<C, N, Field = Fp25519>,
+    Fp25519: FieldSimd<N>,
+    RP25519: Vectorizable<N>,
 {
     //compute x+k
     let mut y = x + k;
 
     async move {
+
+        // todo: try_join
+        let r: AdditiveShare<Fp25519, N> = ctx.narrow(&Step::GenRandomMask).prss().generate(record_id);
+        let y = ctx.clone().upgrade_record(record_id, y).await?;
+
+        // compute (g^left, g^right)
+        let sh_gr = AdditiveShare::<RP25519, N>::from(r.clone());
+
+        let r = ctx.narrow(&Step::UpgradeMask).upgrade_record(record_id, r).await?;
+
         // compute y <- r*y
-        y = y
+        let y = y
             .multiply(&r, ctx.narrow(&Step::MultMaskWithPRFInput), record_id)
             .await?;
 
-        // compute (g^left, g^right)
-        let sh_gr = P::CurvePointSharing::from(r);
-
         //reconstruct (z,R)
-        let (gr, z) = mac_validated_reveal(
+        let (gr, z): (<RP25519 as Vectorizable<N>>::Array, <Fp25519 as Vectorizable<N>>::Array) = mac_validated_reveal(
             ctx,
-            validator,
             record_id,
-            RevealablePrfSharing {
+            RevealablePrfSharing::<C, AdditiveShare<Fp25519, N>, N> {
                 curve_point_share: sh_gr,
                 prf_share: y,
             },
@@ -245,6 +231,8 @@ where
 
 #[cfg(all(test, unit_test))]
 mod test {
+    use std::iter;
+    use futures_util::future::try_join_all;
     use rand::Rng;
 
     use crate::{
@@ -260,11 +248,17 @@ mod test {
         test_executor::run,
         test_fixture::{Reconstruct, Runner, TestWorld},
     };
+    use crate::helpers::in_memory_config::MaliciousHelper;
+    use crate::helpers::Role;
+    use crate::helpers::stream::ChunkBuffer;
     use crate::protocol::context::validator::Upgradeable;
-    use crate::protocol::ipa_prf::prf_eval::compute_prf;
+    use crate::protocol::ipa_prf::prf_eval::PrfSharing;
+    use crate::protocol::ipa_prf::step::PrfStep;
+    use crate::protocol::ipa_prf::step::PrfStep::RevealR;
     use crate::protocol::RecordId;
     use crate::secret_sharing::replicated::malicious;
     use crate::seq_join::SeqJoin;
+    use crate::test_fixture::TestWorldConfig;
 
     ///defining test input struct
     #[derive(Copy, Clone)]
@@ -315,19 +309,46 @@ mod test {
     ) -> Result<Vec<u64>, Error>
     where
         C: UpgradableContext,
-        AdditiveShare<Fp25519>: BasicProtocols<C::BatchUpgradedContext<Fp25519>, 1, ProtocolField = Fp25519> + Upgradeable<C::BatchUpgradedContext<Fp25519>, Output = AdditiveShare<Fp25519>>,
+        AdditiveShare<Fp25519>: PrfSharing<C::BatchUpgradedContext<Fp25519>, 1, Field = Fp25519>
     {
         let validator = ctx.batch_validator::<Fp25519>(TotalRecords::specified(input_match_keys.len())?);
         let ctx = validator.context();
 
         let futures = input_match_keys
             .into_iter()
-            .zip(std::iter::repeat(ctx.clone()))
+            .zip(iter::repeat(ctx.clone()))
             .enumerate()
             .map(|(i, (x, ctx))| {
-                compute_prf(ctx, validator.clone(), i.into(), &prf_key, x)
+                eval_dy_prf(ctx, i.into(), &prf_key, x)
             });
         Ok(ctx.try_join(futures).await?.into_iter().flatten().collect())
+    }
+
+    fn test_case() -> (Vec<ShuffledTestInput>, Vec<TestOutput>, Fp25519) {
+        let u = 3_216_412_445u64;
+        let k: Fp25519 = Fp25519::from(u);
+        let input = vec![
+            //first two need to be identical for tests to succeed
+            test_input(3),
+            test_input(3),
+            test_input(23_443_524_523),
+            test_input(56),
+            test_input(895_764_542),
+            test_input(456_764_576),
+            test_input(56),
+            test_input(3),
+            test_input(56),
+            test_input(23_443_524_523),
+        ];
+
+        let output: Vec<_> = input
+            .iter()
+            .map(|&x| TestOutput {
+                match_key_pseudonym: (RP25519::from((x.match_key + k).invert())).into(),
+            })
+            .collect();
+
+        (input, output, k)
     }
 
     ///testing correctness of DY PRF evaluation
@@ -336,35 +357,11 @@ mod test {
     fn semi_honest() {
         run(|| async move {
             let world = TestWorld::default();
-
-            //first two need to be identical for test to succeed
-            let records: Vec<ShuffledTestInput> = vec![
-                test_input(3),
-                test_input(3),
-                test_input(23_443_524_523),
-                test_input(56),
-                test_input(895_764_542),
-                test_input(456_764_576),
-                test_input(56),
-                test_input(3),
-                test_input(56),
-                test_input(23_443_524_523),
-            ];
-
-            //PRF Key Gen
-            let u = 3_216_412_445u64;
-            let k: Fp25519 = Fp25519::from(u);
-
-            let expected: Vec<TestOutput> = records
-                .iter()
-                .map(|&x| TestOutput {
-                    match_key_pseudonym: (RP25519::from((x.match_key + k).invert())).into(),
-                })
-                .collect();
+            let (records, expected, key) = test_case();
 
             let result: Vec<_> = world
                 .semi_honest(
-                    (records.into_iter(), k),
+                    (records.into_iter(), key),
                     |ctx, (input_match_keys, prf_key)| async move {
                         compute_match_key_pseudonym(ctx, prf_key, input_match_keys)
                             .await
@@ -380,22 +377,64 @@ mod test {
 
 
     #[test]
-    fn malicious_validation() {
-        const STEP: &str = "prf-malicious-attack";
-
+    fn malicious() {
         run(|| async move {
             let world = TestWorld::default();
-            let prf_key = Fp25519::from(42_u64);
-            let v = world.malicious((prf_key, test_input(42)), |ctx, (prf_key, match_key_share)| async move {
-                let v = ctx.batch_validator(TotalRecords::from(1));
+            let (records, expected, key) = test_case();
+
+            let result = world.malicious((records.into_iter(), key), |ctx, (match_key_shares, prf_key)| async move {
+                let v = ctx.batch_validator(TotalRecords::from(match_key_shares.len()));
                 let upgraded_ctx = v.context();
 
-                let malicious_share: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-match-key").upgrade_record(RecordId::FIRST, match_key_share).await.unwrap();
-                let prf_key: malicious::AdditiveShare<_> = upgraded_ctx.narrow("upgrade-prf-key").upgrade_record(RecordId::FIRST, prf_key).await.unwrap();
+                let prf_key = &prf_key;
+                let r: Vec<_> = try_join_all(match_key_shares.into_iter().zip(iter::repeat(upgraded_ctx))
+                    .enumerate()
+                    .map(|(i, (share, ctx))| {
+                        async move {
+                            let record_id = RecordId::from(i);
+                            eval_dy_prf(ctx, record_id, prf_key, share).await
+                        }
+                    })).await.unwrap();
 
-                compute_prf(upgraded_ctx, v, RecordId::FIRST, &prf_key, malicious_share).await.unwrap().to_vec()
+                r.into_iter().flatten().collect::<Vec<_>>()
             }).await.reconstruct();
-            println!("{v:?}");
+            assert_eq!(result, expected);
+            assert_eq!(result[0], result[1]);
         })
+    }
+
+    #[test]
+    fn malicious_attack() {
+        run(|| async move {
+            for attacker_role in Role::all() {
+                let mut config = TestWorldConfig::default();
+                config.stream_interceptor = MaliciousHelper::new(*attacker_role, config.role_assignment(), |ctx, data| {
+                    if ctx.gate.as_ref().contains(PrfStep::RevealR.as_ref()) {
+                        if data[0] == 0 { data[0] = 1 } else { data[0] = 0 }
+                    }
+                });
+                let world = TestWorld::new_with(&config);
+                let (records, _, key) = test_case();
+                let result = world.malicious((records.into_iter(), key), |ctx, (match_key_shares, prf_key)| async move {
+                    let v = ctx.batch_validator(TotalRecords::from(match_key_shares.len()));
+                    let upgraded_ctx = v.context();
+                    let my_role = upgraded_ctx.role();
+
+                    let prf_key = &prf_key;
+                    match try_join_all(match_key_shares.into_iter().zip(iter::repeat(upgraded_ctx))
+                        .enumerate()
+                        .map(|(i, (share, ctx))| {
+                            async move {
+                                let record_id = RecordId::from(i);
+                                eval_dy_prf(ctx, record_id, prf_key, share).await
+                            }
+                        })).await {
+                        Ok(_) if my_role == *attacker_role => {},
+                        Err(Error::MaliciousSecurityCheckFailed) => {}
+                        Ok(_) | Err(_) => { panic!("Malicious validation check passed when it shouldn't have") }
+                    }
+                }).await.reconstruct();
+            }
+        });
     }
 }

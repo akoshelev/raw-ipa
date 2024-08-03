@@ -294,19 +294,17 @@ where
     }
 }
 
-pub fn mac_validated_reveal<C, V, S, F>(
+pub fn mac_validated_reveal<C, S, F>(
     ctx: C,
-    validator: V,
     record_id: RecordId,
     v: S,
 ) -> impl Future<Output = Result<S::Output, Error>> + Send
 where
     C: UpgradedContext<Field = F>,
-    V: Validator<C>,
     S: Reveal<C> + Send + Sync,
 {
     async move {
-        validator.validate_record(record_id).await?;
+        ctx.validate_record(record_id).await?;
         assert_send(v.reveal(ctx, record_id)).await
     }
 }

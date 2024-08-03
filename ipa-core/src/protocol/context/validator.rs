@@ -91,23 +91,7 @@ where <V as ExtendableField>::ExtendedField: FieldSimd<N>,
     where UpgradedMaliciousContext<'ctx, V>: 'ctx, 'a: 'ctx
     {
         async move {
-            // let b = {
-            //     let batch_ref = context.batch.upgrade().unwrap();
-            //     let mut batch = batch_ref.lock().unwrap();
-            //     let b = batch.get_batch(record_id);
-            //     let accumulator = MaliciousAccumulator { inner: Arc::downgrade(b.batch.u_and_w.lock().unwrap()) };
-            //     let r_share = b.batch.r_share.clone();
-            //
-            //     UpgradedMaliciousContext::new(
-            //     b.batch.context().clone()
-            // };
             upgrade_one(context.malicious_ctx(record_id), record_id, self).await
-            // b.batch.context().upgrade_one(record_id, b.batch.context()).await
-            // b.batch.protocol_ctx.upgrade().upgrade_one(record_id, self).await
-            // let malicious_ctx = UpgradedMaliciousContext::new(
-            //     context.base_ctx.as_base(),
-            // )
-            // upgrade_one(malicious_ctx, record_id, self).await
         }
     }
 }
@@ -501,6 +485,25 @@ impl <F: ExtendableField> Context for BatchUpgradedContext<'_, F> {
 impl <F: ExtendableField> UpgradedContext for BatchUpgradedContext<'_, F> {
     type Field = F;
     type Share = malicious::AdditiveShare<F>;
+
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        let batch_ref = self.batch.upgrade().expect("Validator is not dropped");
+        let r = {
+            let mut batch = batch_ref.lock().unwrap();
+            batch.validate_record(record_id)
+        };
+        match r {
+            Either::Left((_, batch)) => {
+                batch.batch.validate(()).await?;
+                batch.notify.notify_waiters();
+                Ok(())
+            }
+            Either::Right(notify) => {
+                notify.notified().await;
+                Ok(())
+            }
+        }
+    }
 
     async fn upgrade_one(&self, record_id: RecordId, x: Replicated<Self::Field>) -> Result<Self::Share, Error> {
         todo!()

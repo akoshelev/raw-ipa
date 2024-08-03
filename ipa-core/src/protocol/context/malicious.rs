@@ -314,6 +314,10 @@ impl<'a, F: ExtendableField> UpgradedContext for Upgraded<'a, F> {
     type Field = F;
     type Share = MaliciousReplicated<F>;
 
+    async fn validate_record(&self, record_id: RecordId) -> Result<(), Error> {
+        unimplemented!("validate_record is not implemented for UpgradedContext")
+    }
+
 
     async fn upgrade_one(
         &self,
