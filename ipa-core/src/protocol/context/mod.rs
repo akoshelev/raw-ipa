@@ -39,10 +39,7 @@ use crate::{
         prss::{Endpoint as PrssEndpoint, SharedRandomness},
         Gate, RecordId,
     },
-    secret_sharing::{
-        replicated::{malicious::ExtendableField, semi_honest::AdditiveShare as Replicated},
-        SecretSharing,
-    },
+    secret_sharing::{replicated::malicious::ExtendableField, SecretSharing},
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
@@ -120,11 +117,11 @@ pub trait UpgradedContext: Context {
     type Field: ExtendableField;
     type Share: SecretSharing<Self::Field> + 'static;
 
-    async fn upgrade_one(
-        &self,
-        record_id: RecordId,
-        x: Replicated<Self::Field>,
-    ) -> Result<Self::Share, Error>;
+    // async fn upgrade_one(
+    //     &self,
+    //     record_id: RecordId,
+    //     x: Replicated<Self::Field>,
+    // ) -> Result<Self::Share, Error>;
 
     /// Upgrade an input using this context.
     /// # Errors

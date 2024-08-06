@@ -19,6 +19,7 @@ use crate::{
             dzkp_malicious::DZKPUpgraded,
             dzkp_validator::{DZKPBatch, MaliciousDZKPValidator},
             prss::InstrumentedIndexedSharedRandomness,
+            upgrade::Upgradeable,
             validator::{Malicious as Validator, MaliciousAccumulator},
             Base, Context as ContextTrait, InstrumentedSequentialSharedRandomness,
             SpecialAccessToUpgradedContext, UpgradableContext, UpgradedContext,
@@ -29,7 +30,6 @@ use crate::{
     secret_sharing::replicated::{
         malicious::{AdditiveShare as MaliciousReplicated, ExtendableField, ExtendableFieldSimd},
         semi_honest::AdditiveShare as Replicated,
-        ReplicatedSecretSharing,
     },
     seq_join::SeqJoin,
     sharding::NotSharded,
@@ -242,46 +242,18 @@ impl<'a, F: ExtendableField> Upgraded<'a, F> {
             .accumulator
             .accumulate_macs(&self.prss(), record_id, share);
     }
+
+    /// It is intentionally not public, allows access to it only from within
+    /// this module
+    fn r_share(&self) -> &Replicated<F::ExtendedField> {
+        &self.inner.r_share
+    }
 }
 
 #[async_trait]
 impl<'a, F: ExtendableField> UpgradedContext for Upgraded<'a, F> {
     type Field = F;
     type Share = MaliciousReplicated<F>;
-
-    async fn upgrade_one(
-        &self,
-        record_id: RecordId,
-        x: Replicated<F>,
-    ) -> Result<MaliciousReplicated<F>, Error> {
-        //
-        // This code is drawn from:
-        // "Field Extension in Secret-Shared Form and Its Applications to Efficient Secure Computation"
-        // R. Kikuchi, N. Attrapadung, K. Hamada, D. Ikarashi, A. Ishida, T. Matsuda, Y. Sakai, and J. C. N. Schuldt
-        // <https://eprint.iacr.org/2019/386.pdf>
-        //
-        // See protocol 4.15
-        // In Step 3: "Randomization of inputs:", it says:
-        //
-        // For each input wire sharing `[v_j]` (where j ∈ {1, . . . , M}), the parties locally
-        // compute the induced share `[[v_j]] = f([v_j], 0, . . . , 0)`.
-        // Then, the parties call `Ḟ_mult` on `[[ȓ]]` and `[[v_j]]` to receive `[[ȓ · v_j]]`
-        //
-        let induced_share = Replicated::new(x.left().to_extended(), x.right().to_extended());
-
-        let rx = semi_honest_multiply(
-            self.as_base(),
-            record_id,
-            &induced_share,
-            &self.inner.r_share,
-        )
-        .await?;
-        let m = MaliciousReplicated::new(x, rx);
-        let narrowed = self.narrow(&RandomnessForValidation);
-        let prss = narrowed.prss();
-        self.inner.accumulator.accumulate_macs(&prss, record_id, &m);
-        Ok(m)
-    }
 }
 
 impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
@@ -390,5 +362,52 @@ impl<'a, F: ExtendableField> UpgradedInner<'a, F> {
             accumulator,
             r_share,
         })
+    }
+
+    fn accumulator(&self) -> &MaliciousAccumulator<F> {
+        &self.accumulator
+    }
+}
+
+/// Upgrading a semi-honest replicated share using malicious context produces
+/// a MAC-secured share with the same vectorization factor.
+#[async_trait]
+impl<'a, V: ExtendableFieldSimd<N>, const N: usize> Upgradeable<Upgraded<'a, V>>
+    for Replicated<V, N>
+where
+    Replicated<<V as ExtendableField>::ExtendedField, N>: FromPrss,
+{
+    type Output = MaliciousReplicated<V, N>;
+
+    async fn upgrade(
+        self,
+        record_id: RecordId,
+        ctx: Upgraded<'a, V>,
+    ) -> Result<Self::Output, Error> {
+        //
+        // This code is drawn from:
+        // "Field Extension in Secret-Shared Form and Its Applications to Efficient Secure Computation"
+        // R. Kikuchi, N. Attrapadung, K. Hamada, D. Ikarashi, A. Ishida, T. Matsuda, Y. Sakai, and J. C. N. Schuldt
+        // <https://eprint.iacr.org/2019/386.pdf>
+        //
+        // See protocol 4.15
+        // In Step 3: "Randomization of inputs:", it says:
+        //
+        // For each input wire sharing `[v_j]` (where j ∈ {1, . . . , M}), the parties locally
+        // compute the induced share `[[v_j]] = f([v_j], 0, . . . , 0)`.
+        // Then, the parties call `Ḟ_mult` on `[[ȓ]]` and `[[v_j]]` to receive `[[ȓ · v_j]]`
+        //
+        let induced_share = self.induced();
+        // expand r to match the vectorization factor of induced share
+        let r = ctx.r_share().expand();
+
+        let rx = semi_honest_multiply(ctx.as_base(), record_id, &induced_share, &r).await?;
+        let m = MaliciousReplicated::new(self, rx);
+        let narrowed = ctx.narrow(&RandomnessForValidation);
+        let prss = narrowed.prss();
+        let accumulator = narrowed.inner.accumulator();
+        accumulator.accumulate_macs(&prss, record_id, &m);
+
+        Ok(m)
     }
 }

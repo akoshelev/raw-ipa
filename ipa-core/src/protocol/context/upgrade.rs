@@ -1,22 +1,36 @@
-use std::marker::PhantomData;
-
 use async_trait::async_trait;
 use futures::future::try_join;
 use ipa_step::{Step, StepNarrow};
 
 use crate::{
     error::Error,
-    ff::Field,
     helpers::TotalRecords,
     protocol::{
         boolean::step::TwoHundredFiftySixBitOpStep, context::UpgradedContext, Gate, NoRecord,
         RecordBinding, RecordId,
     },
-    secret_sharing::{
-        replicated::{malicious::ExtendableField, semi_honest::AdditiveShare as Replicated},
-        Linear as LinearSecretSharing,
+    secret_sharing::replicated::{
+        malicious::ExtendableField, semi_honest::AdditiveShare as Replicated,
     },
 };
+
+/// This trait is implemented by secret sharing types that can be upgraded.
+/// Upgrade a share only makes sense for MAC-based security as it requires
+/// communication between helpers.
+/// This trait makes the vectorization factor opaque for upgrades.
+///
+/// TODO: is it a duplicate for upgrade? elaborate here
+#[async_trait]
+pub trait Upgradeable<C: UpgradedContext>: Send {
+    type Output;
+
+    ///
+    /// ## Errors
+    /// When upgrade fails
+    async fn upgrade(self, record_id: RecordId, context: C) -> Result<Self::Output, Error>
+    where
+        C: 'async_trait;
+}
 
 /// Special context type used for malicious upgrades.
 ///
@@ -146,26 +160,10 @@ impl<C, F> UpgradeToMalicious<Replicated<F>, C::Share> for UpgradeContext<C, Rec
 where
     C: UpgradedContext<Field = F>,
     F: ExtendableField,
+    Replicated<F>: Upgradeable<C, Output = C::Share>,
 {
     async fn upgrade(self, input: Replicated<F>) -> Result<C::Share, Error> {
-        self.ctx.upgrade_one(self.record_binding, input).await
-    }
-}
-pub struct IPAModulusConvertedInputRowWrapper<F: Field, T: LinearSecretSharing<F>> {
-    pub timestamp: T,
-    pub is_trigger_bit: T,
-    pub trigger_value: T,
-    _marker: PhantomData<F>,
-}
-
-impl<F: Field, T: LinearSecretSharing<F>> IPAModulusConvertedInputRowWrapper<F, T> {
-    pub fn new(timestamp: T, is_trigger_bit: T, trigger_value: T) -> Self {
-        Self {
-            timestamp,
-            is_trigger_bit,
-            trigger_value,
-            _marker: PhantomData,
-        }
+        input.upgrade(self.record_binding, self.ctx).await
     }
 }
 

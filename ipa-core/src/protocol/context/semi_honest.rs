@@ -23,12 +23,14 @@ use crate::{
         prss::Endpoint as PrssEndpoint,
         Gate, RecordId,
     },
-    secret_sharing::replicated::{
-        malicious::ExtendableField, semi_honest::AdditiveShare as Replicated,
+    secret_sharing::{
+        replicated::{malicious::ExtendableField, semi_honest::AdditiveShare as Replicated},
+        Vectorizable,
     },
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
+use crate::protocol::context::upgrade::Upgradeable;
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {
@@ -264,14 +266,6 @@ impl<'a, B: ShardBinding, F: ExtendableField> SeqJoin for Upgraded<'a, B, F> {
 impl<'a, B: ShardBinding, F: ExtendableField> UpgradedContext for Upgraded<'a, B, F> {
     type Field = F;
     type Share = Replicated<F>;
-
-    async fn upgrade_one(
-        &self,
-        _record_id: RecordId,
-        x: Replicated<F>,
-    ) -> Result<Self::Share, Error> {
-        Ok(x)
-    }
 }
 
 impl<'a, B: ShardBinding, F: ExtendableField> SpecialAccessToUpgradedContext<F>
@@ -292,5 +286,20 @@ impl<B: ShardBinding, F: ExtendableField> Debug for Upgraded<'_, B, F> {
             type_name::<B>(),
             type_name::<F>()
         )
+    }
+}
+
+#[async_trait]
+impl<'a, V: ExtendableField + Vectorizable<N>, const N: usize>
+    Upgradeable<Upgraded<'a, NotSharded, V>> for Replicated<V, N>
+{
+    type Output = Replicated<V, N>;
+
+    async fn upgrade(
+        self,
+        _record_id: RecordId,
+        _context: Upgraded<'a, NotSharded, V>,
+    ) -> Result<Self::Output, Error> {
+        Ok(self)
     }
 }
