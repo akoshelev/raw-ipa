@@ -16,9 +16,10 @@ use crate::{
     },
     protocol::{
         context::{
-            dzkp_validator::SemiHonestDZKPValidator, validator::SemiHonest as Validator, Base,
-            InstrumentedIndexedSharedRandomness, InstrumentedSequentialSharedRandomness,
-            ShardedContext, SpecialAccessToUpgradedContext, UpgradableContext, UpgradedContext,
+            dzkp_validator::SemiHonestDZKPValidator, upgrade::Upgradable,
+            validator::SemiHonest as Validator, Base, InstrumentedIndexedSharedRandomness,
+            InstrumentedSequentialSharedRandomness, ShardedContext, SpecialAccessToUpgradedContext,
+            UpgradableContext, UpgradedContext,
         },
         prss::Endpoint as PrssEndpoint,
         Gate, RecordId,
@@ -30,7 +31,6 @@ use crate::{
     seq_join::SeqJoin,
     sharding::{NotSharded, ShardBinding, ShardConfiguration, ShardIndex, Sharded},
 };
-use crate::protocol::context::upgrade::Upgradeable;
 
 #[derive(Clone)]
 pub struct Context<'a, B: ShardBinding> {
@@ -265,7 +265,6 @@ impl<'a, B: ShardBinding, F: ExtendableField> SeqJoin for Upgraded<'a, B, F> {
 #[async_trait]
 impl<'a, B: ShardBinding, F: ExtendableField> UpgradedContext for Upgraded<'a, B, F> {
     type Field = F;
-    type Share = Replicated<F>;
 }
 
 impl<'a, B: ShardBinding, F: ExtendableField> SpecialAccessToUpgradedContext<F>
@@ -291,7 +290,7 @@ impl<B: ShardBinding, F: ExtendableField> Debug for Upgraded<'_, B, F> {
 
 #[async_trait]
 impl<'a, V: ExtendableField + Vectorizable<N>, const N: usize>
-    Upgradeable<Upgraded<'a, NotSharded, V>> for Replicated<V, N>
+    Upgradable<Upgraded<'a, NotSharded, V>> for Replicated<V, N>
 {
     type Output = Replicated<V, N>;
 
