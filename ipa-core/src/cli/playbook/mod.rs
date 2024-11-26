@@ -3,15 +3,18 @@ mod generator;
 mod input;
 mod ipa;
 mod multiply;
+mod sharded_shuffle;
 
 use core::fmt::Debug;
-use std::{fs, path::Path, time::Duration};
+use std::{borrow::Borrow, fs, path::Path, time::Duration};
 
 pub use add::secure_add;
 use comfy_table::{Cell, Color, Table};
+use futures_util::future::join_all;
 use hyper::http::uri::Scheme;
 pub use input::InputSource;
 pub use multiply::secure_mul;
+pub use sharded_shuffle::secure_shuffle;
 use tokio::time::sleep;
 
 pub use self::ipa::{playbook_oprf_ipa, run_query_and_validate};
@@ -187,6 +190,35 @@ pub fn validate_dp(
     }
 }
 
+/// Creates enough clients to talk to all shards on MPC helpers. This only supports
+/// reading configuration from the `network.toml` file
+/// ## Panics
+/// If configuration file `network_path` cannot be read from or if it does not conform to toml spec.
+pub async fn make_clients_sharded(
+    network_path: &Path,
+    scheme: Scheme,
+    mut wait: usize,
+) -> Vec<[IpaHttpClient<Helper>; 3]> {
+    let network =
+        NetworkConfig::from_toml_str_sharded(&fs::read_to_string(network_path).unwrap()).unwrap();
+
+    let clients = network
+        .into_iter()
+        .map(|network| {
+            let network = network.override_scheme(&scheme);
+            IpaHttpClient::from_conf(&IpaRuntime::current(), &network, &ClientIdentity::None)
+        })
+        .collect::<Vec<_>>();
+
+    while wait > 0 && !sharded_clients_ready(clients.iter().map(|v| v)).await {
+        tracing::debug!("waiting for servers to come up");
+        sleep(Duration::from_secs(1)).await;
+        wait -= 1;
+    }
+
+    clients
+}
+
 /// Creates 3 clients to talk to MPC helpers.
 ///
 /// ## Panics
@@ -220,6 +252,16 @@ pub async fn make_clients(
         wait -= 1;
     }
     (clients, network)
+}
+
+async fn sharded_clients_ready<I: Iterator<Item: Borrow<[IpaHttpClient<Helper>; 3]>>>(
+    clients: I,
+) -> bool {
+    let r =
+        join_all(clients.map(|client_set| async move { clients_ready(client_set.borrow()).await }))
+            .await;
+
+    r.iter().all(|&v| v)
 }
 
 async fn clients_ready(clients: &[IpaHttpClient<Helper>; 3]) -> bool {
