@@ -33,10 +33,10 @@ use crate::{
     },
     executor::IpaRuntime,
     helpers::{
-        query::{PrepareQuery, QueryConfig, QueryInput},
+        query::{CompareStatusRequest, PrepareQuery, QueryConfig, QueryInput},
         TransportIdentity,
     },
-    net::{http_serde, Error, CRYPTO_PROVIDER},
+    net::{error::ShardQueryStatusMismatchError, http_serde, Error, CRYPTO_PROVIDER},
     protocol::{Gate, QueryId},
 };
 
@@ -383,6 +383,26 @@ impl<F: ConnectionFlavor> IpaHttpClient<F> {
         let req = req.try_into_http_request(self.scheme.clone(), self.authority.clone())?;
         let resp = self.request(req).await?;
         resp_ok(resp).await
+    }
+
+    pub async fn status_match(&self, data: CompareStatusRequest) -> Result<(), Error> {
+        let req = http_serde::query::status_match::try_into_http_request(
+            &data,
+            self.scheme.clone(),
+            self.authority.clone(),
+        )?;
+        let resp = self.request(req).await?;
+        let r = match resp.status() {
+            StatusCode::OK => Ok(()),
+            StatusCode::PRECONDITION_FAILED => {
+                let bytes = response_to_bytes(resp).await?;
+                let err = serde_json::from_slice::<ShardQueryStatusMismatchError>(&bytes)?;
+                Err(err.into())
+            }
+            _ => Err(Error::from_failed_resp(resp).await),
+        };
+
+        r
     }
 }
 
