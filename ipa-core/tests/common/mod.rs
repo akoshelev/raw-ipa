@@ -109,12 +109,15 @@ impl CommandExt for Command {
 }
 
 fn test_setup(config_path: &Path) -> [ShardTcpListeners; 3] {
-    test_sharded_setup::<1>(config_path).into_iter().next().unwrap()
+    test_sharded_setup::<1>(config_path)
+        .into_iter()
+        .next()
+        .unwrap()
 }
 
 pub struct ShardTcpListeners {
     pub mpc: TcpListener,
-    pub shard: TcpListener
+    pub shard: TcpListener,
 }
 
 impl ShardTcpListeners {
@@ -133,8 +136,21 @@ pub fn test_sharded_setup<const SHARDS: usize>(config_path: &Path) -> Vec<[Shard
         r
     });
 
-    let (mpc_ports, shard_ports): (Vec<_>, Vec<_>) = sockets.each_ref().iter()
-        .flat_map(|listeners| listeners.each_ref().iter().map(|l| (l.mpc.local_addr().unwrap().port(), l.shard.local_addr().unwrap().port())).collect::<Vec<_>>())
+    let (mpc_ports, shard_ports): (Vec<_>, Vec<_>) = sockets
+        .each_ref()
+        .iter()
+        .flat_map(|listeners| {
+            listeners
+                .each_ref()
+                .iter()
+                .map(|l| {
+                    (
+                        l.mpc.local_addr().unwrap().port(),
+                        l.shard.local_addr().unwrap().port(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
         .unzip();
 
     let mut command = Command::new(HELPER_BIN);
@@ -152,38 +168,48 @@ pub fn test_sharded_setup<const SHARDS: usize>(config_path: &Path) -> Vec<[Shard
     sockets.into_iter().collect()
 }
 
-pub fn spawn_shards(config_path: &Path, sockets: &[[ShardTcpListeners; 3]], https: bool) -> Vec<TerminateOnDrop> {
+pub fn spawn_shards(
+    config_path: &Path,
+    sockets: &[[ShardTcpListeners; 3]],
+    https: bool,
+) -> Vec<TerminateOnDrop> {
     if https {
         unimplemented!("We haven't implemented HTTPS path yet")
     }
 
     let shard_count = sockets.len();
-    sockets.iter().enumerate().map(|(shard_index, mpc_sockets)| {
-        mpc_sockets.each_ref().iter().enumerate().map(|(id, ShardTcpListeners { mpc, shard})| {
-            let mut command = Command::new(HELPER_BIN);
-            command
-                .args(["-i", &id.to_string()])
-                .args(["--shard-index", &shard_index.to_string()])
-                .args(["--shard-count", &shard_count.to_string()])
-                .args(["--network".into(), config_path.join("network.toml")])
-                .silent();
+    sockets
+        .iter()
+        .enumerate()
+        .map(|(shard_index, mpc_sockets)| {
+            (1..=3)
+                .zip(mpc_sockets.each_ref().iter())
+                .map(|(id, ShardTcpListeners { mpc, shard })| {
+                    let mut command = Command::new(HELPER_BIN);
+                    command
+                        .args(["-i", &id.to_string()])
+                        .args(["--shard-index", &shard_index.to_string()])
+                        .args(["--shard-count", &shard_count.to_string()])
+                        .args(["--network".into(), config_path.join("network.toml")])
+                        .arg("--disable-https")
+                        .silent();
 
-            command.preserved_fds(vec![mpc.as_raw_fd(), shard.as_raw_fd()]);
-            command.args(["--server-socket-fd", &mpc.as_raw_fd().to_string()]);
-            command.args([
-                "--shard-server-socket-fd",
-                &shard.as_raw_fd().to_string(),
-            ]);
+                    command.preserved_fds(vec![mpc.as_raw_fd(), shard.as_raw_fd()]);
+                    command.args(["--server-socket-fd", &mpc.as_raw_fd().to_string()]);
+                    command.args(["--shard-server-socket-fd", &shard.as_raw_fd().to_string()]);
 
-            // something went wrong if command is terminated at this point.
-            let mut child = command.spawn().unwrap();
-            if let Ok(Some(status)) = child.try_wait() {
-                panic!("Helper binary terminated early with status = {status}");
-            }
+                    // something went wrong if command is terminated at this point.
+                    let mut child = command.spawn().unwrap();
+                    if let Ok(Some(status)) = child.try_wait() {
+                        panic!("Helper binary terminated early with status = {status}");
+                    }
 
-            child.terminate_on_drop()
-        }).collect::<Vec<_>>()
-    }).flatten().collect()
+                    child.terminate_on_drop()
+                })
+                .collect::<Vec<_>>()
+        })
+        .flatten()
+        .collect()
 }
 
 pub fn spawn_helpers(
@@ -192,46 +218,46 @@ pub fn spawn_helpers(
     sockets: &[ShardTcpListeners; 3],
     https: bool,
 ) -> Vec<TerminateOnDrop> {
-    sockets.into_iter().enumerate().map(|(id, ShardTcpListeners { mpc, shard })| {
-        let id = id + 1;
-        let mut command = Command::new(HELPER_BIN);
-        command
-            .args(["-i", &id.to_string()])
-            .args(["--network".into(), config_path.join("network.toml")])
-            .silent();
-
-        if https {
+    sockets
+        .into_iter()
+        .enumerate()
+        .map(|(id, ShardTcpListeners { mpc, shard })| {
+            let id = id + 1;
+            let mut command = Command::new(HELPER_BIN);
             command
-                .args(["--tls-cert".into(), config_path.join(format!("h{id}.pem"))])
-                .args(["--tls-key".into(), config_path.join(format!("h{id}.key"))])
-                .args([
-                    "--mk-public-key".into(),
-                    config_path.join(format!("h{id}_mk.pub")),
-                ])
-                .args([
-                    "--mk-private-key".into(),
-                    config_path.join(format!("h{id}_mk.key")),
-                ]);
-        } else {
-            command.arg("--disable-https");
-        }
+                .args(["-i", &id.to_string()])
+                .args(["--network".into(), config_path.join("network.toml")])
+                .silent();
 
-        command.preserved_fds(vec![mpc.as_raw_fd(), shard.as_raw_fd()]);
-        command.args(["--server-socket-fd", &mpc.as_raw_fd().to_string()]);
-        command.args([
-            "--shard-server-socket-fd",
-            &shard.as_raw_fd().to_string(),
-        ]);
+            if https {
+                command
+                    .args(["--tls-cert".into(), config_path.join(format!("h{id}.pem"))])
+                    .args(["--tls-key".into(), config_path.join(format!("h{id}.key"))])
+                    .args([
+                        "--mk-public-key".into(),
+                        config_path.join(format!("h{id}_mk.pub")),
+                    ])
+                    .args([
+                        "--mk-private-key".into(),
+                        config_path.join(format!("h{id}_mk.key")),
+                    ]);
+            } else {
+                command.arg("--disable-https");
+            }
 
-        // something went wrong if command is terminated at this point.
-        let mut child = command.spawn().unwrap();
-        if let Ok(Some(status)) = child.try_wait() {
-            panic!("Helper binary terminated early with status = {status}");
-        }
+            command.preserved_fds(vec![mpc.as_raw_fd(), shard.as_raw_fd()]);
+            command.args(["--server-socket-fd", &mpc.as_raw_fd().to_string()]);
+            command.args(["--shard-server-socket-fd", &shard.as_raw_fd().to_string()]);
 
-        child.terminate_on_drop()
-    })
-    .collect::<Vec<_>>()
+            // something went wrong if command is terminated at this point.
+            let mut child = command.spawn().unwrap();
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("Helper binary terminated early with status = {status}");
+            }
+
+            child.terminate_on_drop()
+        })
+        .collect::<Vec<_>>()
 }
 
 pub fn test_multiply(config_dir: &Path, https: bool) {

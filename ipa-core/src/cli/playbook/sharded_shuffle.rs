@@ -1,4 +1,8 @@
-use std::{cmp::min, ops::Add, time::Duration};
+use std::{
+    cmp::{max, min},
+    ops::Add,
+    time::Duration,
+};
 
 use futures_util::future::try_join_all;
 use generic_array::ArrayLength;
@@ -27,7 +31,7 @@ where
         inputs.len() > 1,
         "Shuffle requires at least two rows to be shuffled"
     );
-    let chunk_size = min(1, clients.len() / inputs.len());
+    let chunk_size = max(1, inputs.len() / clients.len());
     let _ = try_join_all(
         inputs
             .chunks(chunk_size)

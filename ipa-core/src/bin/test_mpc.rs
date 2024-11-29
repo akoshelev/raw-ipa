@@ -192,7 +192,7 @@ async fn add(args: &Args, helper_clients: &[IpaHttpClient<Helper>; 3]) {
 async fn sharded_shuffle(args: &Args, helper_clients: Vec<[IpaHttpClient<Helper>; 3]>) {
     let input = InputSource::from(&args.input);
     let input_rows = input
-        .known_size_iter()
+        .iter::<u64>()
         .map(|x| BA64::truncate_from(x))
         .collect::<Vec<_>>();
     let query_config =

@@ -1,16 +1,22 @@
 mod common;
 
-use std::{array, path::Path, process::Command};
-use std::io::Write;
-use std::process::Stdio;
+use std::{
+    array,
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+};
+
 use common::{
     spawn_helpers, tempdir::TempDir, test_ipa, test_multiply, test_network, CommandExt,
     UnwrapStatusExt, HELPER_BIN,
 };
 use ipa_core::{cli::CliPaths, helpers::HelperIdentity, test_fixture::ipa::IpaSecurityModel};
-use crate::common::{ShardTcpListeners, TerminateOnDrop, TerminateOnDropExt};
 
-use crate::common::{spawn_shards, test_sharded_setup, AddInPrimeField, Multiply, TEST_MPC_BIN};
+use crate::common::{
+    spawn_shards, test_sharded_setup, AddInPrimeField, Multiply, ShardTcpListeners,
+    TerminateOnDrop, TerminateOnDropExt, TEST_MPC_BIN,
+};
 
 #[test]
 #[cfg(all(test, web_test))]
@@ -88,7 +94,14 @@ fn http_sharded_shuffle_3_shards() {
         .stdin
         .as_ref()
         .unwrap()
-        .write_all(b"1,2,3,4,5,6,7,8,9,10\n")
+        .write_all(
+            (1..10)
+                .into_iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .as_bytes(),
+        )
         .unwrap();
     TerminateOnDrop::wait(test_mpc).unwrap_status();
 }
@@ -104,12 +117,16 @@ fn keygen_confgen() {
     let path = dir.path();
 
     let sockets: [_; 3] = array::from_fn(|_| ShardTcpListeners::bind_random());
-    let (mpc_ports, shard_ports): (Vec<_>, Vec<_>) = sockets.each_ref().iter().map(|ShardTcpListeners { mpc, shard }|
-        (
-            mpc.local_addr().unwrap().port(),
-            shard.local_addr().unwrap().port()
-        )
-    ).unzip();
+    let (mpc_ports, shard_ports): (Vec<_>, Vec<_>) = sockets
+        .each_ref()
+        .iter()
+        .map(|ShardTcpListeners { mpc, shard }| {
+            (
+                mpc.local_addr().unwrap().port(),
+                shard.local_addr().unwrap().port(),
+            )
+        })
+        .unzip();
 
     // closure that generates the client config file (network.toml)
     let exec_conf_gen = |overwrite| {

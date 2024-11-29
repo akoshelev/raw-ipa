@@ -60,10 +60,10 @@ struct ServerArgs {
     #[arg(short, long, required = true)]
     identity: Option<usize>,
 
-    #[arg(default_value = "0")]
+    #[arg(long, default_value = "0")]
     shard_index: Option<u32>,
 
-    #[arg(default_value = "1")]
+    #[arg(long, default_value = "1")]
     shard_count: Option<u32>,
 
     /// Port to listen on
