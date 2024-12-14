@@ -119,20 +119,31 @@ where
 
         let stream = LengthDelimitedStream::<EncryptedHybridReport<BA8, BA3>, _>::new(input_stream)
             .map_err(Into::<Error>::into)
-            .map_ok(|enc_reports| {
-                iter(enc_reports.into_iter().map({
-                    |enc_report| {
-                        let dec_report = enc_report
-                            .decrypt(key_registry.as_ref())
-                            .map_err(Into::<Error>::into);
-                        let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
-                        dec_report.map(|dec_report1| (dec_report1, unique_tag))
-                    }
-                }))
-            })
+            .map_ok(|enc_reports| iter(enc_reports.into_iter().map(Ok)))
             .try_flatten()
-            .take(sz)
-            .map(|v| async move { v });
+            .map(|enc_report| {
+                let key_registry = Arc::clone(&key_registry);
+                async move {
+                    match enc_report {
+                        Ok(enc_report) => {
+                            let r = tokio::spawn({
+                                async move {
+                                    let dec_report = enc_report
+                                        .decrypt(key_registry.as_ref())
+                                        .map_err(Into::<Error>::into);
+                                    let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
+                                    dec_report.map(|dec_report1| (dec_report1, unique_tag))
+                                }
+                            })
+                            .await
+                            .map_err(Into::<Error>::into)?;
+                            r
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            })
+            .take(sz);
 
         let (decrypted_reports, resharded_tags) = reshard_aad(
             ctx.narrow(&HybridStep::ReshardByTag),
