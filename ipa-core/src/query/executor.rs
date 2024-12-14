@@ -165,22 +165,26 @@ pub fn execute<R: PrivateKeyRegistry>(
                 )
             },
         ),
-        (QueryType::MaliciousHybrid(ipa_config), _) => do_query(
-            runtime,
-            config,
-            gateway,
-            input,
-            move |prss, gateway, config, input| {
-                Box::pin(execute_hybrid_protocol(
-                    prss,
-                    gateway,
-                    input,
-                    ipa_config,
-                    config,
-                    key_registry,
-                ))
-            },
-        ),
+        (QueryType::MaliciousHybrid(ipa_config), _) => {
+            let protocol_runtime = runtime.clone();
+            do_query(
+                runtime,
+                config,
+                gateway,
+                input,
+                move |prss, gateway, config, input| {
+                    Box::pin(execute_hybrid_protocol(
+                        prss,
+                        gateway,
+                        input,
+                        ipa_config,
+                        config,
+                        key_registry,
+                        protocol_runtime,
+                    ))
+                },
+            )
+        }
     }
 }
 

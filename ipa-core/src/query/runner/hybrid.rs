@@ -11,6 +11,7 @@ use generic_array::ArrayLength;
 use super::QueryResult;
 use crate::{
     error::{Error, LengthError},
+    executor::IpaRuntime,
     ff::{
         boolean::Boolean,
         boolean_array::{BooleanArray, BA3, BA32, BA8},
@@ -54,15 +55,17 @@ use crate::{
 pub struct Query<C, HV, R: PrivateKeyRegistry> {
     config: HybridQueryParams,
     key_registry: Arc<R>,
+    ipa_runtime: IpaRuntime,
     phantom_data: PhantomData<(C, HV)>,
 }
 
 #[allow(dead_code)]
 impl<C, HV, R: PrivateKeyRegistry> Query<C, HV, R> {
-    pub fn new(query_params: HybridQueryParams, key_registry: Arc<R>) -> Self {
+    pub fn new(query_params: HybridQueryParams, key_registry: Arc<R>, runtime: IpaRuntime) -> Self {
         Self {
             config: query_params,
             key_registry,
+            ipa_runtime: runtime,
             phantom_data: PhantomData,
         }
     }
@@ -104,10 +107,11 @@ where
         let Self {
             config,
             key_registry,
+            ipa_runtime,
             phantom_data: _,
         } = self;
 
-        tracing::info!("New hybrid query: {config:?}");
+        tracing::info!("New hybrid query: {config:?} with parallel decryption");
         let ctx = ctx.narrow(&Hybrid);
         let sz = usize::from(query_size);
 
@@ -123,21 +127,21 @@ where
             .try_flatten()
             .map(|enc_report| {
                 let key_registry = Arc::clone(&key_registry);
+                let ipa_runtime = ipa_runtime.clone();
                 async move {
                     match enc_report {
                         Ok(enc_report) => {
-                            let r = tokio::spawn({
-                                async move {
-                                    let dec_report = enc_report
-                                        .decrypt(key_registry.as_ref())
-                                        .map_err(Into::<Error>::into);
-                                    let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
-                                    dec_report.map(|dec_report1| (dec_report1, unique_tag))
-                                }
-                            })
-                            .await
-                            .map_err(Into::<Error>::into)?;
-                            r
+                            ipa_runtime
+                                .spawn({
+                                    async move {
+                                        let dec_report = enc_report
+                                            .decrypt(key_registry.as_ref())
+                                            .map_err(Into::<Error>::into);
+                                        let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
+                                        dec_report.map(|dec_report1| (dec_report1, unique_tag))
+                                    }
+                                })
+                                .await
                         }
                         Err(e) => Err(e),
                     }
@@ -187,6 +191,7 @@ pub async fn execute_hybrid_protocol<'a, R: PrivateKeyRegistry>(
     ipa_config: HybridQueryParams,
     config: &QueryConfig,
     key_registry: Arc<R>,
+    ipa_runtime: IpaRuntime,
 ) -> QueryResult {
     let gate = Gate::default();
     let cross_shard_prss =
@@ -200,7 +205,7 @@ pub async fn execute_hybrid_protocol<'a, R: PrivateKeyRegistry>(
     let ctx = ShardedMaliciousContext::new_with_gate(prss, gateway, gate, sharded);
 
     Ok(Box::new(
-        Query::<_, BA32, R>::new(ipa_config, key_registry)
+        Query::<_, BA32, R>::new(ipa_config, key_registry, ipa_runtime)
             .execute(ctx, config.size, input)
             .await?,
     ))
