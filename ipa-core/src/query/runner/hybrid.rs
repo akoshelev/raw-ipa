@@ -6,7 +6,9 @@ use std::{
 };
 
 use futures::{stream::iter, StreamExt, TryStreamExt};
+use futures_util::TryFutureExt;
 use generic_array::ArrayLength;
+use tokio_stream::wrappers::ReceiverStream;
 
 use super::QueryResult;
 use crate::{
@@ -47,7 +49,7 @@ use crate::{
         replicated::semi_honest::AdditiveShare as Replicated, BitDecomposed, TransposeFrom,
         Vectorizable,
     },
-    seq_join::seq_join,
+    seq_join::{assert_send, seq_join},
     sharding::{ShardConfiguration, Sharded},
 };
 
@@ -111,7 +113,7 @@ where
             phantom_data: _,
         } = self;
 
-        tracing::info!("New hybrid query: {config:?} with parallel decryption");
+        tracing::info!("New hybrid query: {config:?} with parallel decryption using channels");
         let ctx = ctx.narrow(&Hybrid);
         let sz = usize::from(query_size);
 
@@ -149,11 +151,16 @@ where
             })
             .take(sz);
 
-        let (decrypted_reports, resharded_tags) = reshard_aad(
-            ctx.narrow(&HybridStep::ReshardByTag),
-            seq_join(ctx.active_work(), stream),
-            |ctx, _, tag| tag.shard_picker(ctx.shard_count()),
-        )
+        let (tx, rx) = tokio::sync::mpsc::channel(ctx.active_work().get());
+        let (_, (decrypted_reports, resharded_tags)) = assert_send(futures::future::try_join(
+            seq_join(ctx.active_work(), stream)
+                .try_for_each(|(report, tag)| tx.send((report, tag)).map_err(|_| Error::Internal)),
+            reshard_aad(
+                ctx.narrow(&HybridStep::ReshardByTag),
+                ReceiverStream::new(rx).map(Ok),
+                |ctx, _, tag| tag.shard_picker(ctx.shard_count()),
+            ),
+        ))
         .await?;
 
         let mut unique_encrypted_hybrid_reports = UniqueTagValidator::new(resharded_tags.len());
