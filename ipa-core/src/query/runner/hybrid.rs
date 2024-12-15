@@ -144,7 +144,13 @@ where
 
         let stream = LengthDelimitedStream::<EncryptedHybridReport<BA8, BA3>, _>::new(input_stream)
             .map_err(Into::<Error>::into)
-            .map_ok(|enc_reports| iter(enc_reports.into_iter().map(Ok)))
+            .map_ok(|enc_reports| {
+                tracing::debug!(
+                    "next {} reports are ready for decryption",
+                    enc_reports.len()
+                );
+                iter(enc_reports.into_iter().map(Ok))
+            })
             .try_flatten()
             .map(|enc_report| {
                 let key_registry = Arc::clone(&key_registry);
@@ -176,7 +182,7 @@ where
                 let f = seq_join(ctx.active_work(), stream)
                     .zip(stream::repeat(tx))
                     .map(|(r, tx)| r.map(|v| (v, tx)))
-                    .try_for_each(|((report, tag), tx)| async move {
+                    .try_for_each_concurrent(None, |((report, tag), tx)| async move {
                         tx.send((report, tag)).map_err(|_| Error::Internal).await
                     });
                 f
