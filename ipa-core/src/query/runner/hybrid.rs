@@ -1,5 +1,8 @@
 use std::{
-    convert::{Infallible, Into}, marker::PhantomData, ops::Add, sync::Arc
+    convert::{Infallible, Into},
+    marker::PhantomData,
+    ops::Add,
+    sync::Arc,
 };
 
 use futures::{future::lazy, StreamExt, TryStreamExt};
@@ -16,7 +19,10 @@ use crate::{
         Serializable, U128Conversions,
     },
     helpers::{
-        query::{DpMechanism, HybridQueryParams, QueryConfig, QuerySize}, setup_cross_shard_prss, stream::TryFlattenItersExt, BodyStream, Gateway, LengthDelimitedStream
+        query::{DpMechanism, HybridQueryParams, QueryConfig, QuerySize},
+        setup_cross_shard_prss,
+        stream::TryFlattenItersExt,
+        BodyStream, Gateway, LengthDelimitedStream,
     },
     hpke::PrivateKeyRegistry,
     protocol::{
@@ -117,16 +123,13 @@ where
             .map_err(Into::into)
             .try_flatten_iters()
             .map(|enc_report_res| {
-                lazy(|_| match enc_report_res {
-                    Ok(enc_report) => {
-                        let dec_report = enc_report
-                            .decrypt(key_registry.as_ref())
-                            .map_err(Into::<Error>::into);
-                        let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
-                        dec_report.map(|dec_report1| (dec_report1, unique_tag))
-                    }
-                    Err(err) => Err(err.into()),
-                })
+                lazy(|_| enc_report_res.and_then(|enc_report| {
+                    let dec_report = enc_report
+                        .decrypt(key_registry.as_ref())
+                        .map_err(Into::<Error>::into);
+                    let unique_tag = UniqueTag::from_unique_bytes(&enc_report);
+                    dec_report.map(|dec_report1| (dec_report1, unique_tag))
+                }))
             })
             .take(sz);
 
