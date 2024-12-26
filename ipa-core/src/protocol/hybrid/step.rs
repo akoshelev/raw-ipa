@@ -5,7 +5,7 @@ pub(crate) enum HybridStep {
     ReshardByTag,
     #[step(child = crate::protocol::ipa_prf::oprf_padding::step::PaddingDpStep, name="report_padding_dp")]
     PaddingDp,
-    #[step(child = crate::protocol::ipa_prf::shuffle::step::OPRFShuffleStep)]
+    #[step(child = crate::protocol::ipa_prf::shuffle::step::ShardedShuffleStep)]
     InputShuffle,
     #[step(child = crate::protocol::ipa_prf::boolean_ops::step::Fp25519ConversionStep)]
     ConvertFp25519,

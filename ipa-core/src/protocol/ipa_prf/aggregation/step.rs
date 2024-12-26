@@ -7,7 +7,7 @@ pub(crate) enum AggregationStep {
     /// should be deleted
     #[step(child = crate::protocol::ipa_prf::oprf_padding::step::PaddingDpStep, name="padding_dp")]
     PaddingDp,
-    #[step(child = crate::protocol::ipa_prf::shuffle::step::OPRFShuffleStep)]
+    #[step(child = crate::protocol::ipa_prf::shuffle::step::ShardedShuffleStep)]
     Shuffle,
     Reveal,
     #[step(child = crate::protocol::context::step::DzkpValidationProtocolStep)]
