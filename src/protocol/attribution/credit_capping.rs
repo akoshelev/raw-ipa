@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic]
+    #[should_panic(expected = "InvalidQueryParameter")]
     pub async fn invalid_cap_value() {
         // Input doesn't matter here, since the test should panic before the computation starts.
         let input: Vec<GenericReportTestInput<Fp32BitPrime, MatchKey, BreakdownKey>> = credit_capping_test_input!(

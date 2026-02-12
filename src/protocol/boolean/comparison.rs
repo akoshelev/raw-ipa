@@ -577,7 +577,7 @@ mod tests {
     }
 
     // this test is for manual execution only
-    #[ignore]
+    #[ignore = "manual execution only"]
     #[tokio::test]
     pub async fn bw_cmp_random_32_bit_prime_field_elements() {
         let world = TestWorld::default();
@@ -593,7 +593,7 @@ mod tests {
     }
 
     // this test is for manual execution only
-    #[ignore]
+    #[ignore = "manual execution only"]
     #[tokio::test]
     pub async fn bw_cmp_all_fp31() {
         let world = TestWorld::default();

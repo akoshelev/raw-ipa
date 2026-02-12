@@ -222,7 +222,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Asking for more buckets")]
     fn move_out_of_range_too_many_buckets_type() {
         run(move || async move {
             _ = move_to_bucket(MAX_BREAKDOWN_COUNT + 1, 0, false).await;
@@ -230,7 +230,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Asking for more buckets")]
     fn move_out_of_range_too_many_buckets_steps() {
         run(move || async move {
             let breakdown_key_bits = get_bits::<Fp32BitPrime>(0, Gf9Bit::BITS);

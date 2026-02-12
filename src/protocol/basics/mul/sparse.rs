@@ -322,21 +322,21 @@ pub(in crate::protocol) mod test {
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic]
+    #[should_panic(expected = "can be performed locally")]
     fn no_work_vzz() {
         (ZeroPositions::Pvzz, ZeroPositions::Pvzz).work_for(Role::H1);
     }
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic]
+    #[should_panic(expected = "can be performed locally")]
     fn no_work_vzv() {
         (ZeroPositions::Pzvz, ZeroPositions::Pzvz).work_for(Role::H2);
     }
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic]
+    #[should_panic(expected = "can be performed locally")]
     fn no_work_zzv() {
         (ZeroPositions::Pzzv, ZeroPositions::Pzzv).work_for(Role::H3);
     }
@@ -345,7 +345,7 @@ pub(in crate::protocol) mod test {
     /// `cargo test -- print_mappings --nocapture --include-ignored | grep 'Self::' | sort -t '>' -k 2`
     /// Then do a little cleanup by taking suggestions from `cargo clippy --tests`.
     #[test]
-    #[ignore]
+    #[ignore = "manual execution only"]
     fn print_mappings() {
         for &a in ZeroPositions::all() {
             let a_flags = <[bool; 3]>::from(a);
