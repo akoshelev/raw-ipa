@@ -25,13 +25,13 @@ use crate::{
 /// 2. Equality Bit Checker : For j in 0 to 2 pow `num_multi_bits`
 ///    i. Get binary representation of j (B1 .. BL)
 ///    ii. For i in `num_multi_bits`
-///      a. Locally compute `mult_inputs` as (Bi * `xi_j` + (1-Bi)(1- `xi_j`))
-///   iii. Multiply all `mult_inputs` for this j
+///    a. Locally compute `mult_inputs` as (Bi * `xi_j` + (1-Bi)(1- `xi_j`))
+///    iii. Multiply all `mult_inputs` for this j
 /// 3. Compute accumulated sum: For j in 0 to 2 pow `num_multi_bits`
 ///    i. For each record
-///       a. Calculate accumulated `prefix_sum` = s + `mult_output`
+///    a. Calculate accumulated `prefix_sum` = s + `mult_output`
 /// 4. Compute the final output using sum of products executed in parallel for each record.
-pub async fn multi_bit_permutation<'a, C, S, F>(
+pub async fn multi_bit_permutation<C, S, F>(
     ctx: C,
     input: &[BitDecomposed<S>],
 ) -> Result<Vec<S>, Error>

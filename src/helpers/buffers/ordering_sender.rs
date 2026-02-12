@@ -282,7 +282,7 @@ impl OrderingSender {
         }
     }
 
-    /// Send a message, `m`, at the index `i`.  
+    /// Send a message, `m`, at the index `i`.\
     /// This method blocks until all previous messages are sent and until sufficient
     /// space becomes available in the sender's buffer.
     ///

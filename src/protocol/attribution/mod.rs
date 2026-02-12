@@ -44,6 +44,9 @@ use crate::{
 ///
 /// # Errors
 /// propagates errors from multiplications
+///
+/// # Panics
+/// Panics if inner iterator is empty during single-bit conversion.
 #[tracing::instrument(name = "attribute", skip_all)]
 pub async fn secure_attribution<V, VB, C, S, SB, F>(
     validator: V,

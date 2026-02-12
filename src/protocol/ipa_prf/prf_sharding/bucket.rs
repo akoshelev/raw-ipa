@@ -57,6 +57,12 @@ impl From<usize> for BucketStep {
 /// extra processing to ensure contribution doesn't end up in a wrong bucket. However, this requires extra multiplications.
 /// This would potentially not be needed in IPA (as the breakdown key is provided by the report collector, so a bad value only spoils their own result) but useful for PAM.
 /// This can be by passing `robust` as true.
+///
+/// # Errors
+/// Propagates errors from multiplications.
+///
+/// # Panics
+/// Panics if `breakdown_count` exceeds the number of buckets representable by the key bits.
 pub async fn move_single_value_to_bucket<BK, C, S, F>(
     ctx: C,
     record_id: RecordId,

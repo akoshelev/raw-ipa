@@ -31,7 +31,7 @@ use crate::{
 ///
 /// For all subsequent carries, once again, it depends on the value of the constant bit at that place:
 /// - when the constant has a bit value of zero - there is only a carry if BOTH of the previous carry
-/// AND the secret bit are shares of one. We can get this result by just multiplying the two.
+///   AND the secret bit are shares of one. We can get this result by just multiplying the two.
 ///
 /// When the constant has a bit value of one - there is a carry if EITHER the previous carry
 /// OR the secret bit are shares of one. We can get this result using OR (x OR y = x + y - x*y).

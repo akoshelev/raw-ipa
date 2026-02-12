@@ -73,6 +73,9 @@ where
 /// The Shuffle object receives a step function and appends a `ShuffleStep` to form a concrete step
 ///
 /// ![Shuffle steps][shuffle]
+///
+/// # Errors
+/// Propagates errors from reshare operations.
 pub async fn shuffle_shares<C, I>(
     input: Vec<I>,
     random_permutations: (&[u32], &[u32]),

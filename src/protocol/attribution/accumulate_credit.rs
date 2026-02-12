@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(result, EXPECTED);
     }
 
-    /// If the cap = 1 and attribution_window_seconds = 0, then the expected result is the same as
+    /// If the cap = 1 and `attribution_window_seconds` = 0, then the expected result is the same as
     /// `is_trigger_report` * `helper_bit` (= `stop_bit`). In other words, it counts all matching
     /// trigger reports.
     #[tokio::test]
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(result, EXPECTED);
     }
 
-    /// If the cap = 1 and attribution_window_seconds > 0, then the expected result is the same as
+    /// If the cap = 1 and `attribution_window_seconds` > 0, then the expected result is the same as
     /// `is_trigger_report` * `helper_bit` * `active_bit`. In other words, it counts all matching
     /// trigger reports that are within the given attribution window.
     #[tokio::test]
