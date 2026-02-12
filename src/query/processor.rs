@@ -552,10 +552,8 @@ mod tests {
                 semi_honest::AdditiveShare::<Fp31>::from_byte_slice(&bytes).collect::<Vec<_>>()
             });
 
-            Ok(assert_eq!(
-                vec![Fp31::truncate_from(20u128)],
-                results.reconstruct()
-            ))
+            assert_eq!(vec![Fp31::truncate_from(20u128)], results.reconstruct());
+            Ok(())
         }
 
         #[tokio::test]
@@ -579,10 +577,11 @@ mod tests {
                 semi_honest::AdditiveShare::<Fp31>::from_byte_slice(&bytes).collect::<Vec<_>>()
             });
 
-            Ok(assert_eq!(
+            assert_eq!(
                 &[Fp31::truncate_from(20u128)] as &[_],
                 results.reconstruct()
-            ))
+            );
+            Ok(())
         }
 
         #[tokio::test]

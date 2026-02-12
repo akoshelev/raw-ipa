@@ -302,7 +302,7 @@ mod tests {
         let a_bits = get_bits::<Gf2>(a, num_a_bits);
         let b_bits = get_bits::<Gf2>(b, num_b_bits);
 
-        let foo = world
+        let result = world
             .semi_honest(
                 (a_bits, b_bits),
                 |ctx, (a_bits, b_bits): (BitDecomposed<_>, BitDecomposed<_>)| async move {
@@ -314,7 +314,7 @@ mod tests {
             )
             .await;
 
-        foo.reconstruct()
+        result.reconstruct()
     }
 
     async fn truncated_delta_to_saturation_point(a: u32, num_a_bits: u32, num_b_bits: u32) -> u128 {
@@ -322,7 +322,7 @@ mod tests {
 
         let a_bits = get_bits::<Gf2>(a, num_a_bits);
 
-        let foo = world
+        let result = world
             .semi_honest(a_bits, |ctx, a_bits: BitDecomposed<_>| async move {
                 let a = SaturatingSum::new(a_bits, Replicated::ZERO);
                 a.truncated_delta_to_saturation_point(
@@ -335,6 +335,6 @@ mod tests {
             })
             .await;
 
-        foo.reconstruct()
+        result.reconstruct()
     }
 }

@@ -46,7 +46,7 @@ where
 
         // Note that this clones the values rather than moving them.
         // This code is only used in test code, so that's probably OK.
-        assert!(cfg!(test), "This code isn't ideal outside of tests");
+        const { assert!(cfg!(test), "This code isn't ideal outside of tests") };
         let Self { b_b, b_p, .. } = self;
         let b_b = BitDecomposed::new(
             b_b.into_iter()

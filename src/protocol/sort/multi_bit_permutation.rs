@@ -74,11 +74,11 @@ where
     let mut prefix_sum = Vec::with_capacity(num_records);
     let mut cumulative_sum = <S as SecretSharing<F>>::ZERO;
     for bit_idx in 0..num_possible_bit_values {
-        for record_idx in 0..num_records {
+        for (record_idx, eq_checks) in equality_checks.iter().enumerate() {
             if bit_idx == 0 {
                 prefix_sum.push(Vec::with_capacity(num_multi_bits));
             }
-            cumulative_sum += &equality_checks[record_idx][bit_idx];
+            cumulative_sum += &eq_checks[bit_idx];
             prefix_sum[record_idx].push(cumulative_sum.clone());
         }
     }

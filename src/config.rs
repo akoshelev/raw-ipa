@@ -480,7 +480,7 @@ mod tests {
                     "http config is not the same: {:?} vs {:?}",
                     expected.http_config, actual.http_config
                 ),
-            };
+            }
         }
 
         assert!(serde_json::from_str::<ClientConfig>(

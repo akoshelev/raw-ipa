@@ -265,9 +265,10 @@ async fn certificate_and_key(
     };
 
     let cert = rustls_pemfile::certs(&mut cert.as_ref())?;
-    let key = match rustls_pemfile::read_one(&mut key.as_ref())? {
-        Some(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) => key,
-        _ => return Err("private key format not supported".into()),
+    let Some(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) =
+        rustls_pemfile::read_one(&mut key.as_ref())?
+    else {
+        return Err("private key format not supported".into());
     };
 
     let cert = cert.into_iter().map(Certificate).collect();
@@ -350,9 +351,7 @@ impl ClientCertRecognizingAcceptor {
         network_config: &NetworkConfig,
         cert_option: Option<&Certificate>,
     ) -> Option<ClientIdentity> {
-        let Some(cert) = cert_option else {
-            return None;
-        };
+        let cert = cert_option?;
         // We currently require an exact match with the peer cert (i.e. we don't support verifying
         // the certificate against a truststore and identifying the peer by the certificate
         // subject). This could be changed if the need arises.

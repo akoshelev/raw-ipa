@@ -336,7 +336,7 @@ where
     /// If report length does not fit in u16.
     pub fn encrypted_len(&self) -> u16 {
         let len = EncryptedReport::<F, Gf40Bit, Gf8Bit, &[u8]>::SITE_DOMAIN_OFFSET
-            + self.site_domain.as_bytes().len();
+            + self.site_domain.len();
         len.try_into().unwrap()
     }
 

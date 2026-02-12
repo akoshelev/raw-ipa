@@ -223,7 +223,8 @@ mod tests {
                 self.num_multi_bits
             );
             if let Some(window) = self.attribution_window_seconds {
-                query.push_str(&format!("&attribution_window_seconds={window}"));
+                use std::fmt::Write;
+                write!(query, "&attribution_window_seconds={window}").unwrap();
             }
             OverrideReq {
                 field_type: self.field_type,

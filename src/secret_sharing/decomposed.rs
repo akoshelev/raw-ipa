@@ -208,7 +208,7 @@ mod tests {
         let a_bits = get_bits::<Gf2>(a, num_a_bits);
         let b_bits = get_bits::<Gf2>(b, num_b_bits);
 
-        let foo = world
+        let result = world
             .semi_honest(
                 (a_bits, b_bits),
                 |ctx, (a_bits, b_bits): (BitDecomposed<_>, BitDecomposed<_>)| async move {
@@ -220,6 +220,6 @@ mod tests {
             )
             .await;
 
-        foo.reconstruct()
+        result.reconstruct()
     }
 }
