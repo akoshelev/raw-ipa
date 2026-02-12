@@ -63,7 +63,7 @@ where
     SparseAggregateInputRow<Gf8Bit, BreakdownKey>: Serializable,
 {
     #[tracing::instrument("sparse_aggregate_query", skip_all, fields(sz=%query_size))]
-    pub async fn execute<'a>(
+    pub async fn execute(
         self,
         ctx: C,
         query_size: QuerySize,

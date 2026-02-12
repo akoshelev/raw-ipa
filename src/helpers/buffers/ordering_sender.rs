@@ -213,7 +213,7 @@ impl Waiting {
 
     /// Find a shard.  This ensures that sequential values pick the same shard
     /// in a contiguous block.
-    fn shard(&self, i: usize) -> MutexGuard<WaitingShard> {
+    fn shard(&self, i: usize) -> MutexGuard<'_, WaitingShard> {
         let idx = (i >> Self::CONTIGUOUS_BITS) % Self::SHARDS;
         self.shards[idx].lock().unwrap()
     }
@@ -407,7 +407,7 @@ pub struct Send<'s, M: Message> {
     sender: &'s OrderingSender,
 }
 
-impl<'s, M: Message> Future for Send<'s, M> {
+impl<M: Message> Future for Send<'_, M> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -432,7 +432,7 @@ pub struct Close<'s> {
     sender: &'s OrderingSender,
 }
 
-impl<'s> Future for Close<'s> {
+impl Future for Close<'_> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

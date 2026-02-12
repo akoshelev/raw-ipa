@@ -138,11 +138,11 @@ where
 }
 
 #[async_trait]
-impl<'a, F: ExtendableField> DowngradeMalicious
-    for ShuffledPermutationWrapper<MaliciousReplicated<F>, UpgradedMaliciousContext<'a, F>>
+impl<F: ExtendableField> DowngradeMalicious
+    for ShuffledPermutationWrapper<MaliciousReplicated<F>, UpgradedMaliciousContext<'_, F>>
 {
     type Target = Vec<u32>;
-    /// For ShuffledPermutationWrapper on downgrading, we reveal the permutation. This runs reveal on the malicious context
+    /// For `ShuffledPermutationWrapper` on downgrading, we reveal the permutation. This runs reveal on the malicious context
     async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target> {
         let output = self
             .reveal(
@@ -156,8 +156,8 @@ impl<'a, F: ExtendableField> DowngradeMalicious
 }
 
 #[async_trait]
-impl<'a, F: ExtendableField> DowngradeMalicious
-    for ShuffledPermutationWrapper<Replicated<F>, UpgradedSemiHonestContext<'a, F>>
+impl<F: ExtendableField> DowngradeMalicious
+    for ShuffledPermutationWrapper<Replicated<F>, UpgradedSemiHonestContext<'_, F>>
 {
     type Target = Vec<u32>;
     async fn downgrade(self) -> UnauthorizedDowngradeWrapper<Self::Target> {

@@ -177,7 +177,7 @@ impl TestWorld {
     }
 
     /// See `Runner` below.
-    async fn run_either<'a, C, I, A, O, H, R>(
+    async fn run_either<C, I, A, O, H, R>(
         contexts: [C; 3],
         span: Span,
         input: I,

@@ -14,7 +14,7 @@ use crate::{
 pub struct PrssExchangeStep;
 
 impl AsRef<str> for PrssExchangeStep {
-    fn as_ref(&self) -> &str {
+    fn as_ref(&self) -> &'static str {
         "prss_exchange"
     }
 }

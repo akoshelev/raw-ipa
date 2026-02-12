@@ -72,7 +72,7 @@ where
     }
 }
 
-impl<'a, 'b, V: WeakSharedValue> Add<&'b AdditiveShare<V>> for &'a AdditiveShare<V> {
+impl<'b, V: WeakSharedValue> Add<&'b AdditiveShare<V>> for &AdditiveShare<V> {
     type Output = AdditiveShare<V>;
 
     fn add(self, rhs: &'b AdditiveShare<V>) -> Self::Output {
@@ -178,7 +178,7 @@ impl<V: WeakSharedValue> SubAssign<Self> for AdditiveShare<V> {
     }
 }
 
-impl<'a, 'b, V: SharedValue> Mul<&'b V> for &'a AdditiveShare<V> {
+impl<'b, V: SharedValue> Mul<&'b V> for &AdditiveShare<V> {
     type Output = AdditiveShare<V>;
 
     fn mul(self, rhs: &'b V) -> Self::Output {

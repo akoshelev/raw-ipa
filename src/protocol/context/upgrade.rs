@@ -64,7 +64,7 @@ pub struct UpgradeContext<
     _lifetime: PhantomData<&'a F>,
 }
 
-impl<'a, C, F, B> UpgradeContext<'a, C, F, B>
+impl<C, F, B> UpgradeContext<'_, C, F, B>
 where
     C: UpgradedContext<F>,
     F: ExtendableField,
@@ -372,7 +372,7 @@ where
 // This could also work on a record-bound context, but it's only used in one place for tests where
 // that's not currently required.
 #[cfg(test)]
-impl<'a, C: UpgradedContext<F>, F: ExtendableField> UpgradeContext<'a, C, F, NoRecord> {
+impl<C: UpgradedContext<F>, F: ExtendableField> UpgradeContext<'_, C, F, NoRecord> {
     pub(super) async fn upgrade_sparse(
         self,
         input: Replicated<F>,

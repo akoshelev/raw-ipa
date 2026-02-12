@@ -76,7 +76,7 @@ impl NetworkConfig {
     // Can maybe be replaced with array::zip when stable?
     pub fn enumerate_peers(
         &self,
-    ) -> Zip<array::IntoIter<HelperIdentity, 3>, slice::Iter<PeerConfig>> {
+    ) -> Zip<array::IntoIter<HelperIdentity, 3>, slice::Iter<'_, PeerConfig>> {
         HelperIdentity::make_three()
             .into_iter()
             .zip(self.peers.iter())

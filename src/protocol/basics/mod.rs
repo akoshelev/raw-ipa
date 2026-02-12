@@ -42,7 +42,7 @@ pub trait BasicProtocols<C: Context, V: SharedValue>:
 
 impl<C: Context, F: Field> BasicProtocols<C, F> for AdditiveShare<F> {}
 
-impl<'a, F: ExtendableField> BasicProtocols<UpgradedMaliciousContext<'a, F>, F>
+impl<F: ExtendableField> BasicProtocols<UpgradedMaliciousContext<'_, F>, F>
     for MaliciousAdditiveShare<F>
 {
 }

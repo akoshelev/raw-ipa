@@ -49,7 +49,7 @@ where
     Replicated<Gf2>: Serializable + ShareKnownValue<C, Gf2>,
 {
     #[tracing::instrument("oprf_ipa_query", skip_all, fields(sz=%query_size))]
-    pub async fn execute<'a>(
+    pub async fn execute(
         self,
         ctx: C,
         query_size: QuerySize,

@@ -70,7 +70,7 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<'a> super::Context for Context<'a> {
+impl super::Context for Context<'_> {
     fn role(&self) -> Role {
         self.inner.role()
     }
@@ -105,8 +105,8 @@ impl<'a> super::Context for Context<'a> {
     fn prss_rng(
         &self,
     ) -> (
-        InstrumentedSequentialSharedRandomness,
-        InstrumentedSequentialSharedRandomness,
+        InstrumentedSequentialSharedRandomness<'_>,
+        InstrumentedSequentialSharedRandomness<'_>,
     ) {
         self.inner.prss_rng()
     }
@@ -129,7 +129,7 @@ impl<'a> UpgradableContext for Context<'a> {
     }
 }
 
-impl<'a> SeqJoin for Context<'a> {
+impl SeqJoin for Context<'_> {
     fn active_work(&self) -> NonZeroUsize {
         self.inner.active_work()
     }
@@ -273,7 +273,7 @@ impl<'a, F: ExtendableField> UpgradedContext<F> for Upgraded<'a, F> {
     }
 }
 
-impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
+impl<F: ExtendableField> super::Context for Upgraded<'_, F> {
     fn role(&self) -> Role {
         self.inner.gateway.role()
     }
@@ -337,7 +337,7 @@ impl<'a, F: ExtendableField> super::Context for Upgraded<'a, F> {
     }
 }
 
-impl<'a, F: ExtendableField> SeqJoin for Upgraded<'a, F> {
+impl<F: ExtendableField> SeqJoin for Upgraded<'_, F> {
     fn active_work(&self) -> NonZeroUsize {
         self.inner.gateway.config().active_work()
     }

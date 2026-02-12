@@ -361,7 +361,7 @@ impl MpcHelperClient {
         query_id: QueryId,
         gate: &Gate,
         data: S,
-    ) -> Result<ResponseFuture, Error> {
+    ) -> Result<ResponseFuture<'_>, Error> {
         let body = hyper::Body::wrap_stream::<_, _, Error>(data.map(Ok));
         let req = http_serde::query::step::Request::new(query_id, gate.clone(), body);
         let req = req.try_into_http_request(self.scheme.clone(), self.authority.clone())?;

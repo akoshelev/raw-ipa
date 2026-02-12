@@ -110,7 +110,7 @@ impl Metrics {
     /// ## Panics
     /// Panics if metric does not exist in the snapshot
     #[must_use]
-    pub fn assert_metric(&self, name: &'static str) -> MetricAssertion {
+    pub fn assert_metric(&self, name: &'static str) -> MetricAssertion<'_> {
         let details = self
             .counters
             .get::<KeyName>(&name.into())
@@ -163,7 +163,7 @@ pub struct MetricAssertion<'a> {
 }
 
 #[allow(clippy::return_self_not_must_use)]
-impl<'a> MetricAssertion<'a> {
+impl MetricAssertion<'_> {
     /// Validates metric total value (i.e. ignoring dimensionality)
     /// ## Panics
     /// Panics if value is not equal to expected

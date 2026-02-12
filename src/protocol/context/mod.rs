@@ -74,8 +74,8 @@ pub trait Context: Clone + Send + Sync + SeqJoin {
     fn prss_rng(
         &self,
     ) -> (
-        InstrumentedSequentialSharedRandomness,
-        InstrumentedSequentialSharedRandomness,
+        InstrumentedSequentialSharedRandomness<'_>,
+        InstrumentedSequentialSharedRandomness<'_>,
     );
 
     fn send_channel<M: Message>(&self, role: Role) -> SendingEnd<M>;
@@ -183,7 +183,7 @@ impl<'a> Base<'a> {
     }
 }
 
-impl<'a> Context for Base<'a> {
+impl Context for Base<'_> {
     fn role(&self) -> Role {
         self.inner.gateway.role()
     }
@@ -215,7 +215,7 @@ impl<'a> Context for Base<'a> {
         self.total_records
     }
 
-    fn prss(&self) -> InstrumentedIndexedSharedRandomness {
+    fn prss(&self) -> InstrumentedIndexedSharedRandomness<'_> {
         let prss = self.inner.prss.indexed(self.gate());
 
         InstrumentedIndexedSharedRandomness::new(prss, &self.gate, self.role())
@@ -247,7 +247,7 @@ impl<'a> Context for Base<'a> {
     }
 }
 
-impl<'a> SeqJoin for Base<'a> {
+impl SeqJoin for Base<'_> {
     fn active_work(&self) -> NonZeroUsize {
         self.inner.gateway.config().active_work()
     }
