@@ -5,8 +5,6 @@ mod results;
 mod status;
 mod step;
 
-use std::any::Any;
-
 use axum::{
     response::{IntoResponse, Response},
     Router,
@@ -15,7 +13,7 @@ use futures_util::{
     future::{ready, Either, Ready},
     FutureExt,
 };
-use hyper::{http::request, Request, StatusCode};
+use hyper::{Request, StatusCode};
 use tower::{layer::layer_fn, Service};
 
 use crate::{
@@ -101,12 +99,20 @@ impl<B, S: Service<Request<B>, Response = Response>> Service<Request<B>>
 }
 
 /// Helper trait for optionally adding an extension to a request.
+#[cfg(all(test, unit_test))]
 trait MaybeExtensionExt {
-    fn maybe_extension<T: Any + Send + Sync + 'static>(self, extension: Option<T>) -> Self;
+    fn maybe_extension<T: std::any::Any + Send + Sync + 'static>(
+        self,
+        extension: Option<T>,
+    ) -> Self;
 }
 
-impl MaybeExtensionExt for request::Builder {
-    fn maybe_extension<T: Any + Send + Sync + 'static>(self, extension: Option<T>) -> Self {
+#[cfg(all(test, unit_test))]
+impl MaybeExtensionExt for hyper::http::request::Builder {
+    fn maybe_extension<T: std::any::Any + Send + Sync + 'static>(
+        self,
+        extension: Option<T>,
+    ) -> Self {
         if let Some(extension) = extension {
             self.extension(extension)
         } else {
