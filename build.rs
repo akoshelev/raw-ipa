@@ -1,6 +1,9 @@
 use cfg_aliases::cfg_aliases;
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(unit_test)");
+    println!("cargo:rustc-check-cfg=cfg(web_test)");
+
     // test is not supported because cfg_aliases is based on
     // https://docs.rs/tectonic_cfg_support macro and that only supports features, target_os, family
     // env, etc.
