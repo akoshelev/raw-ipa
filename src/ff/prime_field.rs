@@ -73,7 +73,11 @@ macro_rules! field_impl {
             fn add(self, rhs: Self) -> Self::Output {
                 let c = u64::from;
                 debug_assert!(c(Self::PRIME) < (u64::MAX >> 1));
-                Self(((c(self.0) + c(rhs.0)) % c(Self::PRIME)) as <Self as SharedValue>::Storage)
+                Self(
+                    ((c(self.0) + c(rhs.0)) % c(Self::PRIME))
+                        .try_into()
+                        .unwrap(),
+                )
             }
         }
 
@@ -101,7 +105,8 @@ macro_rules! field_impl {
                 // TODO(mt) - constant time?
                 Self(
                     ((c(Self::PRIME) + c(self.0) - c(rhs.0)) % c(Self::PRIME))
-                        as <Self as SharedValue>::Storage,
+                        .try_into()
+                        .unwrap(),
                 )
             }
         }
