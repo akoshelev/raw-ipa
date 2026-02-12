@@ -903,11 +903,11 @@ pub mod tests {
     #[cfg(all(test, unit_test))]
     mod serialization {
         use generic_array::GenericArray;
-        use proptest::{
-            proptest,
-            test_runner::{RngAlgorithm, TestRng},
+        use proptest::proptest;
+        use rand::{
+            distributions::{Distribution, Standard},
+            SeedableRng,
         };
-        use rand::distributions::{Distribution, Standard};
         use typenum::Unsigned;
 
         use crate::{
@@ -934,8 +934,9 @@ pub mod tests {
             Standard: Distribution<F>,
             IPAInputRow<F, MatchKey, BreakdownKey>: Serializable,
         {
-            // xorshift requires 16 byte seed and that's why it is picked here
-            let mut rng = TestRng::from_seed(RngAlgorithm::XorShift, &seed.to_le_bytes());
+            let mut seed_bytes = [0u8; 32];
+            seed_bytes[..16].copy_from_slice(&seed.to_le_bytes());
+            let mut rng = rand::rngs::StdRng::from_seed(seed_bytes);
             let reports: Vec<GenericReportTestInput<F, MatchKey, BreakdownKey>> = ipa_test_input!(
                 [
                     { timestamp: timestamp, match_key: match_key, is_trigger_report: trigger_bit, breakdown_key: breakdown_key, trigger_value: trigger_value },
