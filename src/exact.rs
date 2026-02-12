@@ -12,6 +12,7 @@ use pin_project::pin_project;
 ///
 /// [`ExactSizeIterator`]: std::iter::ExactSizeIterator
 /// [`Stream`]: futures::stream::Stream
+#[cfg_attr(feature = "shuttle", allow(dead_code))]
 pub trait ExactSizeStream: Stream {
     /// Return the length of the stream that remains.
     fn len(&self) -> usize {

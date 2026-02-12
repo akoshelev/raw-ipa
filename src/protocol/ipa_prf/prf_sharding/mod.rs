@@ -894,12 +894,6 @@ pub mod tests {
         capped_attributed_trigger_value: u128,
     }
 
-    #[derive(Debug, PartialEq)]
-    struct PreAggregationTestInputInBits {
-        attributed_breakdown_key: BitDecomposed<Gf2>,
-        capped_attributed_trigger_value: BitDecomposed<Gf2>,
-    }
-
     impl<BK, TV, TS> IntoShares<PrfShardedIpaInputRow<BK, TV, TS>>
         for PreShardedAndSortedOPRFTestInput<BK, TV, TS>
     where
@@ -943,35 +937,6 @@ pub mod tests {
                     breakdown_key: breakdown_key2,
                     trigger_value: trigger_value2,
                     timestamp: timestamp2,
-                },
-            ]
-        }
-    }
-
-    impl IntoShares<CappedAttributionOutputs> for PreAggregationTestInputInBits {
-        fn share_with<R: Rng>(self, rng: &mut R) -> [CappedAttributionOutputs; 3] {
-            let PreAggregationTestInputInBits {
-                attributed_breakdown_key,
-                capped_attributed_trigger_value,
-            } = self;
-
-            let [attributed_breakdown_key0, attributed_breakdown_key1, attributed_breakdown_key2] =
-                attributed_breakdown_key.share_with(rng);
-            let [capped_attributed_trigger_value0, capped_attributed_trigger_value1, capped_attributed_trigger_value2] =
-                capped_attributed_trigger_value.share_with(rng);
-
-            [
-                CappedAttributionOutputs {
-                    attributed_breakdown_key_bits: attributed_breakdown_key0,
-                    capped_attributed_trigger_value: capped_attributed_trigger_value0,
-                },
-                CappedAttributionOutputs {
-                    attributed_breakdown_key_bits: attributed_breakdown_key1,
-                    capped_attributed_trigger_value: capped_attributed_trigger_value1,
-                },
-                CappedAttributionOutputs {
-                    attributed_breakdown_key_bits: attributed_breakdown_key2,
-                    capped_attributed_trigger_value: capped_attributed_trigger_value2,
                 },
             ]
         }

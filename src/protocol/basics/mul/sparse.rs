@@ -166,8 +166,6 @@ pub(super) trait MultiplyWork {
     /// Determine the work that is required for the identified role.
     /// Return value is who is sending relative to the given role [self, left, right].
     fn work_for(self, role: Role) -> [bool; 3];
-    /// Determines where there are known zeros in the output of a multiplication.
-    fn output(self) -> ZeroPositions;
 }
 
 impl MultiplyWork for MultiplyZeroPositions {
@@ -178,10 +176,6 @@ impl MultiplyWork for MultiplyZeroPositions {
         let need_to_send = work[(i + 1) % 3];
         let need_random_right = work[(i + 2) % 3];
         [need_to_recv, need_to_send, need_random_right]
-    }
-
-    fn output(self) -> ZeroPositions {
-        ZeroPositions::mul_output(self)
     }
 }
 
@@ -364,7 +358,10 @@ pub(in crate::protocol) mod test {
         F: Field,
         T: Borrow<Replicated<F>>,
     {
-        for (&role, expect_zero) in zip(Role::all(), <[bool; 3]>::from(work.output())) {
+        for (&role, expect_zero) in zip(
+            Role::all(),
+            <[bool; 3]>::from(ZeroPositions::mul_output(work)),
+        ) {
             if expect_zero {
                 assert_eq!(F::ZERO, v[role as usize].borrow().left());
                 assert_eq!(F::ZERO, v[role.peer(Left) as usize].borrow().right());

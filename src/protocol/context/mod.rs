@@ -293,16 +293,11 @@ mod tests {
 
     trait AsReplicatedTestOnly<F: Field> {
         fn l(&self) -> F;
-        fn r(&self) -> F;
     }
 
     impl<F: Field> AsReplicatedTestOnly<F> for Replicated<F> {
         fn l(&self) -> F {
             (self as &Replicated<F>).left()
-        }
-
-        fn r(&self) -> F {
-            (self as &Replicated<F>).right()
         }
     }
 
@@ -313,10 +308,6 @@ mod tests {
     impl<F: ExtendableField> AsReplicatedTestOnly<F::ExtendedField> for MaliciousReplicated<F> {
         fn l(&self) -> F::ExtendedField {
             (self as &MaliciousReplicated<F>).rx().left()
-        }
-
-        fn r(&self) -> F::ExtendedField {
-            (self as &MaliciousReplicated<F>).rx().right()
         }
     }
 
