@@ -66,7 +66,6 @@ where
 /// outputs a u64 as specified in `protocol/prf_sharding/mod.rs`, all parties learn the output
 /// # Errors
 /// Propagates errors from multiplications, reveal and scalar multiplication
-
 pub async fn eval_dy_prf<C>(
     ctx: C,
     record_id: RecordId,

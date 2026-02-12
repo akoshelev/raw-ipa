@@ -78,7 +78,6 @@ where
 /// Many reasons, usually communications-related.
 /// # Panics
 /// Never, but the compiler can't see that.
-
 // Try generating random sharing of bits, `[b]_B`, and `l`-bit long.
 // Each bit has a 50% chance of being a 0 or 1, so there are
 // `F::Integer::MAX - p` cases where `b` may become larger than `p`.

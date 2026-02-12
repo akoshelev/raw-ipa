@@ -121,7 +121,6 @@ where
 /// If the conversion is unsuccessful (usually the result of communication errors).
 /// # Panics
 /// Never, but the compiler doesn't know that.
-
 // TODO : remove this hacky function and make people use the streaming version (which might be harder to use, but is cleaner)
 pub async fn one_random_bit<F, C>(
     ctx: C,

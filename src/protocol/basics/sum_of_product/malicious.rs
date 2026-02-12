@@ -43,7 +43,6 @@ pub(crate) enum Step {
 /// It's cricital that the functionality `F_mult` is secure up to an additive attack.
 /// `SecureMult` is an implementation of the IKHC multiplication protocol, which has this property.
 ///
-
 /// Executes two parallel sum of products;
 /// `ΣA * B`, and `ΣrA * B`, yielding both `ΣAB` and `ΣrAB`
 /// both `ΣAB` and `ΣrAB` are provided to the security validator
